@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "baseUrl": ".",
+    "paths": {
+      "@video-lab/contracts": [
+        "packages/contracts/src/index.ts"
+      ],
+      "@video-lab/shared": [
+        "packages/shared/src/index.ts"
+      ],
+      "@video-lab/domain": [
+        "packages/domain/src/index.ts"
+      ],
+      "@video-lab/runtime-adapter": [
+        "packages/runtime-adapter/src/index.ts"
+      ],
+      "@video-lab/ui": [
+        "packages/ui/src/index.ts"
+      ]
+    },
+    "ignoreDeprecations": "6.0"
+  },
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}

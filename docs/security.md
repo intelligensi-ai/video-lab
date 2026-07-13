@@ -1,0 +1,2 @@
+# Security
+The browser never talks to the GPU runtime and never supplies credit cost or UID. API auth verifies bearer identity in production via Firebase middleware and enforces admin server-side. Firestore rules prevent direct credit, runtime, queue, and audit writes. Storage rules scope uploads and outputs to `users/{uid}` and enforce image content types/sizes for uploads. Secrets are environment-only.
