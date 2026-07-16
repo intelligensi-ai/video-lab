@@ -4,3 +4,6 @@ export interface Generation { id:string; prompt:string; settings:VideoSettings; 
 export interface CreditWallet { uid:string; available:number; reserved:number; spent:number; updatedAt:string; version:number }
 export interface Me { uid:string; email:string; displayName?:string; photoURL?:string; status:'active'|'suspended'; roles:string[]; termsVersion:string; trialGrantedAt?:string }
 export interface RuntimeStatus { provider:string; status:'healthy'|'degraded'|'unavailable'|'paused'; acceptingSubmissions:boolean; killSwitch:boolean; lastHeartbeatAt?:string; activeGenerationId?:string; queueDepth:number; updatedAt:string }
+export interface RuntimeHealth { ok:boolean; provider:string; message?:string }
+export interface RuntimeConnectRequest { lambdaIp?:string; baseUrl?:string }
+export type RuntimeConnectResponse = RuntimeStatus & { baseUrl:string; health?:RuntimeHealth };

@@ -14,6 +14,7 @@ import {
   QueryClientProvider,
   useQuery,
   useMutation,
+  useQueryClient,
 } from "@tanstack/react-query";
 import type {
   Generation,
@@ -23,18 +24,247 @@ import type {
 } from "@video-lab/contracts";
 import "./style.css";
 const API = import.meta.env.VITE_API_BASE_URL ?? "/api";
+const DEMO_GENERATIONS_KEY = "vl_demo_generations";
 const token = () => localStorage.getItem("vl_token") || "demo-user";
+
+type GenerationRequest = {
+  prompt: string;
+  settings: Generation["settings"];
+};
+
+type RuntimeConnectResponse = RuntimeStatus & {
+  baseUrl: string;
+  health?: { ok: boolean; provider: string; message?: string };
+};
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function readDemoGenerations() {
+  try {
+    return JSON.parse(
+      localStorage.getItem(DEMO_GENERATIONS_KEY) ?? "[]",
+    ) as Generation[];
+  } catch {
+    return [];
+  }
+}
+
+function writeDemoGenerations(items: Generation[]) {
+  localStorage.setItem(DEMO_GENERATIONS_KEY, JSON.stringify(items));
+}
+
+function demoGenerationStatus(generation: Generation): Generation {
+  if (["completed", "failed", "cancelled"].includes(generation.status)) {
+    return generation;
+  }
+
+  const age = Date.now() - new Date(generation.createdAt).getTime();
+  const status: Generation["status"] =
+    age < 1200
+      ? "preparing"
+      : age < 3000
+        ? "generating"
+        : age < 4200
+          ? "uploading"
+          : "completed";
+
+  const updated: Generation = {
+    ...generation,
+    status,
+    updatedAt: nowIso(),
+  };
+
+  if (status === "completed") {
+    updated.output = {
+      downloadUrl: "#",
+      durationSeconds: generation.settings.durationSeconds,
+    };
+  } else if (generation.output) {
+    updated.output = generation.output;
+  }
+
+  return updated;
+}
+
+function demoCreditCost(settings: Generation["settings"]) {
+  const qualityMultiplier = { draft: 1, standard: 2, high: 3 }[
+    settings.quality
+  ];
+  return Math.ceil((settings.durationSeconds / 4) * qualityMultiplier);
+}
+
+async function demoApi<T>(path: string, init: RequestInit = {}) {
+  const method = init.method ?? "GET";
+  const generations = readDemoGenerations().map(demoGenerationStatus);
+  writeDemoGenerations(generations);
+
+  if (path === "/v1/me") {
+    return {
+      uid: token(),
+      email: `${token()}@example.test`,
+      status: "active",
+      roles: token() === "admin-token" ? ["admin"] : [],
+      termsVersion: "2026-07",
+      trialGrantedAt: nowIso(),
+    } as T;
+  }
+
+  if (path === "/v1/credits") {
+    const spent = generations
+      .filter((g) => g.status === "completed")
+      .reduce((sum, g) => sum + g.creditCost, 0);
+    const reserved = generations
+      .filter((g) =>
+        ["queued", "preparing", "generating", "uploading"].includes(g.status),
+      )
+      .reduce((sum, g) => sum + g.creditCost, 0);
+
+    return {
+      uid: token(),
+      available: Math.max(0, 12 - spent - reserved),
+      reserved,
+      spent,
+      updatedAt: nowIso(),
+      version: generations.length + 1,
+    } as T;
+  }
+
+  if (path === "/v1/runtime/status") {
+    return {
+      provider: "browser-demo",
+      status: "healthy",
+      acceptingSubmissions: true,
+      killSwitch: false,
+      lastHeartbeatAt: nowIso(),
+      queueDepth: generations.filter((g) =>
+        ["queued", "preparing", "generating", "uploading"].includes(g.status),
+      ).length,
+      updatedAt: nowIso(),
+    } as T;
+  }
+
+  if (path === "/v1/gallery") {
+    return {
+      items: generations.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    } as T;
+  }
+
+  if (path === "/v1/generations" && method === "POST") {
+    const body = JSON.parse(String(init.body ?? "{}")) as GenerationRequest;
+    const generation: Generation = {
+      id: `demo_${crypto.randomUUID()}`,
+      prompt: body.prompt,
+      settings: body.settings,
+      status: "queued",
+      queuePosition: 1,
+      creditCost: demoCreditCost(body.settings),
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    writeDemoGenerations([generation, ...generations]);
+    return generation as T;
+  }
+
+  const generationMatch = path.match(/^\/v1\/generations\/([^/]+)$/);
+  if (generationMatch) {
+    const generation = generations.find((g) => g.id === generationMatch[1]);
+    if (!generation) throw new Error("Generation not found");
+    return generation as T;
+  }
+
+  const cancelMatch = path.match(/^\/v1\/generations\/([^/]+)\/cancel$/);
+  if (cancelMatch && method === "POST") {
+    const updated = generations.map((g) =>
+      g.id === cancelMatch[1]
+        ? {
+            ...g,
+            status: "cancelled" as const,
+            updatedAt: nowIso(),
+            safeErrorMessage: "Cancelled by user",
+          }
+        : g,
+    );
+    writeDemoGenerations(updated);
+    const generation = updated.find((g) => g.id === cancelMatch[1]);
+    if (!generation) throw new Error("Generation not found");
+    return generation as T;
+  }
+
+  if (path === "/v1/dev/process-one" && method === "POST") {
+    const updated = generations.map((g, index) =>
+      index === 0 && g.status !== "completed"
+        ? {
+            ...g,
+            status: "completed" as const,
+            updatedAt: nowIso(),
+            output: {
+              downloadUrl: "#",
+              durationSeconds: g.settings.durationSeconds,
+            },
+          }
+        : g,
+    );
+    writeDemoGenerations(updated);
+    return { ok: true } as T;
+  }
+
+  if (path === "/v1/admin/runtime/connect" && method === "POST") {
+    const body = JSON.parse(String(init.body ?? "{}")) as { lambdaIp?: string };
+    const baseUrl = body.lambdaIp?.startsWith("http")
+      ? body.lambdaIp
+      : `http://${body.lambdaIp}`;
+    return {
+      provider: "sulphur-ltx",
+      status: "healthy",
+      acceptingSubmissions: true,
+      killSwitch: false,
+      lastHeartbeatAt: nowIso(),
+      queueDepth: generations.filter((g) =>
+        ["queued", "preparing", "generating", "uploading"].includes(g.status),
+      ).length,
+      updatedAt: nowIso(),
+      baseUrl,
+      health: { ok: true, provider: "browser-demo", message: "healthy" },
+    } as T;
+  }
+
+  if (path.startsWith("/v1/admin/runtime/") && method === "POST") {
+    return demoApi<T>("/v1/runtime/status");
+  }
+
+  throw new Error(`No demo handler for ${method} ${path}`);
+}
+
 async function api<T>(path: string, init: RequestInit = {}) {
-  const r = await fetch(`${API}${path}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token()}`,
-      ...init.headers,
-    },
-  });
-  if (!r.ok) throw new Error((await r.json()).detail ?? r.statusText);
-  return r.json() as Promise<T>;
+  try {
+    const r = await fetch(`${API}${path}`, {
+      ...init,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token()}`,
+        ...init.headers,
+      },
+    });
+    if (!r.ok) {
+      if (r.status === 404 && path !== "/v1/admin/runtime/connect") {
+        return demoApi<T>(path, init);
+      }
+
+      let message = r.statusText;
+      try {
+        message = ((await r.json()) as { detail?: string }).detail ?? message;
+      } catch {
+        message = `API unavailable (${r.status})`;
+      }
+      throw new Error(message);
+    }
+    return r.json() as Promise<T>;
+  } catch (error) {
+    if (error instanceof TypeError) return demoApi<T>(path, init);
+    throw error;
+  }
 }
 function Shell() {
   const navItems = [
@@ -85,11 +315,8 @@ function Landing() {
   return (
     <main className="hero">
       <Logo />
-      <div className="badge">Showcase Trial</div>
-      <h1>
-        Cinematic AI video generation, protected by credits and a private GPU
-        queue.
-      </h1>
+      <div className="badge">Video Lab</div>
+      <h1>Cinematic AI video generation.</h1>
       <p>
         Scan, sign in, craft a prompt, and generate polished clips through the
         LTX Sulphur runtime without exposing infrastructure.
@@ -304,16 +531,81 @@ function Account() {
   );
 }
 function Admin() {
+  const queryClient = useQueryClient();
+  const [lambdaIp, setLambdaIp] = useState("");
+  const [connection, setConnection] = useState<RuntimeConnectResponse>();
+  const [connectError, setConnectError] = useState<string>();
+  const [currentToken, setCurrentToken] = useState(token());
   const r = useQuery({
     queryKey: ["runtime"],
     queryFn: () => api<RuntimeStatus>("/v1/runtime/status"),
   });
   const call = (p: string) =>
     api<RuntimeStatus>(p, { method: "POST" }).then(() => r.refetch());
+  const connect = useMutation({
+    mutationFn: () =>
+      api<RuntimeConnectResponse>("/v1/admin/runtime/connect", {
+        method: "POST",
+        body: JSON.stringify({ lambdaIp }),
+      }),
+    onSuccess: (result) => {
+      setConnection(result);
+      setConnectError(undefined);
+      r.refetch();
+    },
+    onError: (error) => {
+      setConnection(undefined);
+      setConnectError(
+        error instanceof Error ? error.message : "Runtime connection failed",
+      );
+    },
+  });
   return (
     <main>
       <h1>Admin Console</h1>
       <section className="panel">
+        <p>Local token: {currentToken}</p>
+        {currentToken !== "admin-token" && (
+          <button
+            onClick={() => {
+              localStorage.setItem("vl_token", "admin-token");
+              setCurrentToken("admin-token");
+              setConnectError(undefined);
+              setConnection(undefined);
+              queryClient.invalidateQueries();
+            }}
+          >
+            Use local admin token
+          </button>
+        )}
+        <h2>Lambda runtime connection</h2>
+        <div className="runtime-connect">
+          <label>
+            Lambda IP address
+            <input
+              value={lambdaIp}
+              onChange={(event) => {
+                setLambdaIp(event.target.value);
+                setConnection(undefined);
+                setConnectError(undefined);
+              }}
+              placeholder="150.136.94.140"
+            />
+          </label>
+          <button
+            disabled={!lambdaIp.trim() || connect.isPending}
+            onClick={() => connect.mutate()}
+          >
+            {connect.isPending ? "Checking…" : "Connect"}
+          </button>
+        </div>
+        {connection && (
+          <p className="success">
+            Connected to {connection.baseUrl}. Runtime status:{" "}
+            {connection.status}.
+          </p>
+        )}
+        {connectError && <p className="error">{connectError}</p>}
         <pre>{JSON.stringify(r.data, null, 2)}</pre>
         <button onClick={() => call("/v1/admin/runtime/pause")}>
           Pause submissions

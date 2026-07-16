@@ -1,0 +1,17 @@
+# Reverse proxy for a Lambda Labs instance running Deploy Studio locally.
+# Replace ltx-runtime.example.intelligensi.ai with the DNS name pointed at
+# the instance public IP.
+
+ltx-runtime.example.intelligensi.ai {
+  encode gzip
+
+  header {
+    -Server
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  }
+
+  reverse_proxy 127.0.0.1:7860 {
+    header_up X-Forwarded-Proto {scheme}
+    header_up X-Forwarded-Host {host}
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "intelligensi-ai-site"
+  },
+  "targets": {
+    "intelligensi-ai-site": {
+      "hosting": {
+        "video-lab": [
+          "intelligensi-video-lab"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

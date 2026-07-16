@@ -123,11 +123,34 @@ textarea {
   padding: 1rem;
   font-size: 1.1rem;
 }
+input {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 18px;
+  border: 1px solid #ffffff22;
+  background: #05020a;
+  color: white;
+  padding: 0.85rem 1rem;
+  font-size: 1rem;
+}
+label {
+  display: grid;
+  gap: 0.45rem;
+  color: #d7c4ff;
+  font-weight: 700;
+}
 .prompts,
 .chips {
   display: flex;
   gap: 0.75rem;
   flex-wrap: wrap;
+}
+.runtime-connect {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+  margin-bottom: 1rem;
 }
 .prompts span,
 .drop,
@@ -155,6 +178,9 @@ textarea {
 .error {
   color: #ff9fba;
 }
+.success {
+  color: #9fffd8;
+}
 .empty {
   color: #b7a8cc;
 }
@@ -174,5 +200,8 @@ textarea {
   }
   .hero h1 {
     font-size: 3rem;
+  }
+  .runtime-connect {
+    grid-template-columns: 1fr;
   }
 }
