@@ -11,6 +11,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** Check API health */
         get: operations["getHealth"];
         put?: never;
         post?: never;
@@ -27,6 +28,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** Get the current user */
         get: operations["getMe"];
         put?: never;
         post?: never;
@@ -43,6 +45,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** Get the current credit balance */
         get: operations["getCredits"];
         put?: never;
         post?: never;
@@ -61,6 +64,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Create an asset upload target */
         post: operations["createUploadUrl"];
         delete?: never;
         options?: never;
@@ -77,6 +81,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Create a video generation */
         post: operations["createGeneration"];
         delete?: never;
         options?: never;
@@ -91,6 +96,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** Get a video generation */
         get: operations["getGeneration"];
         put?: never;
         post?: never;
@@ -109,6 +115,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Cancel a video generation */
         post: operations["cancelGeneration"];
         delete?: never;
         options?: never;
@@ -123,6 +130,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** List gallery generations */
         get: operations["listGallery"];
         put?: never;
         post?: never;
@@ -139,6 +147,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** Get runtime status */
         get: operations["getRuntimeStatus"];
         put?: never;
         post?: never;
@@ -157,6 +166,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Pause the runtime */
         post: operations["pauseRuntime"];
         delete?: never;
         options?: never;
@@ -173,6 +183,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Resume the runtime */
         post: operations["resumeRuntime"];
         delete?: never;
         options?: never;
@@ -189,6 +200,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Stop the runtime */
         post: operations["stopRuntime"];
         delete?: never;
         options?: never;
@@ -205,6 +217,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Adjust a user credit balance */
         post: operations["adjustCredits"];
         delete?: never;
         options?: never;

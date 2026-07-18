@@ -12,27 +12,32 @@ paths:
     get:
       security: []
       operationId: getHealth
+      summary: Check API health
       responses:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}}
   /v1/me:
     get:
       operationId: getMe
+      summary: Get the current user
       responses:
         '200': {description: Me, content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
   /v1/credits:
     get:
       operationId: getCredits
+      summary: Get the current credit balance
       responses:
         '200': {description: Credits, content: {application/json: {schema: {$ref: '#/components/schemas/CreditWallet'}}}}
   /v1/assets/upload-url:
     post:
       operationId: createUploadUrl
+      summary: Create an asset upload target
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateUploadUrlRequest'}}}}
       responses:
         '201': {description: Upload target, content: {application/json: {schema: {$ref: '#/components/schemas/CreateUploadUrlResponse'}}}}
   /v1/generations:
     post:
       operationId: createGeneration
+      summary: Create a video generation
       parameters:
         - name: Idempotency-Key
           in: header
@@ -45,18 +50,21 @@ paths:
   /v1/generations/{generationId}:
     get:
       operationId: getGeneration
+      summary: Get a video generation
       parameters: [{$ref: '#/components/parameters/generationId'}]
       responses:
         '200': {description: Generation, content: {application/json: {schema: {$ref: '#/components/schemas/Generation'}}}}
   /v1/generations/{generationId}/cancel:
     post:
       operationId: cancelGeneration
+      summary: Cancel a video generation
       parameters: [{$ref: '#/components/parameters/generationId'}]
       responses:
         '200': {description: Cancelled, content: {application/json: {schema: {$ref: '#/components/schemas/Generation'}}}}
   /v1/gallery:
     get:
       operationId: listGallery
+      summary: List gallery generations
       parameters:
         - {name: cursor, in: query, schema: {type: string}}
         - {name: status, in: query, schema: {$ref: '#/components/schemas/GenerationStatus'}}
@@ -66,23 +74,28 @@ paths:
   /v1/runtime/status:
     get:
       operationId: getRuntimeStatus
+      summary: Get runtime status
       responses:
         '200': {description: Runtime, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeStatus'}}}}
   /v1/admin/runtime/pause:
     post:
       operationId: pauseRuntime
+      summary: Pause the runtime
       responses: {'200': {description: Runtime, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeStatus'}}}}}
   /v1/admin/runtime/resume:
     post:
       operationId: resumeRuntime
+      summary: Resume the runtime
       responses: {'200': {description: Runtime, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeStatus'}}}}}
   /v1/admin/runtime/stop:
     post:
       operationId: stopRuntime
+      summary: Stop the runtime
       responses: {'200': {description: Runtime, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeStatus'}}}}}
   /v1/admin/credits/adjust:
     post:
       operationId: adjustCredits
+      summary: Adjust a user credit balance
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AdminCreditAdjustment'}}}}
       responses: {'200': {description: Credits, content: {application/json: {schema: {$ref: '#/components/schemas/CreditWallet'}}}}}
 components:
