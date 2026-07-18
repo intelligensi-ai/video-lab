@@ -9,7 +9,13 @@ jobs:
         with: {version: 10.28.1}
       - uses: actions/setup-node@v4
         with: {node-version: 22, cache: pnpm}
-      - run: pnpm install --frozen-lockfile
+      - name: Install dependencies
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          else
+            pnpm install
+          fi
       - run: pnpm openapi:lint
       - run: pnpm lint
       - run: pnpm typecheck
