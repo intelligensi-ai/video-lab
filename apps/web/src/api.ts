@@ -158,6 +158,7 @@ export interface LongFormGenerationPayload {
   baseSeed: number;
   globalVisualAnchorEnabled: boolean;
   globalVisualAnchor?: File;
+  references: SulphurReferenceInput[];
   scenes: StoryboardScenePayload[];
 }
 
@@ -172,12 +173,24 @@ async function uploadLongFormAsset(file: File, purpose: string) {
 }
 
 export async function generateLongFormVideo(payload: LongFormGenerationPayload) {
-  const inputAssets: Array<{ assetId: string; purpose: string; sceneId?: string }> = [];
+  const inputAssets: Array<{ assetId: string; purpose: string; role?: ReferenceRole; strength?: number; sceneId?: string }> = [];
   let globalVisualAnchorAssetId: string | undefined;
   if (payload.globalVisualAnchorEnabled && payload.globalVisualAnchor) {
     globalVisualAnchorAssetId = await uploadLongFormAsset(payload.globalVisualAnchor, 'reference');
     inputAssets.push({ assetId: globalVisualAnchorAssetId, purpose: 'reference' });
   }
+  const uploadedReferences = await Promise.all(payload.references.map(async (reference) => ({
+    ...reference,
+    assetId: await uploadReferenceAsset(reference),
+  })));
+  const referenceAliases = uploadedReferences.reduce<Record<string, string | number>>((aliases, reference) => {
+    if (reference.assetId) {
+      aliases[assetAliasByRole[reference.role]] = reference.assetId;
+      inputAssets.push({ assetId: reference.assetId, purpose: 'reference', role: reference.role, strength: reference.strength });
+    }
+    aliases[strengthAliasByRole[reference.role]] = reference.strength;
+    return aliases;
+  }, {});
   const storyboard = await Promise.all(payload.scenes.map(async (scene) => {
     const startFrameAssetId = scene.startFrame ? await uploadLongFormAsset(scene.startFrame, 'start_frame') : undefined;
     const endFrameAssetId = scene.endFrame ? await uploadLongFormAsset(scene.endFrame, 'end_frame') : undefined;
@@ -211,6 +224,8 @@ export async function generateLongFormVideo(payload: LongFormGenerationPayload) 
         seedMode: payload.seedMode,
         globalVisualAnchorEnabled: payload.globalVisualAnchorEnabled,
         globalVisualAnchorAssetId,
+        references: uploadedReferences.filter((reference) => reference.assetId).map((reference) => ({ role: reference.role, assetId: reference.assetId, strength: reference.strength })),
+        ...referenceAliases,
         storyboard,
       },
       inputAssets,
