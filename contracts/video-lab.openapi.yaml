@@ -82,6 +82,12 @@ paths:
       operationId: pauseRuntime
       summary: Pause the runtime
       responses: {'200': {description: Runtime, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeStatus'}}}}}
+  /v1/admin/runtime/connect:
+    post:
+      operationId: connectRuntime
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeConnectRequest'}}}}
+      responses:
+        '200': {description: Runtime connected, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeConnectResponse'}}}}
   /v1/admin/runtime/resume:
     post:
       operationId: resumeRuntime
@@ -105,6 +111,12 @@ components:
     generationId: {name: generationId, in: path, required: true, schema: {type: string}}
   schemas:
     Health: {type: object, required: [ok, service, version], properties: {ok: {type: boolean}, service: {type: string}, version: {type: string}}}
+    RuntimeHealth: {type: object, required: [ok, provider], properties: {ok: {type: boolean}, provider: {type: string}, message: {type: string}}}
+    RuntimeConnectRequest: {type: object, properties: {lambdaIp: {type: string}, baseUrl: {type: string}}}
+    RuntimeConnectResponse:
+      allOf:
+        - {$ref: '#/components/schemas/RuntimeStatus'}
+        - {type: object, required: [baseUrl], properties: {baseUrl: {type: string}, health: {$ref: '#/components/schemas/RuntimeHealth'}}}
     GenerationStatus: {type: string, enum: [queued, preparing, generating, uploading, completed, failed, cancelled]}
     VideoSettings: {type: object, required: [aspectRatio, durationSeconds, quality], properties: {aspectRatio: {type: string, enum: ['16:9','9:16','1:1']}, durationSeconds: {type: integer, enum: [4,8,12]}, quality: {type: string, enum: [draft, standard, high]}, seed: {type: integer, minimum: 0}}}
     AssetPurpose: {type: string, enum: [start_frame, end_frame, reference]}
