@@ -714,10 +714,11 @@ function Account() {
   const googleName = googleProfile?.displayName ?? firebaseUser?.displayName ?? "";
   const googleEmail = googleProfile?.email ?? firebaseUser?.email ?? me.data?.email ?? "";
   const googlePhoto = googleProfile?.photoURL ?? firebaseUser?.photoURL;
-  const displayName = preferredName.trim() || googleName || googleEmail || "Anonymous creator";
+  const hasGoogleAccount = Boolean(googleProfile);
+  const displayName = googleName || preferredName.trim() || googleEmail || "Video Lab creator";
   const initials = displayName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "VL";
   const avatarOptions = [
-    { id: "google", label: "Google photo", tone: "google" },
+    ...(googlePhoto ? [{ id: "google", label: "Google photo", tone: "google" }] : []),
     { id: "teal", label: "Teal initials", tone: "teal" },
     { id: "ink", label: "Ink initials", tone: "ink" },
     { id: "coral", label: "Coral initials", tone: "coral" },
@@ -734,12 +735,12 @@ function Account() {
               <span className={`account-avatar account-avatar-fallback ${avatarChoice}`}>{initials}</span>
             )}
             <div>
-              <span className="account-eyebrow">{firebaseUser?.isAnonymous ? "Guest profile" : "Google account connected"}</span>
+              <span className="account-eyebrow">{hasGoogleAccount ? "Signed in with Google" : "Video Lab profile"}</span>
               <h2>{displayName}</h2>
               <p>{creativeRole.trim() || "Video Lab creator"}</p>
             </div>
           </header>
-          {firebaseUser?.isAnonymous && (
+          {!hasGoogleAccount && (
           <button disabled={authBusy} onClick={async () => {
             setAuthBusy(true);
             setAuthError(undefined);
@@ -754,20 +755,23 @@ function Account() {
           }}>{authBusy ? "Connecting…" : "Continue with Google"}</button>
           )}
           {authError && <p className="error">{authError}</p>}
-          <dl className="account-google-data">
-            <div><dt>Name from Google</dt><dd>{googleName || "Not provided"}</dd></div>
-            <div><dt>Email</dt><dd>{googleEmail || "Not provided"}</dd></div>
-            <div><dt>Sign-in provider</dt><dd>{googleProfile ? "Google" : firebaseUser?.isAnonymous ? "Anonymous" : "Firebase"}</dd></div>
-            <div><dt>Account ID</dt><dd>{firebaseUser?.uid ?? me.data?.uid ?? "Loading…"}</dd></div>
-          </dl>
+          {hasGoogleAccount ? (
+            <div className="account-contact">
+              <span>Email address</span>
+              <strong>{googleEmail}</strong>
+              <small>Your name, email and profile photo come from your Google account.</small>
+            </div>
+          ) : (
+            <p className="account-signin-copy">Connect Google to keep your profile and videos available across devices.</p>
+          )}
         </section>
 
         <section className="panel account-preferences">
           <span className="account-eyebrow">Optional profile</span>
           <h2>Make it yours</h2>
-          <p>These preferences are saved in this browser and do not change your Google account.</p>
+          <p>Add optional details for your Video Lab profile. These do not change your Google account.</p>
           <Link className="account-registration-link" to="/register">Complete demographic and marketing preferences →</Link>
-          <label><span>Preferred display name</span><input value={preferredName} placeholder={googleName || "Your display name"} onChange={(event) => setPreferredName(event.target.value)} /></label>
+          <label><span>Preferred name</span><input value={preferredName} placeholder={googleName || "Your preferred name"} onChange={(event) => setPreferredName(event.target.value)} /></label>
           <label><span>Creative role</span><input value={creativeRole} placeholder="e.g. Director, editor, founder" onChange={(event) => setCreativeRole(event.target.value)} /></label>
           <fieldset className="account-avatar-picker">
             <legend>Select an avatar</legend>
@@ -790,7 +794,6 @@ function Account() {
             <span><b>{cr.data?.reserved ?? "…"}</b>Reserved</span>
             <span><b>{cr.data?.spent ?? "…"}</b>Spent</span>
           </div>
-          <p>Role: {me.data?.roles.join(", ") || "Creator"} · Terms {me.data?.termsVersion ?? "…"}</p>
           <button disabled>Credit packs coming soon</button>
         </section>
 
