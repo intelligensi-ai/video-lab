@@ -45,4 +45,140 @@ describe("SulphurLtxRuntimeAdapter", () => {
     });
     expect(calls[1].url).toBe("http://runtime.test/jobs/job-1");
   });
+
+  it("detects LongForm and maps a complete storyboard payload", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        if (url.endsWith("/health")) {
+          return Response.json({
+            ok: true,
+            ready: true,
+            worker: "longform-ltx-storyboard-studio",
+          });
+        }
+        return Response.json({ id: "storyboard-job", status: "queued" }, { status: 202 });
+      }),
+    );
+
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "http://runtime.test",
+      payloadMode: "deploy-studio",
+    });
+    const health = await adapter.healthCheck();
+    await adapter.submitGeneration({
+      prompt: "A continuous cinematic story",
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        aspectRatio: "16:9",
+        durationSeconds: 8,
+        quality: "standard",
+        resolution: "1024x576",
+        fps: 24,
+        overallGoal: "Keep the monolith visually consistent",
+        negativePrompt: "flicker",
+        storyboard: [
+          {
+            id: "scene-1",
+            title: "Reveal",
+            prompt: "The glass monolith rises through the dawn mist",
+            duration: 8,
+            trimStart: 0,
+            trimEnd: 7.5,
+            seed: 1337,
+            transition: "cut",
+            transitionDuration: 0.75,
+            carryPreviousFrame: true,
+          },
+        ],
+      },
+    });
+
+    expect(health.provider).toBe("longform-ltx-storyboard-studio");
+    expect(JSON.parse(String(calls[1].init?.body))).toMatchObject({
+      overall_goal: "Keep the monolith visually consistent",
+      negative_prompt: "flicker",
+      resolution: "1024x576",
+      storyboard: [
+        {
+          id: "scene-1",
+          title: "Reveal",
+          duration: 8,
+          trim_start: 0,
+          trim_end: 7.5,
+          seed: 1337,
+          transition: "cut",
+          carry_previous_frame: true,
+        },
+      ],
+    });
+  });
+
+  it("wraps a Sulphur request as one scene for a LongForm worker", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return url.endsWith("/health")
+          ? Response.json({
+              ok: true,
+              ready: true,
+              worker: "longform-ltx-storyboard-studio",
+            })
+          : Response.json({ id: "single-scene-job" }, { status: 202 });
+      }),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "http://runtime.test",
+      payloadMode: "deploy-studio",
+    });
+
+    await adapter.healthCheck();
+    await adapter.submitGeneration({
+      prompt: "A monolith rises above the ocean",
+      settings: {
+        aspectRatio: "16:9",
+        durationSeconds: 4,
+        quality: "draft",
+        seed: 42,
+      },
+    });
+
+    const payload = JSON.parse(String(calls[1].init?.body));
+    expect(payload.storyboard).toHaveLength(1);
+    expect(payload.storyboard[0]).toMatchObject({
+      prompt: "A monolith rises above the ocean",
+      duration: 4,
+      seed: 42,
+    });
+  });
+
+  it("downloads the completed runtime artifact", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        expect(url).toBe("http://runtime.test/jobs/job-with-video/output");
+        return new Response(new Uint8Array([0, 0, 0, 24]), {
+          status: 200,
+          headers: {
+            "content-type": "video/mp4",
+            "x-video-duration-seconds": "4",
+          },
+        });
+      }),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "http://runtime.test",
+      payloadMode: "deploy-studio",
+    });
+
+    const output = await adapter.fetchOutput("job-with-video");
+
+    expect(output.contentType).toBe("video/mp4");
+    expect(output.durationSeconds).toBe(4);
+    expect(output.bytes).toEqual(new Uint8Array([0, 0, 0, 24]));
+  });
 });

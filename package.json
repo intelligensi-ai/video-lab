@@ -23,6 +23,7 @@
     "@eslint/js": "latest",
     "@playwright/test": "latest",
     "@redocly/cli": "latest",
+    "@rolldown/binding-darwin-arm64": "^1.2.0",
     "@types/node": "latest",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -42,6 +43,7 @@
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "latest",
     "@firebase/rules-unit-testing": "latest",
+    "@google-cloud/functions-framework": "^5.0.5",
     "@tanstack/react-query": "latest",
     "ajv": "latest",
     "ajv-formats": "latest",

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BrowserRouter,
@@ -14,7 +14,6 @@ import {
   QueryClientProvider,
   useQuery,
   useMutation,
-  useQueryClient,
 } from "@tanstack/react-query";
 import type {
   Generation,
@@ -23,9 +22,14 @@ import type {
   Me,
 } from "@video-lab/contracts";
 import LongFormStoryboardStudio from "./LongFormStoryboardStudio.js";
+import { useAuthenticatedVideo } from "./AuthenticatedVideo.js";
+import { getApiToken, loadRegistrationProfile, observeAuth, saveRegistrationProfile, signInWithGoogle, signOutUser } from "./auth.js";
+import type { User } from "firebase/auth";
 import "./style.css";
 const API = import.meta.env.VITE_API_BASE_URL ?? "/api";
 const DEMO_GENERATIONS_KEY = "vl_demo_generations";
+const ENABLE_DEMO_API =
+  import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_API === "true";
 const token = () => localStorage.getItem("vl_token") || "demo-user";
 
 type GenerationRequest = {
@@ -240,16 +244,21 @@ async function demoApi<T>(path: string, init: RequestInit = {}) {
 
 async function api<T>(path: string, init: RequestInit = {}) {
   try {
+    const apiToken = await getApiToken();
     const r = await fetch(`${API}${path}`, {
       ...init,
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${token()}`,
+        authorization: `Bearer ${apiToken}`,
         ...init.headers,
       },
     });
     if (!r.ok) {
-      if (r.status === 404 && path !== "/v1/admin/runtime/connect") {
+      if (
+        ENABLE_DEMO_API &&
+        r.status === 404 &&
+        path !== "/v1/admin/runtime/connect"
+      ) {
         return demoApi<T>(path, init);
       }
 
@@ -263,14 +272,16 @@ async function api<T>(path: string, init: RequestInit = {}) {
     }
     return r.json() as Promise<T>;
   } catch (error) {
-    if (error instanceof TypeError) return demoApi<T>(path, init);
+    if (ENABLE_DEMO_API && error instanceof TypeError) {
+      return demoApi<T>(path, init);
+    }
     throw error;
   }
 }
 function Shell() {
   const navItems = [
     { to: "/", label: "Video Lab" },
-    { to: "/studio", label: "LongForm Studio" },
+    { to: "/studio", label: "Storyboard Studio" },
     { to: "/sulphur", label: "Sulphur" },
     { to: "/gallery", label: "Gallery" },
     { to: "/account", label: "Account" },
@@ -280,6 +291,9 @@ function Shell() {
   return (
     <>
       <nav className="site-nav" aria-label="Primary navigation">
+        <Link className="site-brand" to="/" aria-label="Intelligensi Video Lab home">
+          intelligensi<span>.ai</span>
+        </Link>
         {navItems.map((item) => (
           <NavLink
             key={item.to}
@@ -299,42 +313,77 @@ function Shell() {
         <Route path="/sulphur" element={<Studio />} />
         <Route path="/gallery" element={<Gallery />} />
         <Route path="/generations/:id" element={<Detail />} />
+        <Route path="/register" element={<Registration />} />
         <Route path="/account" element={<Account />} />
         <Route path="/admin" element={<Admin />} />
       </Routes>
     </>
   );
 }
-function Logo() {
-  return (
-    <img
-      src="/intelligensiai-ai-white.png"
-      alt="Intelligensi.ai"
-      className="logo"
-    />
-  );
-}
 function Landing() {
   return (
-    <main className="hero">
-      <Logo />
-      <div className="badge">Video Lab</div>
-      <h1>Cinematic AI video generation.</h1>
-      <p>
-        Direct a longer film scene by scene with real frame-to-frame continuity
-        through the LongForm LTX Storyboard Studio.
-      </p>
-      <div className="prompts">
-        <span>Plan a complete visual story</span>
-        <span>Anchor start and end frames</span>
-        <span>Edit cinematic transitions</span>
-      </div>
-      <Link className="button" to="/studio">
-        Start creating
-      </Link>
-      <footer>
-        <a>Privacy</a>
-        <a>Terms</a>
+    <main className="home">
+      <section className="home-hero">
+        <div className="home-copy">
+          <div className="home-kicker"><span>●</span> Intelligensi.ai Storyboard Studio</div>
+          <h1>Your story.<br/><em>In motion.</em></h1>
+          <p>
+            Shape cinematic AI video scene by scene. Direct the image, movement
+            and transition—then carry visual continuity across the whole film.
+          </p>
+          <div className="home-actions">
+            <Link className="home-primary" to="/studio">Start creating <span>↗</span></Link>
+            <Link className="home-secondary" to="/gallery">Explore your gallery</Link>
+          </div>
+          <div className="home-proof">
+            <span><b>24</b> scenes</span>
+            <span><b>Frame</b> continuity</span>
+            <span><b>Private</b> by default</span>
+          </div>
+        </div>
+        <div className="home-visual">
+          <div className="home-orbit home-orbit-one"/>
+          <div className="home-orbit home-orbit-two"/>
+          <figure>
+            <img
+              src="/images/longform-ltx-storyboard-studio-film-roll.webp"
+              alt="A cinematic film strip carrying a sequence of connected storyboard scenes"
+            />
+            <figcaption>
+              <span>Continuity engine</span>
+              <strong>One film. Every frame connected.</strong>
+            </figcaption>
+          </figure>
+          <div className="home-float home-float-top"><i/> Generator ready</div>
+          <div className="home-float home-float-bottom"><b>01—24</b><span>Build the sequence</span></div>
+        </div>
+      </section>
+
+      <section className="home-marquee" aria-label="Video creation capabilities">
+        <div>STORYBOARD <span>✦</span> FRAME ANCHORS <span>✦</span> CINEMATIC TRANSITIONS <span>✦</span> LTX VIDEO <span>✦</span> STORYBOARD <span>✦</span></div>
+      </section>
+
+      <section className="home-suite">
+        <header>
+          <span>Creative control, without the complexity</span>
+          <h2>From first frame<br/>to final cut.</h2>
+        </header>
+        <div className="home-cards">
+          <article><b>01</b><h3>Direct the story</h3><p>Plan up to 24 scenes around one clear artistic goal.</p></article>
+          <article><b>02</b><h3>Anchor the image</h3><p>Guide characters, composition and style with visual references.</p></article>
+          <article><b>03</b><h3>Carry continuity</h3><p>Flow the final frame of each scene into the opening of the next.</p></article>
+          <article><b>04</b><h3>Finish the cut</h3><p>Control timing, seeds, transitions and production settings.</p></article>
+        </div>
+      </section>
+
+      <section className="home-final">
+        <div><span>Make the film only you can imagine.</span><h2>Ready when you are.</h2></div>
+        <Link className="home-primary" to="/studio">Open LongForm Studio <span>↗</span></Link>
+      </section>
+
+      <footer className="home-footer">
+        <span>© 2026 Intelligensi.ai</span>
+        <div><a>Privacy</a><a>Terms</a></div>
         <small>Trial credits are limited and non-transferable.</small>
       </footer>
     </main>
@@ -366,7 +415,12 @@ function Studio() {
           settings: { aspectRatio: "16:9", durationSeconds: 4, quality },
         }),
       }),
-    onSuccess: (g) => nav(`/generations/${g.id}`),
+    onSuccess: (g) => {
+      void api("/v1/runtime/process-next", { method: "POST" }).catch((error) =>
+        console.error("Generation worker request failed", error),
+      );
+      nav(`/generations/${g.id}`);
+    },
   });
   return (
     <main>
@@ -426,25 +480,41 @@ function Gallery() {
     queryFn: () => api<{ items: Generation[] }>("/v1/gallery"),
   });
   return (
-    <main>
+    <main className="gallery-page">
       <h1>Personal Gallery</h1>
-      <div className="grid">
+      <div className="gallery-grid">
         {q.data?.items.length ? (
           q.data.items.map((g) => (
-            <article className="card">
-              <div className="thumb">{g.status}</div>
+            <article className="card gallery-card" key={g.id}>
+              <GalleryArtifact generation={g} />
               <h3>{g.prompt}</h3>
               <p>{new Date(g.createdAt).toLocaleString()}</p>
               <Link to={`/generations/${g.id}`}>Open details</Link>
             </article>
           ))
         ) : (
-          <p className="empty">
-            No generations yet. Create your first cinematic clip.
+          <p className={q.error ? "error" : "empty"}>
+            {q.error
+              ? `Gallery unavailable: ${q.error.message}`
+              : "No generations yet. Create your first cinematic clip."}
           </p>
         )}
       </div>
     </main>
+  );
+}
+function GalleryArtifact({ generation }: { generation: Generation }) {
+  const video = useAuthenticatedVideo(generation.output?.downloadUrl);
+  if (video.objectUrl) {
+    return <video className="video-preview gallery-media" src={video.objectUrl} controls preload="metadata" />;
+  }
+  if (video.error) {
+    return <div className="thumb error gallery-media">Video unavailable: {video.error}</div>;
+  }
+  return (
+    <div className="thumb gallery-media">
+      {generation.output?.downloadUrl ? "Retrieving video…" : generation.status}
+    </div>
   );
 }
 function Detail() {
@@ -464,13 +534,23 @@ function Detail() {
     onSuccess: () => q.refetch(),
   });
   const g = q.data;
+  const video = useAuthenticatedVideo(g?.output?.downloadUrl);
   return (
     <main>
       {g && (
         <>
           <h1>Generation</h1>
           <section className="panel">
-            <div className="thumb big">{g.status}</div>
+            {video.objectUrl ? (
+              <video className="video-preview" src={video.objectUrl} controls autoPlay />
+            ) : (
+              <div className="thumb big">
+                {g.output?.downloadUrl ? "Retrieving completed video…" : g.status}
+              </div>
+            )}
+            {video.error && (
+              <p className="error">Video retrieval failed: {video.error}</p>
+            )}
             <p>{g.prompt}</p>
             <p>
               Cost: {g.creditCost} credits · Created{" "}
@@ -479,8 +559,8 @@ function Detail() {
             {g.safeErrorMessage && (
               <p className="error">{g.safeErrorMessage}</p>
             )}
-            {g.output?.downloadUrl && (
-              <a className="button" href={g.output.downloadUrl}>
+            {video.objectUrl && (
+              <a className="button" href={video.objectUrl} download={`${g.id}.mp4`}>
                 Download
               </a>
             )}
@@ -498,47 +578,240 @@ function Detail() {
     </main>
   );
 }
+type RegistrationProfile = {
+  country: string;
+  ageRange: string;
+  industry: string;
+  role: string;
+  teamSize: string;
+  discoverySource: string;
+  primaryGoal: string;
+  experienceLevel: string;
+  productUpdates: boolean;
+  researchInvites: boolean;
+  completedAt?: string;
+};
+
+const emptyRegistration: RegistrationProfile = {
+  country: "",
+  ageRange: "",
+  industry: "",
+  role: "",
+  teamSize: "",
+  discoverySource: "",
+  primaryGoal: "",
+  experienceLevel: "",
+  productUpdates: false,
+  researchInvites: false,
+};
+
+function Registration() {
+  const navigate = useNavigate();
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string>();
+  const [profile, setProfile] = useState<RegistrationProfile>(() => {
+    try { return { ...emptyRegistration, ...JSON.parse(localStorage.getItem("vl_registration") ?? "{}") }; }
+    catch { return emptyRegistration; }
+  });
+  useEffect(() => observeAuth((user) => {
+    setFirebaseUser(user);
+    if (user && !user.isAnonymous) {
+      void loadRegistrationProfile().then((stored) => {
+        if (Object.keys(stored).length) setProfile((current) => ({ ...current, ...stored }));
+      }).catch(() => undefined);
+    }
+  }), []);
+  const update = <K extends keyof RegistrationProfile>(key: K, value: RegistrationProfile[K]) =>
+    setProfile((current) => ({ ...current, [key]: value }));
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    setSaveError(undefined);
+    const completed = { ...profile, completedAt: new Date().toISOString() };
+    try {
+      await saveRegistrationProfile(completed);
+      setProfile(completed);
+      setSaved(true);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not save registration");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <main className="registration-page">
+      <header className="registration-hero">
+        <span>Welcome to Video Lab</span>
+        <h1>Tell us a little about you</h1>
+        <p>Help us tailor the creative tools and communications you see. Demographic and marketing questions are optional.</p>
+      </header>
+      <form className="registration-form" onSubmit={submit}>
+        <section className="panel registration-identity">
+          <span className="registration-step">01 · Your account</span>
+          <h2>Google profile</h2>
+          <div className="registration-google">
+            {firebaseUser?.photoURL ? <img src={firebaseUser.photoURL} alt="Google profile"/> : <span>{(firebaseUser?.displayName ?? firebaseUser?.email ?? "VL").slice(0, 2).toUpperCase()}</span>}
+            <div><strong>{firebaseUser?.displayName ?? "Guest creator"}</strong><small>{firebaseUser?.email ?? "Connect Google from your Account page"}</small></div>
+          </div>
+          <p>Your authentication details come from Google and remain managed by Firebase Auth.</p>
+        </section>
+
+        <section className="panel registration-demographics">
+          <span className="registration-step">02 · Optional demographics</span>
+          <h2>About your work</h2>
+          <div className="registration-fields">
+            <label><span>Country or region</span><input value={profile.country} placeholder="e.g. United Kingdom" onChange={(event) => update("country", event.target.value)}/></label>
+            <label><span>Age range</span><select value={profile.ageRange} onChange={(event) => update("ageRange", event.target.value)}><option value="">Prefer not to say</option><option>18–24</option><option>25–34</option><option>35–44</option><option>45–54</option><option>55–64</option><option>65+</option></select></label>
+            <label><span>Industry</span><select value={profile.industry} onChange={(event) => update("industry", event.target.value)}><option value="">Select one</option><option>Film and television</option><option>Advertising and marketing</option><option>Design and creative services</option><option>Technology</option><option>Education</option><option>Media and publishing</option><option>Other</option></select></label>
+            <label><span>Your role</span><input value={profile.role} placeholder="e.g. Director, founder, editor" onChange={(event) => update("role", event.target.value)}/></label>
+            <label><span>Team size</span><select value={profile.teamSize} onChange={(event) => update("teamSize", event.target.value)}><option value="">Select one</option><option>Just me</option><option>2–10</option><option>11–50</option><option>51–200</option><option>201+</option></select></label>
+            <label><span>Video AI experience</span><select value={profile.experienceLevel} onChange={(event) => update("experienceLevel", event.target.value)}><option value="">Select one</option><option>Just exploring</option><option>Beginner</option><option>Regular user</option><option>Advanced professional</option></select></label>
+          </div>
+        </section>
+
+        <section className="panel registration-marketing">
+          <span className="registration-step">03 · Product research</span>
+          <h2>What brings you here?</h2>
+          <div className="registration-fields">
+            <label><span>How did you hear about us?</span><select value={profile.discoverySource} onChange={(event) => update("discoverySource", event.target.value)}><option value="">Select one</option><option>Search engine</option><option>Social media</option><option>Friend or colleague</option><option>Event or community</option><option>Article or newsletter</option><option>Other</option></select></label>
+            <label><span>Primary goal</span><select value={profile.primaryGoal} onChange={(event) => update("primaryGoal", event.target.value)}><option value="">Select one</option><option>Create marketing videos</option><option>Develop films or storyboards</option><option>Prototype creative concepts</option><option>Create social content</option><option>Research video AI</option><option>Other</option></select></label>
+          </div>
+          <div className="registration-consents">
+            <label><input type="checkbox" checked={profile.productUpdates} onChange={(event) => update("productUpdates", event.target.checked)}/><span><b>Product news and creative tips</b><small>Occasional email updates. You can unsubscribe at any time.</small></span></label>
+            <label><input type="checkbox" checked={profile.researchInvites} onChange={(event) => update("researchInvites", event.target.checked)}/><span><b>Research invitations</b><small>Optional invitations to interviews, surveys and early feature tests.</small></span></label>
+          </div>
+        </section>
+
+        <footer className="registration-actions">
+          <p>{saveError ? <span className="error">{saveError}</span> : "We use these answers to improve Video Lab. Marketing consent is optional and recorded separately."}</p>
+          <div><button type="button" onClick={() => navigate("/account")}>Skip for now</button><button className="button" type="submit" disabled={saving}>{saving ? "Saving…" : saved ? "Saved" : "Complete registration"}</button></div>
+        </footer>
+      </form>
+    </main>
+  );
+}
 function Account() {
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [authError, setAuthError] = useState<string>();
+  const [authBusy, setAuthBusy] = useState(false);
+  const [preferredName, setPreferredName] = useState(() => localStorage.getItem("vl_profile_name") ?? "");
+  const [creativeRole, setCreativeRole] = useState(() => localStorage.getItem("vl_profile_role") ?? "");
+  const [avatarChoice, setAvatarChoice] = useState(() => localStorage.getItem("vl_profile_avatar") ?? "google");
+  useEffect(() => observeAuth(setFirebaseUser), []);
+  useEffect(() => {
+    localStorage.setItem("vl_profile_name", preferredName);
+    localStorage.setItem("vl_profile_role", creativeRole);
+    localStorage.setItem("vl_profile_avatar", avatarChoice);
+  }, [preferredName, creativeRole, avatarChoice]);
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/v1/me") });
   const cr = useQuery({
     queryKey: ["credits"],
     queryFn: () => api<CreditWallet>("/v1/credits"),
   });
+  const googleProfile = firebaseUser?.providerData.find((provider) => provider.providerId === "google.com");
+  const googleName = googleProfile?.displayName ?? firebaseUser?.displayName ?? "";
+  const googleEmail = googleProfile?.email ?? firebaseUser?.email ?? me.data?.email ?? "";
+  const googlePhoto = googleProfile?.photoURL ?? firebaseUser?.photoURL;
+  const displayName = preferredName.trim() || googleName || googleEmail || "Anonymous creator";
+  const initials = displayName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "VL";
+  const avatarOptions = [
+    { id: "google", label: "Google photo", tone: "google" },
+    { id: "teal", label: "Teal initials", tone: "teal" },
+    { id: "ink", label: "Ink initials", tone: "ink" },
+    { id: "coral", label: "Coral initials", tone: "coral" },
+  ];
   return (
-    <main>
+    <main className="account-page">
       <h1>Account</h1>
-      <section className="panel">
-        <p>{me.data?.email}</p>
-        <p>Roles: {me.data?.roles.join(", ") || "creator"}</p>
-        <p>Terms: {me.data?.termsVersion}</p>
-        <p>Trial granted: {me.data?.trialGrantedAt}</p>
-        <p>
-          Available {cr.data?.available}; reserved {cr.data?.reserved}; spent{" "}
-          {cr.data?.spent}
-        </p>
-        <button
-          onClick={() => {
-            localStorage.removeItem("vl_token");
+      <div className="account-layout">
+        <section className="panel account-profile">
+          <header className="account-profile-header">
+            {avatarChoice === "google" && googlePhoto ? (
+              <img className="account-avatar" src={googlePhoto} alt="Google account profile" />
+            ) : (
+              <span className={`account-avatar account-avatar-fallback ${avatarChoice}`}>{initials}</span>
+            )}
+            <div>
+              <span className="account-eyebrow">{firebaseUser?.isAnonymous ? "Guest profile" : "Google account connected"}</span>
+              <h2>{displayName}</h2>
+              <p>{creativeRole.trim() || "Video Lab creator"}</p>
+            </div>
+          </header>
+          {firebaseUser?.isAnonymous && (
+          <button disabled={authBusy} onClick={async () => {
+            setAuthBusy(true);
+            setAuthError(undefined);
+            try {
+              await signInWithGoogle();
+              location.reload();
+            } catch (error) {
+              setAuthError(error instanceof Error ? error.message : "Google sign-in failed");
+            } finally {
+              setAuthBusy(false);
+            }
+          }}>{authBusy ? "Connecting…" : "Continue with Google"}</button>
+          )}
+          {authError && <p className="error">{authError}</p>}
+          <dl className="account-google-data">
+            <div><dt>Name from Google</dt><dd>{googleName || "Not provided"}</dd></div>
+            <div><dt>Email</dt><dd>{googleEmail || "Not provided"}</dd></div>
+            <div><dt>Sign-in provider</dt><dd>{googleProfile ? "Google" : firebaseUser?.isAnonymous ? "Anonymous" : "Firebase"}</dd></div>
+            <div><dt>Account ID</dt><dd>{firebaseUser?.uid ?? me.data?.uid ?? "Loading…"}</dd></div>
+          </dl>
+        </section>
+
+        <section className="panel account-preferences">
+          <span className="account-eyebrow">Optional profile</span>
+          <h2>Make it yours</h2>
+          <p>These preferences are saved in this browser and do not change your Google account.</p>
+          <Link className="account-registration-link" to="/register">Complete demographic and marketing preferences →</Link>
+          <label><span>Preferred display name</span><input value={preferredName} placeholder={googleName || "Your display name"} onChange={(event) => setPreferredName(event.target.value)} /></label>
+          <label><span>Creative role</span><input value={creativeRole} placeholder="e.g. Director, editor, founder" onChange={(event) => setCreativeRole(event.target.value)} /></label>
+          <fieldset className="account-avatar-picker">
+            <legend>Select an avatar</legend>
+            {avatarOptions.map((option) => {
+              const useGooglePhoto = option.id === "google" && googlePhoto;
+              return <label key={option.id} className={avatarChoice === option.id ? "selected" : ""}>
+                <input type="radio" name="account-avatar" value={option.id} checked={avatarChoice === option.id} onChange={() => setAvatarChoice(option.id)} />
+                {useGooglePhoto ? <img src={googlePhoto} alt="" /> : <span className={`account-avatar-option ${option.tone}`}>{initials}</span>}
+                <small>{option.label}</small>
+              </label>;
+            })}
+          </fieldset>
+        </section>
+
+        <section className="panel account-credits">
+          <span className="account-eyebrow">Usage</span>
+          <h2>Credits</h2>
+          <div className="account-credit-grid">
+            <span><b>{cr.data?.available ?? "…"}</b>Available</span>
+            <span><b>{cr.data?.reserved ?? "…"}</b>Reserved</span>
+            <span><b>{cr.data?.spent ?? "…"}</b>Spent</span>
+          </div>
+          <p>Role: {me.data?.roles.join(", ") || "Creator"} · Terms {me.data?.termsVersion ?? "…"}</p>
+          <button disabled>Credit packs coming soon</button>
+        </section>
+
+        <section className="panel account-security">
+          <span className="account-eyebrow">Account controls</span>
+          <h2>Privacy and access</h2>
+          <p>Trial granted {me.data?.trialGrantedAt ? new Date(me.data.trialGrantedAt).toLocaleDateString() : "—"}. For a data deletion request, contact operations.</p>
+          <button onClick={async () => {
+            await signOutUser();
             location.href = "/";
-          }}
-        >
-          Sign out
-        </button>
-        <p>
-          Data deletion request: contact operations; functional workflow is
-          prepared for production support.
-        </p>
-        <button disabled>Credit packs coming soon</button>
-      </section>
+          }}>Sign out</button>
+        </section>
+      </div>
     </main>
   );
 }
 function Admin() {
-  const queryClient = useQueryClient();
+  const isLocalDevelopment = import.meta.env.DEV;
   const [lambdaIp, setLambdaIp] = useState("");
   const [connection, setConnection] = useState<RuntimeConnectResponse>();
   const [connectError, setConnectError] = useState<string>();
-  const [currentToken, setCurrentToken] = useState(token());
   const r = useQuery({
     queryKey: ["runtime"],
     queryFn: () => api<RuntimeStatus>("/v1/runtime/status"),
@@ -554,6 +827,7 @@ function Admin() {
     onSuccess: (result) => {
       setConnection(result);
       setConnectError(undefined);
+      setLambdaIp("");
       r.refetch();
     },
     onError: (error) => {
@@ -563,25 +837,52 @@ function Admin() {
       );
     },
   });
+  const release = useMutation({
+    mutationFn: () =>
+      api<RuntimeStatus>("/v1/admin/runtime/release", { method: "POST" }),
+    onSuccess: () => {
+      setConnection(undefined);
+      setConnectError(undefined);
+      r.refetch();
+    },
+    onError: (error) => {
+      setConnectError(
+        error instanceof Error ? error.message : "Runtime release failed",
+      );
+    },
+  });
+  const releaseRuntime = () => {
+    const currentBaseUrl = r.data?.baseUrl;
+    if (currentBaseUrl) {
+      try {
+        setLambdaIp(new URL(currentBaseUrl).hostname);
+      } catch {
+        setLambdaIp(currentBaseUrl.replace(/^https?:\/\//, "").split("/")[0]);
+      }
+    }
+    release.mutate();
+  };
   return (
     <main>
-      <h1>Admin Console</h1>
+      <h1>Runtime Connection</h1>
       <section className="panel">
-        <p>Local token: {currentToken}</p>
-        {currentToken !== "admin-token" && (
+        <h2>Lambda runtime connection</h2>
+        <p>
+          Testing mode: enter a public Lambda IP to connect or replace the
+          current runtime.
+        </p>
+        <p className={r.data?.baseUrl ? "success" : "error"}>
+          Connected endpoint: {r.data?.baseUrl ?? "Not configured"}
+        </p>
+        {r.data?.baseUrl && (
           <button
-            onClick={() => {
-              localStorage.setItem("vl_token", "admin-token");
-              setCurrentToken("admin-token");
-              setConnectError(undefined);
-              setConnection(undefined);
-              queryClient.invalidateQueries();
-            }}
+            type="button"
+            disabled={release.isPending}
+            onClick={releaseRuntime}
           >
-            Use local admin token
+            {release.isPending ? "Releasing…" : "Release connection"}
           </button>
         )}
-        <h2>Lambda runtime connection</h2>
         <div className="runtime-connect">
           <label>
             Lambda IP address
@@ -599,7 +900,11 @@ function Admin() {
             disabled={!lambdaIp.trim() || connect.isPending}
             onClick={() => connect.mutate()}
           >
-            {connect.isPending ? "Checking…" : "Connect"}
+            {connect.isPending
+              ? "Checking…"
+              : r.data?.baseUrl
+                ? "Replace connection"
+                : "Connect"}
           </button>
         </div>
         {connection && (
@@ -610,16 +915,16 @@ function Admin() {
         )}
         {connectError && <p className="error">{connectError}</p>}
         <pre>{JSON.stringify(r.data, null, 2)}</pre>
-        <button onClick={() => call("/v1/admin/runtime/pause")}>
-          Pause submissions
-        </button>
-        <button onClick={() => call("/v1/admin/runtime/resume")}>Resume</button>
-        <button onClick={() => call("/v1/admin/runtime/stop")}>
-          Kill switch
-        </button>
-        <p>
-          Use admin-token locally to exercise backend-enforced admin claims.
-        </p>
+        {isLocalDevelopment && <>
+          <button onClick={() => call("/v1/admin/runtime/pause")}>
+            Pause submissions
+          </button>
+          <button onClick={() => call("/v1/admin/runtime/resume")}>Resume</button>
+          <button onClick={() => call("/v1/admin/runtime/stop")}>
+            Kill switch
+          </button>
+          <p>Pause and kill-switch controls remain administrator-only.</p>
+        </>}
       </section>
     </main>
   );

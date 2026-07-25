@@ -40,7 +40,11 @@ pnpm build
 ```
 
 ## Admin claim
-Production: run a privileged Admin SDK script or callable operation to set `{ admin: true }` on the Firebase user. Local API tests use `Authorization: Bearer admin-token`.
+Production verifies Firebase ID tokens with the Admin SDK. Run a privileged
+Admin SDK script or callable operation to set `{ admin: true }` on the Firebase
+user, then send that user's ID token as the bearer token. Local development and
+API tests may use `Authorization: Bearer admin-token`; this shortcut is disabled
+in production.
 
 ## Sulphur/LTX runtime
 Set `VIDEO_RUNTIME_PROVIDER=sulphur-ltx`, `VIDEO_RUNTIME_BASE_URL`, and `VIDEO_RUNTIME_API_TOKEN`. Provider-specific payload mapping stays inside `packages/runtime-adapter` and never reaches browser contracts.

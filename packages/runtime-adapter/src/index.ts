@@ -2,15 +2,54 @@ declare const process: { env: Record<string, string | undefined> };
 
 export interface RuntimeVideoSettings {
   aspectRatio: "16:9" | "9:16" | "1:1";
-  durationSeconds: 4 | 8 | 12;
+  durationSeconds: number;
   quality: "draft" | "standard" | "high";
   seed?: number;
+  runtime?: string;
+  resolution?: string;
+  outputFormat?: string;
+  negativePrompt?: string;
+  enhancePrompt?: boolean;
+  fps?: number;
+  frameRate?: number;
+  guidance?: number;
+  cfgGuidance?: number;
+  guidanceScale?: number;
+  imageSteps?: number;
+  startFrameStrength?: number;
+  endFrameStrength?: number;
+  postProcess?: string;
+  seedMode?: string;
+  baseSeed?: number;
+  overallGoal?: string;
+  globalVisualAnchorBase64?: string;
+  seedFrameBase64?: string;
+  endFrameBase64?: string;
+  referenceImageBase64?: string;
+  styleReferenceBase64?: string;
+  subjectReferenceBase64?: string;
+  storyboard?: Array<{
+    id: string;
+    title: string;
+    prompt: string;
+    duration: number;
+    trimStart: number;
+    trimEnd: number;
+    seed: number;
+    transition: string;
+    transitionDuration: number;
+    carryPreviousFrame: boolean;
+    startFrameBase64?: string;
+    endFrameBase64?: string;
+  }>;
 }
 
 export interface RuntimeHealth {
   ok: boolean;
   provider: string;
   message?: string;
+  worker?: string;
+  ready?: boolean;
 }
 
 export interface RuntimeGenerationInput {
@@ -125,6 +164,8 @@ export interface SulphurLtxRuntimeConfig {
 }
 
 export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
+  private detectedWorker?: string;
+
   constructor(private cfg: SulphurLtxRuntimeConfig) {}
 
   private requireConfig() {
@@ -176,8 +217,12 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     return headers;
   }
 
-  private async request(path: string, init: RequestInit = {}) {
-    const timeoutMs = this.cfg.timeoutMs ?? 120_000;
+  private async request(
+    path: string,
+    init: RequestInit = {},
+    timeoutOverrideMs?: number,
+  ) {
+    const timeoutMs = timeoutOverrideMs ?? this.cfg.timeoutMs ?? 120_000;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -194,19 +239,91 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
 
   private payload(input: RuntimeGenerationInput) {
     if (this.cfg.payloadMode === "deploy-studio") {
+      const settings = input.settings;
       const resolution = {
         "16:9": "1280x720",
         "9:16": "720x1280",
         "1:1": "1024x1024",
-      }[input.settings.aspectRatio];
+      }[settings.aspectRatio];
+      const isLongForm =
+        settings.runtime === "longform-ltx-storyboard-studio" ||
+        Boolean(settings.storyboard?.length) ||
+        this.detectedWorker === "longform-ltx-storyboard-studio";
+
+      if (isLongForm) {
+        const storyboard = settings.storyboard?.length
+          ? settings.storyboard
+          : [
+              {
+                id: "scene-1",
+                title: "Scene 1",
+                prompt: input.prompt,
+                duration: settings.durationSeconds,
+                trimStart: 0,
+                trimEnd: settings.durationSeconds,
+                seed: settings.seed ?? 1337,
+                transition: "cut",
+                transitionDuration: 0.75,
+                carryPreviousFrame: true,
+                ...(settings.seedFrameBase64
+                  ? { startFrameBase64: settings.seedFrameBase64 }
+                  : {}),
+                ...(settings.endFrameBase64
+                  ? { endFrameBase64: settings.endFrameBase64 }
+                  : {}),
+              },
+            ];
+
+        return {
+          overall_goal: settings.overallGoal ?? input.prompt,
+          prompt: input.prompt,
+          negative_prompt: settings.negativePrompt,
+          resolution: settings.resolution ?? resolution,
+          fps: settings.fps ?? settings.frameRate ?? 24,
+          image_steps: settings.imageSteps,
+          guidance_scale:
+            settings.guidanceScale ?? settings.cfgGuidance ?? settings.guidance,
+          start_frame_strength: settings.startFrameStrength,
+          end_frame_strength: settings.endFrameStrength,
+          enhance_prompt: settings.enhancePrompt,
+          post_process: settings.postProcess ?? "none",
+          output_format: settings.outputFormat ?? "mp4",
+          seed_mode: settings.seedMode ?? "per_scene",
+          base_seed: settings.baseSeed ?? settings.seed,
+          global_visual_anchor_base64: settings.globalVisualAnchorBase64,
+          storyboard: storyboard.map((scene) => ({
+            id: scene.id,
+            title: scene.title,
+            prompt: scene.prompt,
+            duration: scene.duration,
+            trim_start: scene.trimStart,
+            trim_end: scene.trimEnd,
+            seed: scene.seed,
+            transition: scene.transition,
+            transition_duration: scene.transitionDuration,
+            carry_previous_frame: scene.carryPreviousFrame,
+            start_frame_base64: scene.startFrameBase64,
+            end_frame_base64: scene.endFrameBase64,
+          })),
+        };
+      }
 
       return {
         prompt: input.prompt,
-        resolution,
-        duration: input.settings.durationSeconds,
-        output_format: "mp4",
-        seed: input.settings.seed,
-        inputAssetUrls: input.inputAssetUrls ?? [],
+        negative_prompt: settings.negativePrompt,
+        resolution: settings.resolution ?? resolution,
+        duration: settings.durationSeconds,
+        fps: settings.frameRate ?? settings.fps ?? 24,
+        output_format: settings.outputFormat ?? "mp4",
+        seed: settings.seed,
+        cfg: settings.cfgGuidance ?? settings.guidance,
+        guidance_scale: settings.guidance ?? settings.cfgGuidance,
+        enhance_prompt: settings.enhancePrompt,
+        seed_frame_base64: settings.seedFrameBase64,
+        end_frame_base64: settings.endFrameBase64,
+        reference_image_base64: settings.referenceImageBase64,
+        style_reference_base64: settings.styleReferenceBase64,
+        subject_reference_base64: settings.subjectReferenceBase64,
       };
     }
 
@@ -218,11 +335,33 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
   }
 
   async healthCheck(): Promise<RuntimeHealth> {
-    const res = await this.request(this.cfg.healthPath ?? "/health");
+    const res = await this.request(
+      this.cfg.healthPath ?? "/health",
+      {},
+      Math.min(this.cfg.timeoutMs ?? 120_000, 8_000),
+    );
+    let body: {
+      ok?: boolean;
+      ready?: boolean;
+      worker?: string;
+      error?: string | null;
+    } = {};
+    try {
+      body = (await res.clone().json()) as typeof body;
+    } catch {
+      // Some compatible runtimes expose an empty health response.
+    }
+    this.detectedWorker = body.worker;
+    const ready = body.ready ?? body.ok ?? res.ok;
     return {
-      ok: res.ok,
-      provider: "sulphur-ltx",
-      message: res.ok ? "healthy" : `${res.status} ${res.statusText}`,
+      ok: res.ok && ready,
+      provider: body.worker ?? "sulphur-ltx",
+      worker: body.worker,
+      ready,
+      message:
+        res.ok && ready
+          ? "healthy"
+          : body.error ?? `${res.status} ${res.statusText}`,
     };
   }
 
@@ -304,9 +443,50 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       this.cfg.outputPath ?? this.defaultPath("output"),
       runtimeJobId,
     );
-    const res = await this.request(path, {
+    let res = await this.request(path, {
       headers: { accept: "video/mp4, application/octet-stream" },
     });
+    let durationSeconds = 0;
+
+    if (!res.ok && this.cfg.payloadMode === "deploy-studio") {
+      const statusPath = this.path(
+        this.cfg.statusPath ?? this.defaultPath("status"),
+        runtimeJobId,
+      );
+      const statusRes = await this.request(statusPath);
+      if (statusRes.ok) {
+        const status = (await statusRes.json()) as {
+          output?: string;
+          output_url?: string;
+          download_url?: string;
+          artifact_url?: string;
+          settings?: {
+            total_output_seconds?: number;
+            duration?: number;
+          };
+        };
+        durationSeconds = Number(
+          status.settings?.total_output_seconds ??
+            status.settings?.duration ??
+            0,
+        );
+        const outputUrl =
+          status.output_url ?? status.download_url ?? status.artifact_url;
+        if (outputUrl) {
+          res = await fetch(
+            /^https?:\/\//i.test(outputUrl)
+              ? outputUrl
+              : this.url(outputUrl),
+            { headers: this.headers() },
+          );
+        } else if (status.output) {
+          throw new Error(
+            `Runtime completed but exposes only a private output path (${status.output}); add GET /jobs/{jobId}/output to the Lambda runtime`,
+          );
+        }
+      }
+    }
+
     if (!res.ok)
       throw new Error(`Sulphur output fetch failed: ${await res.text()}`);
 
@@ -330,7 +510,9 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     return {
       bytes: new Uint8Array(await res.arrayBuffer()),
       contentType: "video/mp4",
-      durationSeconds: Number(res.headers.get("x-video-duration-seconds") ?? 0),
+      durationSeconds:
+        Number(res.headers.get("x-video-duration-seconds") ?? 0) ||
+        durationSeconds,
     };
   }
 }

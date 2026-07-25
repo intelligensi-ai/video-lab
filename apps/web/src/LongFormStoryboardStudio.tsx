@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Generation } from '@video-lab/contracts';
-import { generateLongFormVideo, getCredits, getRuntimeStatus, type LongFormGenerationPayload, type ReferenceRole, type StoryboardScenePayload, type StoryboardTransition } from './api.js';
+import { cancelGeneration, generateLongFormVideo, getCredits, getGallery, getGeneration, getRuntimeStatus, type LongFormGenerationPayload, type ReferenceRole, type StoryboardScenePayload, type StoryboardTransition } from './api.js';
+import { useAuthenticatedVideo } from './AuthenticatedVideo.js';
 
 type LongFormReference = { label: string; role: ReferenceRole; file?: File; preview?: string; strength: number; helper: string };
 
@@ -27,9 +28,8 @@ const transitionOptions: Array<{ value: StoryboardTransition; label: string; des
 ];
 
 const initialScenes: StoryboardScenePayload[] = [
-  { id: 'scene-1', title: 'The signal appears', prompt: 'Wide street-level tracking shot. The founder notices a thin teal reflection moving through puddles. Keep the face and trench coat consistent; slow handheld pursuit; cool rain and warm shop windows.', duration: 8, trimStart: 0, trimEnd: 8, seed: 1337, transition: 'cut', transitionDuration: 0.75, carryPreviousFrame: true },
-  { id: 'scene-2', title: 'Across the bridge', prompt: 'Begin from the previous final frame. The signal climbs a bridge rail as the camera arcs around the founder, revealing the skyline. Preserve direction of travel, identity, wet materials, and the restrained teal-and-amber palette.', duration: 8, trimStart: 0, trimEnd: 8, seed: 1338, transition: 'crossfade', transitionDuration: 0.75, carryPreviousFrame: true },
-  { id: 'scene-3', title: 'The studio opens', prompt: 'The founder opens a weathered studio door. Rain falls out of focus behind them as warm practical lights take over the palette. Slow push forward and resolve on the first illuminated workstation.', duration: 8, trimStart: 0, trimEnd: 8, seed: 1339, transition: 'fade_black', transitionDuration: 0.6, carryPreviousFrame: true },
+  { id: 'scene-1', title: 'The signal appears', prompt: 'Wide street-level tracking shot. The founder notices a thin teal reflection moving through puddles. Keep the face and trench coat consistent; slow handheld pursuit; cool rain and warm shop windows.', duration: 5, trimStart: 0, trimEnd: 5, seed: 1337, transition: 'cut', transitionDuration: 0.75, carryPreviousFrame: true },
+  { id: 'scene-2', title: 'Across the bridge', prompt: 'Begin from the previous final frame. The signal climbs a bridge rail as the camera arcs around the founder, revealing the skyline. Preserve direction of travel, identity, wet materials, and the restrained teal-and-amber palette.', duration: 5, trimStart: 0, trimEnd: 5, seed: 1338, transition: 'crossfade', transitionDuration: 0.75, carryPreviousFrame: true },
 ];
 
 const initialForm: LongFormGenerationPayload = {
@@ -42,28 +42,56 @@ const initialForm: LongFormGenerationPayload = {
 };
 
 export default function LongFormStoryboardStudio() {
+  const queryClient = useQueryClient();
   const [form, setForm] = useState(initialForm);
   const [history, setHistory] = useState<Generation[]>([]);
   const [selected, setSelected] = useState<Generation>();
-  const [sceneCount, setSceneCount] = useState(6);
+  const [sceneCount, setSceneCount] = useState(2);
   const credits = useQuery({ queryKey: ['credits'], queryFn: getCredits });
   const runtime = useQuery({ queryKey: ['runtime'], queryFn: getRuntimeStatus });
+  const gallery = useQuery({ queryKey: ['gallery'], queryFn: getGallery });
   const mutation = useMutation({ mutationFn: () => generateLongFormVideo(form), onSuccess: (generation) => { setSelected(generation); setHistory((items) => [generation, ...items].slice(0, 8)); } });
+  useEffect(() => {
+    const items = gallery.data?.items ?? [];
+    setHistory(items.slice(0, 8));
+    if (!selected) setSelected(items.find((item) => !['completed', 'failed', 'cancelled'].includes(item.status)));
+  }, [gallery.data, selected]);
+  const generation = useQuery({
+    queryKey: ['generation', selected?.id],
+    queryFn: () => getGeneration(selected!.id),
+    enabled: Boolean(selected?.id),
+    refetchInterval: (query) => {
+      const current = query.state.data as Generation | undefined;
+      return current && ['completed', 'failed', 'cancelled'].includes(current.status) ? false : 2000;
+    },
+  });
+  const currentGeneration = generation.data ?? selected;
+  const isRendering = mutation.isPending || Boolean(currentGeneration && !['completed', 'failed', 'cancelled'].includes(currentGeneration.status));
+  const cancellation = useMutation({
+    mutationFn: () => cancelGeneration(currentGeneration!.id),
+    onSuccess: (cancelled) => {
+      setSelected(cancelled);
+      setHistory((items) => items.map((item) => item.id === cancelled.id ? cancelled : item));
+      void queryClient.invalidateQueries({ queryKey: ['credits'] });
+      void queryClient.invalidateQueries({ queryKey: ['gallery'] });
+      void queryClient.invalidateQueries({ queryKey: ['generation', cancelled.id] });
+    },
+  });
   const totalSeconds = useMemo(() => form.scenes.reduce((sum, scene) => sum + Math.max(.1, scene.trimEnd - scene.trimStart), 0), [form.scenes]);
   const updateScene = (index: number, patch: Partial<StoryboardScenePayload>) => setForm((current) => ({ ...current, scenes: current.scenes.map((scene, i) => i === index ? { ...scene, ...patch } : scene) }));
   const moveScene = (index: number, direction: -1 | 1) => setForm((current) => { const target = index + direction; if (target < 0 || target >= current.scenes.length) return current; const scenes = [...current.scenes]; [scenes[index], scenes[target]] = [scenes[target], scenes[index]]; return { ...current, scenes }; });
-  const addScene = () => setForm((current) => current.scenes.length >= 24 ? current : ({ ...current, scenes: [...current.scenes, { id: crypto.randomUUID(), title: `Scene ${current.scenes.length + 1}`, prompt: '', duration: 8, trimStart: 0, trimEnd: 8, seed: current.baseSeed + current.scenes.length, transition: 'crossfade', transitionDuration: .75, carryPreviousFrame: true }] }));
+  const addScene = () => setForm((current) => current.scenes.length >= 24 ? current : ({ ...current, scenes: [...current.scenes, { id: crypto.randomUUID(), title: `Scene ${current.scenes.length + 1}`, prompt: '', duration: 5, trimStart: 0, trimEnd: 5, seed: current.baseSeed + current.scenes.length, transition: 'crossfade', transitionDuration: .75, carryPreviousFrame: true }] }));
   const removeScene = (index: number) => setForm((current) => current.scenes.length <= 1 ? current : ({ ...current, scenes: current.scenes.filter((_, i) => i !== index) }));
   const planScenes = () => {
     const count = Math.max(1, Math.min(24, sceneCount));
     const beats = ['Opening image', 'The journey begins', 'A new obstacle', 'Discovery', 'Turning point', 'Final reveal'];
-    setForm((current) => ({ ...current, scenes: Array.from({ length: count }, (_, index) => ({ id: crypto.randomUUID(), title: beats[index] ?? `Scene ${index + 1}`, prompt: `${index === 0 ? 'Establish' : 'Continue from the previous final frame and develop'} the artistic goal: ${current.overallGoal} Scene ${index + 1} of ${count}; describe one clear action, camera beat, lighting progression, and final composition.`, duration: 8, trimStart: 0, trimEnd: 8, seed: current.baseSeed + index, transition: index === 0 ? 'cut' : 'crossfade', transitionDuration: .75, carryPreviousFrame: true })) }));
+    setForm((current) => ({ ...current, scenes: Array.from({ length: count }, (_, index) => ({ id: crypto.randomUUID(), title: beats[index] ?? `Scene ${index + 1}`, prompt: `${index === 0 ? 'Establish' : 'Continue from the previous final frame and develop'} the artistic goal: ${current.overallGoal} Scene ${index + 1} of ${count}; describe one clear action, camera beat, lighting progression, and final composition.`, duration: 5, trimStart: 0, trimEnd: 5, seed: current.baseSeed + index, transition: index === 0 ? 'cut' : 'crossfade', transitionDuration: .75, carryPreviousFrame: true })) }));
   };
   const invalid = !form.overallGoal.trim() || !form.scenes.length || form.scenes.some((scene) => !scene.prompt.trim());
 
   return <main className="lf-page">
     <header className="lf-hero">
-      <div><div className="lf-kickers"><span>Generator ready</span><span>Z-Image + LTX Storyboard</span></div><h1>LongForm LTX Storyboard Studio</h1><p>Direct a longer film scene by scene. Upload frame anchors where they matter; otherwise the runtime generates the opening and carries each real final frame into the next clip.</p></div>
+      <div><div className="lf-kickers"><span>Generator ready</span><span>Z-Image + LTX Storyboard</span></div><div className="lf-brand-lockup" aria-label="Intelligensi.ai Storyboard Studio"><span className="lf-brand-logo"><img src="/intelligensi-logo.png" alt="Intelligensi.ai"/></span><em>Storyboard Studio</em></div><p>Direct a longer film scene by scene. Upload frame anchors where they matter; otherwise the runtime generates the opening and carries each real final frame into the next clip.</p></div>
       <div className="lf-session"><span>{runtime.data?.status ?? 'checking'} runtime</span><strong>{credits.data?.available ?? '…'} credits</strong><Link to="/gallery">Gallery</Link></div>
     </header>
     <div className="lf-layout"><div className="lf-controls">
@@ -71,7 +99,7 @@ export default function LongFormStoryboardStudio() {
       <section className="lf-panel lf-bible"><span className="lf-label">Film Bible</span><h2>Continuity and reproducibility</h2><p>The artistic goal is the continuity brief. A global visual anchor is an opening-frame fallback, not native style or subject conditioning.</p><div className="lf-bible-grid"><Field label="Seed strategy"><select value={form.seedMode} onChange={(event) => setForm((current) => ({ ...current, seedMode: event.target.value }))}><option value="sequence">Stable sequence</option><option value="per_scene">Per scene</option><option value="random">Random takes</option></select></Field><Field label="Base seed"><input type="number" value={form.baseSeed} onChange={(event) => setForm((current) => ({ ...current, baseSeed: Number(event.target.value) }))}/></Field><UploadBox label="Global visual anchor" compact file={form.globalVisualAnchor} onFile={(file) => setForm((current) => ({ ...current, globalVisualAnchor: file }))}/><label className="lf-toggle"><input type="checkbox" checked={form.globalVisualAnchorEnabled} onChange={(event) => setForm((current) => ({ ...current, globalVisualAnchorEnabled: event.target.checked }))}/><span/> Enable anchor fallback</label></div></section>
       <section className="lf-scenes"><div className="lf-section-head"><div><span className="lf-label">Timeline</span><h2>Storyboard scenes</h2></div><button type="button" className="lf-primary lf-add" onClick={addScene}>＋ Add scene</button></div>{form.scenes.map((scene, index) => <SceneCard key={scene.id} scene={scene} index={index} count={form.scenes.length} onChange={(patch) => updateScene(index, patch)} onMove={(direction) => moveScene(index, direction)} onRemove={() => removeScene(index)}/>)}</section>
       <section className="lf-panel lf-production"><h2>⌁ Production settings</h2><div className="lf-settings"><Field label="Working resolution"><select value={form.resolution} onChange={(event) => setForm((current) => ({ ...current, resolution: event.target.value }))}><option value="1024x576">Landscape Draft 1024x576</option><option value="1280x720">Landscape HD 1280x720</option><option value="576x1024">Phone Draft 576x1024</option><option value="720x1280">Phone HD 720x1280</option><option value="1080x1080">Square 1080x1080</option></select></Field><Field label="Frame rate"><select value={form.fps} onChange={(event) => setForm((current) => ({ ...current, fps: Number(event.target.value) }))}><option value={24}>24 fps</option><option value={25}>25 fps</option><option value={30}>30 fps</option></select></Field><Range label="Opening frame steps" value={form.imageSteps} min={1} max={12} step={1} onChange={(value) => setForm((current) => ({ ...current, imageSteps: value }))}/><Range label="LTX guidance" value={form.guidanceScale} min={0} max={8} step={.25} onChange={(value) => setForm((current) => ({ ...current, guidanceScale: value }))}/><Range label="Start frame strength" value={form.startFrameStrength} min={0} max={1} step={.05} onChange={(value) => setForm((current) => ({ ...current, startFrameStrength: value }))}/><Range label="End frame strength" value={form.endFrameStrength} min={0} max={1} step={.05} onChange={(value) => setForm((current) => ({ ...current, endFrameStrength: value }))}/><Field label="Enhance scene prompts"><select value={form.enhancePrompt ? 'yes' : 'no'} onChange={(event) => setForm((current) => ({ ...current, enhancePrompt: event.target.value === 'yes' }))}><option value="yes">Enabled</option><option value="no">Disabled</option></select></Field><Field label="Finishing pass"><select value={form.postProcess} onChange={(event) => setForm((current) => ({ ...current, postProcess: event.target.value }))}><option value="none">None - fastest draft</option><option value="interpolate">Interpolate motion</option><option value="upscale">Upscale 2x</option><option value="both">Interpolate + upscale</option></select></Field><Field label="Output format"><select value={form.outputFormat} onChange={(event) => setForm((current) => ({ ...current, outputFormat: event.target.value }))}><option value="mp4">MP4</option><option value="webm">WebM</option></select></Field></div><Field label="Shared negative prompt"><textarea className="lf-negative" value={form.negativePrompt} onChange={(event) => setForm((current) => ({ ...current, negativePrompt: event.target.value }))}/></Field><button type="button" disabled={mutation.isPending || invalid} className="lf-primary lf-generate" onClick={() => mutation.mutate()}>{mutation.isPending ? '◌ Rendering storyboard...' : 'ϟ Generate Storyboard Film'}</button>{mutation.error && <div className="lf-error">{mutation.error.message}</div>}</section>
-    </div><aside className="lf-preview-col"><Preview generation={selected} loading={mutation.isPending}/><History generations={history} onSelect={setSelected}/></aside></div>
+    </div><aside className="lf-preview-col"><Preview generation={currentGeneration} loading={isRendering} cancelling={cancellation.isPending} onCancel={() => cancellation.mutate()} cancelError={cancellation.error?.message}/><History generations={history} onSelect={setSelected}/></aside></div>
   </main>;
 }
 
@@ -102,5 +130,77 @@ function NumberField({ label, value, min, max, step, onChange }: { label: string
 function UploadBox({ label, compact = false, file, onFile }: { label: string; compact?: boolean; file?: File; onFile: (file?: File) => void }) { const [open, setOpen] = useState(false); return <div className={`lf-upload ${compact ? 'compact' : ''} ${file ? 'has-file' : ''}`}><button type="button" onClick={() => setOpen((value) => !value)}><span>▧</span>{file?.name ?? label}<i>{open ? '−' : '+'}</i></button>{open && <div className="lf-upload-body"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => onFile(event.target.files?.[0])}/>{file && <button type="button" onClick={() => onFile(undefined)}>Remove</button>}</div>}</div>; }
 function TransitionPicker({ scene, onChange, onClose }: { scene: StoryboardScenePayload; onChange: (patch: Partial<StoryboardScenePayload>) => void; onClose: () => void }) { return <div className="lf-modal-backdrop" role="presentation" onMouseDown={onClose}><section className="lf-transition-modal" role="dialog" aria-modal="true" aria-label="Choose transition" onMouseDown={(event) => event.stopPropagation()}><header><div><span className="lf-label">Video editor</span><h2>Choose transition</h2></div><button onClick={onClose}>×</button></header><div className="lf-transition-grid">{transitionOptions.map((option) => <button key={option.value} className={scene.transition === option.value ? 'selected' : ''} onClick={() => onChange({ transition: option.value })}><span className="lf-transition-glyph">{option.glyph}</span><strong>{option.label}</strong><small>{option.description}</small></button>)}</div><footer><div><span className="lf-label">Duration</span><strong>{scene.transition === 'cut' ? '0.00' : scene.transitionDuration.toFixed(2)}s</strong></div><input aria-label="Transition duration" type="range" min={.25} max={2} step={.05} disabled={scene.transition === 'cut'} value={scene.transitionDuration} onChange={(event) => onChange({ transitionDuration: Number(event.target.value) })}/><button className="lf-primary" onClick={onClose}>Apply</button><p>Video and audio overlap together. The final film becomes shorter by the selected transition duration.</p></footer></section></div>; }
 
-function Preview({ generation, loading }: { generation?: Generation; loading: boolean }) { return <section className="lf-preview lf-panel"><header><div><span className="lf-label">Your creation</span><h2>Cinematic preview</h2><p>LongForm LTX Storyboard Studio</p></div><span className="lf-complete">{loading ? 'Rendering' : generation?.status ?? 'Ready'}</span></header><div className="lf-preview-tabs"><span>ϟ <b>Create</b><small>Sulphur prompt</small></span><span>▣ <b>Render</b><small>LTX video</small></span><span>♢ <b>Privacy</b><small>Private session</small></span></div><div className="lf-screen">{generation?.output?.downloadUrl ? <video src={generation.output.downloadUrl} controls/> : <img src="/images/longform-ltx-storyboard-studio-film-roll.webp" alt="Film roll containing a sequence of cinematic storyboard frames"/>}{loading && <div className="lf-rendering">Rendering storyboard film…</div>}</div>{generation?.output?.downloadUrl && <a className="lf-download" href={generation.output.downloadUrl}>⇩ Download video</a>}<p className="lf-ready">{generation ? `Generated video ${generation.status} · ${generation.creditCost} credits` : 'Your generated film will appear here'}</p><div className="lf-stats"><span><b>⌁ Progress</b>{generation?.status === 'completed' ? '100%' : loading ? 'In queue' : '—'}</span><span><b>◷ Elapsed</b>Session</span><span><b>⚙ Est. cost</b>{generation ? `${generation.creditCost} credits` : '—'}</span></div><div className="lf-progress"/></section>; }
-function History({ generations, onSelect }: { generations: Generation[]; onSelect: (generation: Generation) => void }) { return <section className="lf-history lf-panel"><header><span>▣</span><div><strong>Previous generated videos</strong><small>{generations.length} previous artifacts saved in this browser</small></div><b>Open library⌄</b></header>{generations.length > 0 && <div className="lf-history-grid">{generations.map((generation) => <button key={generation.id} onClick={() => onSelect(generation)}><div>▶</div><strong>{generation.prompt}</strong><small>{generation.status} / {generation.creditCost} credits</small></button>)}</div>}</section>; }
+function Preview({ generation, loading, cancelling, onCancel, cancelError }: { generation?: Generation; loading: boolean; cancelling: boolean; onCancel: () => void; cancelError?: string }) { const video=useAuthenticatedVideo(generation?.output?.downloadUrl); return <section className="lf-preview lf-panel"><header><div><span className="lf-label">Your creation</span><h2>Cinematic preview</h2><p>Intelligensi.ai Storyboard Studio</p></div><span className="lf-complete">{loading ? 'Rendering' : generation?.status ?? 'Ready'}</span></header><div className="lf-preview-tabs"><span>ϟ <b>Create</b><small>Sulphur prompt</small></span><span>▣ <b>Render</b><small>LTX video</small></span><span>♢ <b>Privacy</b><small>Private session</small></span></div><div className="lf-screen">{video.objectUrl ? <video src={video.objectUrl} controls/> : generation?.output?.downloadUrl ? <div className="thumb big">Retrieving completed video…</div> : <img src="/images/longform-ltx-storyboard-studio-film-roll.webp" alt="Film roll containing a sequence of cinematic storyboard frames"/>}{loading && <div className="lf-rendering">Rendering storyboard film…</div>}</div>{loading && generation && <button type="button" className="lf-cancel" disabled={cancelling} onClick={onCancel}>{cancelling ? 'Cancelling…' : 'Cancel active render'}</button>}{cancelError && <p className="lf-error">{cancelError}</p>}{video.error && <p className="error">Video retrieval failed: {video.error}</p>}{video.objectUrl && <a className="lf-download" href={video.objectUrl} download={`${generation?.id ?? 'video'}.mp4`}>⇩ Download video</a>}<p className="lf-ready">{generation ? `Generated video ${generation.status} · ${generation.creditCost} credits` : 'Your generated film will appear here'}</p><div className="lf-stats"><span><b>⌁ Progress</b>{generation?.status === 'completed' ? '100%' : loading ? 'In queue' : '—'}</span><span><b>◷ Elapsed</b>Session</span><span><b>⚙ Est. cost</b>{generation ? `${generation.creditCost} credits` : '—'}</span></div><div className="lf-progress"/></section>; }
+function History({ generations, onSelect }: { generations: Generation[]; onSelect: (generation: Generation) => void }) { return <section className="lf-history lf-panel"><header><span>▣</span><div><strong>Previous generated videos</strong><small>{generations.length} previous artifacts saved in this browser</small></div><b>Open library⌄</b></header>{generations.length > 0 && <div className="lf-history-grid">{generations.map((generation) => <button key={generation.id} onClick={() => onSelect(generation)}><GenerationThumbnail generation={generation}/><strong>{generation.prompt}</strong><small>{generation.status} / {generation.creditCost} credits</small></button>)}</div>}</section>; }
+
+function GenerationThumbnail({ generation }: { generation: Generation }) {
+  const storageKey = `vl_thumbnail_${generation.id}`;
+  const [thumbnail, setThumbnail] = useState(() => localStorage.getItem(storageKey) ?? '');
+  const video = useAuthenticatedVideo(thumbnail ? undefined : generation.output?.downloadUrl);
+
+  useEffect(() => {
+    if (thumbnail || !video.objectUrl) return;
+    const source = document.createElement('video');
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return;
+    let cancelled = false;
+    let best: { score: number; image: string } | undefined;
+    let sampleIndex = 0;
+    const samplePositions = [.12, .28, .44, .6, .76, .9];
+    canvas.width = 480;
+    canvas.height = 360;
+    source.src = video.objectUrl;
+    source.muted = true;
+    source.playsInline = true;
+    source.preload = 'auto';
+
+    const finish = () => {
+      if (cancelled || !best) return;
+      try { localStorage.setItem(storageKey, best.image); } catch { /* Storage can be unavailable or full. */ }
+      setThumbnail(best.image);
+    };
+    const sample = () => {
+      if (cancelled) return;
+      const width = source.videoWidth;
+      const height = source.videoHeight;
+      if (!width || !height) return finish();
+      const sourceRatio = width / height;
+      const targetRatio = 4 / 3;
+      let sx = 0; let sy = 0; let sw = width; let sh = height;
+      if (sourceRatio > targetRatio) { sw = height * targetRatio; sx = (width - sw) / 2; }
+      else { sh = width / targetRatio; sy = (height - sh) / 2; }
+      context.drawImage(source, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let luminanceTotal = 0; let luminanceSquared = 0;
+      for (let index = 0; index < pixels.length; index += 16) {
+        const luminance = pixels[index] * .2126 + pixels[index + 1] * .7152 + pixels[index + 2] * .0722;
+        luminanceTotal += luminance;
+        luminanceSquared += luminance * luminance;
+      }
+      const count = pixels.length / 16;
+      const mean = luminanceTotal / count;
+      const variance = Math.max(0, luminanceSquared / count - mean * mean);
+      if (mean > 18 && mean < 237) {
+        const score = variance + Math.min(mean, 255 - mean) * 12;
+        if (!best || score > best.score) best = { score, image: canvas.toDataURL('image/jpeg', .78) };
+      }
+      sampleIndex += 1;
+      if (sampleIndex >= samplePositions.length) finish();
+      else source.currentTime = Math.max(.01, source.duration * samplePositions[sampleIndex]);
+    };
+    source.addEventListener('loadedmetadata', () => {
+      source.currentTime = Math.max(.01, source.duration * samplePositions[0]);
+    }, { once: true });
+    source.addEventListener('seeked', sample);
+    source.addEventListener('error', finish, { once: true });
+    return () => {
+      cancelled = true;
+      source.removeAttribute('src');
+      source.load();
+    };
+  }, [generation.id, storageKey, thumbnail, video.objectUrl]);
+
+  if (thumbnail) return <div className="lf-history-thumbnail"><img src={thumbnail} alt="Video thumbnail"/></div>;
+  return <div className="lf-history-thumbnail placeholder"><span>{generation.status === 'completed' ? 'Preparing preview…' : generation.status}</span></div>;
+}

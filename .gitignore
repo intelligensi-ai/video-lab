@@ -2,6 +2,11 @@ node_modules
 dist
 .env
 .env.local
+.env.*
 coverage
 .firebase
 .playwright
+.pnpm-store
+*.tsbuildinfo
+firebase-debug.log
+/*.mp4
