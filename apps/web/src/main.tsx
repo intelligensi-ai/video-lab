@@ -712,7 +712,7 @@ function Account() {
   });
   const googleProfile = firebaseUser?.providerData.find((provider) => provider.providerId === "google.com");
   const googleName = googleProfile?.displayName ?? firebaseUser?.displayName ?? "";
-  const googleEmail = googleProfile?.email ?? firebaseUser?.email ?? me.data?.email ?? "";
+  const googleEmail = googleProfile?.email ?? (!firebaseUser?.isAnonymous ? firebaseUser?.email : "") ?? "";
   const googlePhoto = googleProfile?.photoURL ?? firebaseUser?.photoURL;
   const hasGoogleAccount = Boolean(googleProfile);
   const displayName = googleName || preferredName.trim() || googleEmail || "Video Lab creator";

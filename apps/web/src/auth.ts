@@ -27,6 +27,10 @@ let signInPromise: Promise<User> | undefined;
 
 async function ensureUser() {
   if (!firebaseAuth) throw new Error('Firebase Auth is not configured');
+  // Firebase restores a persisted Google session asynchronously. Waiting here
+  // prevents an eager API request from creating an anonymous user first and
+  // replacing the restored account.
+  await firebaseAuth.authStateReady();
   if (firebaseAuth.currentUser) return firebaseAuth.currentUser;
   if (!signInPromise) {
     signInPromise = signInAnonymously(firebaseAuth)
