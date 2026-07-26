@@ -5,7 +5,8 @@ declare module 'react' {
   export function useState<S>(initialState: S | (() => S)): [S, Dispatch<SetStateAction<S>>];
   export function useEffect(effect: () => void | (() => void), dependencies?: readonly unknown[]): void;
   export function useMemo<T>(factory: () => T, deps: unknown[]): T;
-  const React: { useState: typeof useState; useMemo: typeof useMemo; useEffect: typeof useEffect };
+  export function useRef<T>(initialValue: T): { current: T };
+  const React: { useState: typeof useState; useMemo: typeof useMemo; useEffect: typeof useEffect; useRef: typeof useRef };
   export default React;
 }
 declare module 'react/jsx-runtime' { export const jsx: unknown; export const jsxs: unknown; export const Fragment: unknown; }

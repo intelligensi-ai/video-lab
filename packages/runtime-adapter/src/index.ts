@@ -85,8 +85,15 @@ export interface RuntimeOutput {
   durationSeconds: number;
 }
 
+export interface RuntimePromptCompletion {
+  completedPrompt: string;
+  mode: "expand";
+  provider: string;
+}
+
 export interface VideoRuntimeAdapter {
   healthCheck(): Promise<RuntimeHealth>;
+  completePrompt(prompt: string, mode?: "expand"): Promise<RuntimePromptCompletion>;
   submitGeneration(input: RuntimeGenerationInput): Promise<RuntimeSubmission>;
   getGenerationStatus(runtimeJobId: string): Promise<RuntimeGenerationStatus>;
   cancelGeneration(runtimeJobId: string): Promise<RuntimeCancelResult>;
@@ -101,6 +108,14 @@ export class MockVideoRuntimeAdapter implements VideoRuntimeAdapter {
 
   async healthCheck(): Promise<RuntimeHealth> {
     return { ok: true, provider: "mock" };
+  }
+
+  async completePrompt(prompt: string): Promise<RuntimePromptCompletion> {
+    return {
+      completedPrompt: prompt,
+      mode: "expand",
+      provider: "mock",
+    };
   }
 
   async submitGeneration(
@@ -362,6 +377,31 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
         res.ok && ready
           ? "healthy"
           : body.error ?? `${res.status} ${res.statusText}`,
+    };
+  }
+
+  async completePrompt(
+    prompt: string,
+    mode: "expand" = "expand",
+  ): Promise<RuntimePromptCompletion> {
+    const res = await this.request(
+      "/prompt/complete",
+      {
+        method: "POST",
+        body: JSON.stringify({ prompt, mode }),
+      },
+      Math.max(this.cfg.timeoutMs ?? 120_000, 180_000),
+    );
+    if (!res.ok)
+      throw new Error(`Sulphur prompt completion failed: ${await res.text()}`);
+    const result = (await res.json()) as Partial<RuntimePromptCompletion>;
+    const completedPrompt = result.completedPrompt?.trim();
+    if (!completedPrompt)
+      throw new Error("Sulphur prompt completion returned empty text");
+    return {
+      completedPrompt,
+      mode: "expand",
+      provider: result.provider ?? "sulphur-gemma",
     };
   }
 

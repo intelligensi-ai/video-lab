@@ -46,6 +46,33 @@ describe("SulphurLtxRuntimeAdapter", () => {
     expect(calls[1].url).toBe("http://runtime.test/jobs/job-1");
   });
 
+  it("uses the baked Sulphur prompt completion endpoint", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        expect(url).toBe("http://runtime.test/prompt/complete");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          prompt: "A fox crosses a wet road",
+          mode: "expand",
+        });
+        return Response.json({
+          completedPrompt: "A fox is crossing a rain-dark road.",
+          mode: "expand",
+          provider: "sulphur-gemma",
+        });
+      }),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "http://runtime.test",
+      payloadMode: "deploy-studio",
+    });
+
+    await expect(adapter.completePrompt("A fox crosses a wet road")).resolves.toMatchObject({
+      completedPrompt: "A fox is crossing a rain-dark road.",
+      provider: "sulphur-gemma",
+    });
+  });
+
   it("detects LongForm and maps a complete storyboard payload", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal(

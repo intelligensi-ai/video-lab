@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { firebaseStorageBucket } from '../../apps/api/src/index.js';
+import { creditLimitsEnabled, firebaseStorageBucket } from '../../apps/api/src/index.js';
 
 describe('Firebase Storage configuration', () => {
   it('reads the deployed bucket from FIREBASE_CONFIG', () => {
@@ -23,5 +23,15 @@ describe('Firebase Storage configuration', () => {
       GCLOUD_PROJECT: 'video-lab',
       FIREBASE_CONFIG: 'not-json',
     })).toBe('video-lab.firebasestorage.app');
+  });
+});
+
+describe('credit enforcement configuration', () => {
+  it('keeps credit limits enabled by default', () => {
+    expect(creditLimitsEnabled({})).toBe(true);
+  });
+
+  it('disables credit limits explicitly for testing', () => {
+    expect(creditLimitsEnabled({ CREDIT_LIMITS_ENABLED: 'false' })).toBe(false);
   });
 });

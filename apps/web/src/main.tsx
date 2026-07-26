@@ -3,9 +3,11 @@ import { createRoot } from "react-dom/client";
 import {
   BrowserRouter,
   Link,
+  Navigate,
   NavLink,
   Route,
   Routes,
+  useLocation,
   useNavigate,
   useParams,
 } from "react-router-dom";
@@ -22,9 +24,11 @@ import type {
   Me,
 } from "@video-lab/contracts";
 import LongFormStoryboardStudio from "./LongFormStoryboardStudio.js";
+import SulphurGeneratorPage from "./LtxSulphurGenerator.js";
 import { useAuthenticatedVideo } from "./AuthenticatedVideo.js";
-import { getApiToken, loadRegistrationProfile, observeAuth, saveRegistrationProfile, signInWithGoogle, signOutUser } from "./auth.js";
+import { completeGoogleRedirectSignIn, getApiToken, getFriendlyAuthError, isProductionFirebase, loadRegistrationProfile, observeAuth, saveRegistrationProfile, signInWithGoogle, signOutUser } from "./auth.js";
 import type { User } from "firebase/auth";
+import homeMarkUrl from "../../../public/fav-icon.png";
 import "./style.css";
 const API = import.meta.env.VITE_API_BASE_URL ?? "/api";
 const DEMO_GENERATIONS_KEY = "vl_demo_generations";
@@ -279,10 +283,18 @@ async function api<T>(path: string, init: RequestInit = {}) {
   }
 }
 function Shell() {
+  const location = useLocation();
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(!isProductionFirebase);
+  useEffect(() => observeAuth((user) => {
+    setFirebaseUser(user);
+    setAuthReady(true);
+  }), []);
+  const signedIn = !isProductionFirebase || Boolean(firebaseUser && !firebaseUser.isAnonymous);
+  const isLanding = location.pathname === "/";
   const navItems = [
-    { to: "/", label: "Video Lab" },
-    { to: "/studio", label: "Storyboard Studio" },
-    { to: "/sulphur", label: "Sulphur" },
+    { to: "/storyboard", label: "Storyboard Studio" },
+    { to: "/studio", label: "Studio" },
     { to: "/gallery", label: "Gallery" },
     { to: "/account", label: "Account" },
     { to: "/admin", label: "Admin" },
@@ -290,43 +302,133 @@ function Shell() {
 
   return (
     <>
-      <nav className="site-nav" aria-label="Primary navigation">
-        <Link className="site-brand" to="/" aria-label="Intelligensi Video Lab home">
-          intelligensi<span>.ai</span>
-        </Link>
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) =>
-              isActive ? "nav-link active" : "nav-link"
-            }
-            end={item.to === "/"}
-          >
-            {item.label}
-          </NavLink>
-        ))}
+      <nav className={`site-nav${signedIn ? " logged-in" : ""}`} aria-label="Primary navigation">
+        <div className="site-nav-inner">
+          <Link className="site-home-mark" to="/" aria-label="Video Lab home">
+            <img src={homeMarkUrl} alt=""/>
+          </Link>
+          {!isLanding && !signedIn && <Link className="site-brand" to="/" aria-label="Intelligensi.ai Video Lab home">
+            intelligensi<span>.ai</span> <b>Video Lab</b>
+          </Link>}
+          {signedIn && <div className="site-nav-links">
+            {navItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  isActive ? "nav-link active" : "nav-link"
+                }
+                end={item.to === "/"}
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </div>}
+          {authReady && !signedIn && <div className="site-auth-links">
+            <NavLink to="/login">Log in</NavLink>
+            <NavLink className="site-register-link" to="/register">Register</NavLink>
+          </div>}
+        </div>
       </nav>
       <Routes>
         <Route path="/" element={<Landing />} />
-        <Route path="/studio" element={<LongFormStoryboardStudio />} />
-        <Route path="/sulphur" element={<Studio />} />
-        <Route path="/gallery" element={<Gallery />} />
-        <Route path="/generations/:id" element={<Detail />} />
-        <Route path="/register" element={<Registration />} />
-        <Route path="/account" element={<Account />} />
-        <Route path="/admin" element={<Admin />} />
+        <Route path="/login" element={<AuthEntry mode="login" />} />
+        <Route path="/register" element={<AuthEntry mode="register" />} />
+        <Route path="/storyboard" element={<ProtectedRoute element={<LongFormStoryboardStudio />} />} />
+        <Route path="/studio" element={<ProtectedRoute element={<SulphurGeneratorPage />} />} />
+        <Route path="/sulphur" element={<Navigate to="/studio" replace />} />
+        <Route path="/gallery" element={<ProtectedRoute element={<Gallery />} />} />
+        <Route path="/generations/:id" element={<ProtectedRoute element={<Detail />} />} />
+        <Route path="/onboarding" element={<ProtectedRoute element={<Registration />} />} />
+        <Route path="/account" element={<ProtectedRoute element={<Account />} />} />
+        <Route path="/admin" element={<ProtectedRoute element={<Admin />} />} />
       </Routes>
     </>
   );
 }
+
+function ProtectedRoute({ element }: { element: React.ReactNode }) {
+  const location = useLocation();
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [ready, setReady] = useState(!isProductionFirebase);
+  useEffect(() => observeAuth((user) => {
+    setFirebaseUser(user);
+    setReady(true);
+  }), []);
+
+  if (!isProductionFirebase) return element;
+  if (!ready) return <main className="auth-page"><div className="auth-card"><p>Restoring your Video Lab session…</p></div></main>;
+  if (!firebaseUser || firebaseUser.isAnonymous) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+  return element;
+}
+
+function AuthEntry({ mode }: { mode: "login" | "register" }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [ready, setReady] = useState(!isProductionFirebase);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const requestedPath = (location.state as { from?: string } | null)?.from;
+  const destination = mode === "register" ? "/onboarding" : requestedPath || "/studio";
+  useEffect(() => observeAuth((user) => {
+    setFirebaseUser(user);
+    setReady(true);
+  }), []);
+  useEffect(() => {
+    if (!isProductionFirebase) return;
+    completeGoogleRedirectSignIn()
+      .then((user) => {
+        if (user && !user.isAnonymous) navigate(destination, { replace: true });
+      })
+      .catch((cause) => setError(getFriendlyAuthError(cause)));
+  }, [destination, navigate]);
+  useEffect(() => {
+    if (ready && firebaseUser && !firebaseUser.isAnonymous) navigate(destination, { replace: true });
+  }, [destination, firebaseUser, navigate, ready]);
+  const connect = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await signInWithGoogle();
+    } catch (cause) {
+      setError(getFriendlyAuthError(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <main className="auth-page">
+    <section className="auth-card">
+      <Link className="auth-brand" to="/">intelligensi<span>.ai</span> <b>Video Lab</b></Link>
+      <span className="auth-eyebrow">{mode === "login" ? "Welcome back" : "Create your account"}</span>
+      <h1>{mode === "login" ? "Login" : "Join Video Lab"}</h1>
+      <p>{mode === "login"
+        ? "Continue creating cinematic video, storyboards and connected scenes."
+        : "Create your private workspace for cinematic AI video and storyboard production."}</p>
+      <button className="auth-google" type="button" disabled={busy || !ready} onClick={connect}>
+        <span>G</span>{busy ? "Connecting…" : `Continue with Google`}
+      </button>
+      {error && <p className="error">{error}</p>}
+      <div className="auth-switch">
+        {mode === "login"
+          ? <>New to Video Lab? <Link to="/register">Create an account</Link></>
+          : <>Already have an account? <Link to="/login">Log in</Link></>}
+      </div>
+      <small>By continuing, you agree to use Video Lab responsibly. Your workspace is private by default.</small>
+    </section>
+  </main>;
+}
+
 function Landing() {
   return (
     <main className="home">
       <section className="home-hero">
         <div className="home-copy">
-          <div className="home-kicker"><span>●</span> Intelligensi.ai Storyboard Studio</div>
-          <h1>Your story.<br/><em>In motion.</em></h1>
+          <div className="home-kicker"><span>●</span> Cinematic AI creation platform</div>
+          <h1><img src="/intelligensi-logo.png" alt="intelligensi.ai"/><em>Video Lab.</em></h1>
           <p>
             Shape cinematic AI video scene by scene. Direct the image, movement
             and transition—then carry visual continuity across the whole film.
@@ -362,7 +464,7 @@ function Landing() {
             </figcaption>
           </figure>
           <div className="home-float home-float-top"><i/> Generator ready</div>
-          <div className="home-float home-float-bottom"><b>01—24</b><span>Build the sequence</span></div>
+          <Link className="home-float home-float-bottom" to="/login"><b>Login / Register</b><span>Enter Video Lab</span></Link>
         </div>
       </section>
 
@@ -379,13 +481,13 @@ function Landing() {
           <article><b>01</b><h3>Direct the story</h3><p>Plan up to 24 scenes around one clear artistic goal.</p></article>
           <article><b>02</b><h3>Anchor the image</h3><p>Guide characters, composition and style with visual references.</p></article>
           <article><b>03</b><h3>Carry continuity</h3><p>Flow the final frame of each scene into the opening of the next.</p></article>
-          <article><b>04</b><h3>Finish the cut</h3><p>Control timing, seeds, transitions and production settings.</p></article>
+          <article><b>04</b><h3>Finish the cut</h3><p>Control timing, visual randomisers, transitions and production settings.</p></article>
         </div>
       </section>
 
       <section className="home-final">
         <div><span>Make the film only you can imagine.</span><h2>Ready when you are.</h2></div>
-        <Link className="home-primary" to="/studio">Open LongForm Studio <span>↗</span></Link>
+        <Link className="home-primary" to="/storyboard">Open Storyboard <span>↗</span></Link>
       </section>
 
       <footer className="home-footer">
@@ -488,7 +590,7 @@ function Gallery() {
   });
   return (
     <main className="gallery-page">
-      <h1>Personal Gallery</h1>
+      <h1 className="editorial-page-title">Gallery<span className="editorial-title-stop">.</span></h1>
       <div className="gallery-grid">
         {q.data?.items.length ? (
           q.data.items.map((g) => (
@@ -547,7 +649,7 @@ function Detail() {
       {g && (
         <>
           <h1>Generation</h1>
-          <section className="panel">
+          <section className="panel generation-detail-panel">
             {video.objectUrl ? (
               <video className="video-preview" src={video.objectUrl} controls autoPlay />
             ) : (
@@ -566,19 +668,21 @@ function Detail() {
             {g.safeErrorMessage && (
               <p className="error">{g.safeErrorMessage}</p>
             )}
-            {video.objectUrl && (
-              <a className="button" href={video.objectUrl} download={`${g.id}.mp4`}>
-                Download
-              </a>
-            )}
-            <button onClick={() => navigator.clipboard.writeText(g.prompt)}>
-              Copy prompt
-            </button>
-            <Link to="/studio">Create variation</Link>
-            {!["completed", "failed", "cancelled"].includes(g.status) && (
-              <button onClick={() => cancel.mutate()}>Cancel</button>
-            )}
-            <button onClick={() => proc.mutate()}>Run mock worker</button>
+            <div className="generation-detail-actions">
+              {video.objectUrl && (
+                <a className="button" href={video.objectUrl} download={`${g.id}.mp4`}>
+                  Download
+                </a>
+              )}
+              <button onClick={() => navigator.clipboard.writeText(g.prompt)}>
+                Copy prompt
+              </button>
+              <Link className="button" to="/studio">Create Variation</Link>
+              {!["completed", "failed", "cancelled"].includes(g.status) && (
+                <button onClick={() => cancel.mutate()}>Cancel</button>
+              )}
+              <button onClick={() => proc.mutate()}>Run mock worker</button>
+            </div>
           </section>
         </>
       )}
@@ -732,8 +836,9 @@ function Account() {
   ];
   return (
     <main className="account-page">
-      <h1>Account</h1>
+      <h1 className="editorial-page-title">Account<span className="editorial-title-stop">.</span></h1>
       <div className="account-layout">
+        <div className="account-column">
         <section className="panel account-profile">
           <header className="account-profile-header">
             {avatarChoice === "google" && googlePhoto ? (
@@ -753,9 +858,8 @@ function Account() {
             setAuthError(undefined);
             try {
               await signInWithGoogle();
-              location.reload();
             } catch (error) {
-              setAuthError(error instanceof Error ? error.message : "Google sign-in failed");
+              setAuthError(getFriendlyAuthError(error));
             } finally {
               setAuthBusy(false);
             }
@@ -773,11 +877,24 @@ function Account() {
           )}
         </section>
 
+        <section className="panel account-credits">
+          <span className="account-eyebrow">Usage</span>
+          <h2>Credits</h2>
+          <div className="account-credit-grid">
+            <span><b>{cr.data?.available ?? "…"}</b>Available</span>
+            <span><b>{cr.data?.reserved ?? "…"}</b>Reserved</span>
+            <span><b>{cr.data?.spent ?? "…"}</b>Spent</span>
+          </div>
+          <button disabled>Credit packs coming soon</button>
+        </section>
+        </div>
+
+        <div className="account-column">
         <section className="panel account-preferences">
           <span className="account-eyebrow">Optional profile</span>
           <h2>Make it yours</h2>
           <p>Add optional details for your Video Lab profile. These do not change your Google account.</p>
-          <Link className="account-registration-link" to="/register">Complete demographic and marketing preferences →</Link>
+          <Link className="account-registration-link" to="/onboarding">Complete demographic and marketing preferences →</Link>
           <label><span>Preferred name</span><input value={preferredName} placeholder={googleName || "Your preferred name"} onChange={(event) => setPreferredName(event.target.value)} /></label>
           <label><span>Creative role</span><input value={creativeRole} placeholder="e.g. Director, editor, founder" onChange={(event) => setCreativeRole(event.target.value)} /></label>
           <fieldset className="account-avatar-picker">
@@ -793,17 +910,6 @@ function Account() {
           </fieldset>
         </section>
 
-        <section className="panel account-credits">
-          <span className="account-eyebrow">Usage</span>
-          <h2>Credits</h2>
-          <div className="account-credit-grid">
-            <span><b>{cr.data?.available ?? "…"}</b>Available</span>
-            <span><b>{cr.data?.reserved ?? "…"}</b>Reserved</span>
-            <span><b>{cr.data?.spent ?? "…"}</b>Spent</span>
-          </div>
-          <button disabled>Credit packs coming soon</button>
-        </section>
-
         <section className="panel account-security">
           <span className="account-eyebrow">Account controls</span>
           <h2>Privacy and access</h2>
@@ -813,6 +919,7 @@ function Account() {
             location.href = "/";
           }}>Sign out</button>
         </section>
+        </div>
       </div>
     </main>
   );
@@ -873,8 +980,8 @@ function Admin() {
     release.mutate();
   };
   return (
-    <main>
-      <h1>Runtime Connection</h1>
+    <main className="admin-page">
+      <h1 className="editorial-page-title">Admin<span className="editorial-title-stop">.</span></h1>
       <section className="panel">
         <h2>Lambda runtime connection</h2>
         <p>

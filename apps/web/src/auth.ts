@@ -1,11 +1,12 @@
 import { initializeApp } from 'firebase/app';
 import {
+  getRedirectResult,
   GoogleAuthProvider,
   getAuth,
-  linkWithPopup,
   onAuthStateChanged,
   signInAnonymously,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   type User,
 } from 'firebase/auth';
@@ -51,19 +52,37 @@ export async function signInWithGoogle() {
   if (!firebaseAuth) throw new Error('Firebase Auth is not configured');
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
-  const current = await ensureUser();
   try {
-    const result = current.isAnonymous
-      ? await linkWithPopup(current, provider)
-      : await signInWithPopup(firebaseAuth, provider);
-    return result.user;
+    // Start the popup directly inside the click handler. Waiting for anonymous
+    // auth first loses the browser's user gesture and triggers popup blockers.
+    return (await signInWithPopup(firebaseAuth, provider)).user;
   } catch (error) {
-    const code = (error as { code?: string }).code;
-    if (code === 'auth/credential-already-in-use' || code === 'auth/email-already-in-use') {
-      return (await signInWithPopup(firebaseAuth, provider)).user;
+    if ((error as { code?: string }).code === 'auth/popup-blocked') {
+      await signInWithRedirect(firebaseAuth, provider);
+      return;
     }
     throw error;
   }
+}
+
+export async function completeGoogleRedirectSignIn() {
+  if (!firebaseAuth) return;
+  const result = await getRedirectResult(firebaseAuth);
+  return result?.user;
+}
+
+export function getFriendlyAuthError(error: unknown) {
+  const code = (error as { code?: string }).code;
+  if (code === 'auth/unauthorized-domain') {
+    return 'Google sign-in is not authorised for this domain. Please contact Video Lab support.';
+  }
+  if (code === 'auth/network-request-failed') {
+    return 'Google sign-in could not connect. Check your connection and try again.';
+  }
+  if (code === 'auth/account-exists-with-different-credential') {
+    return 'An account already exists with this email using another sign-in method.';
+  }
+  return error instanceof Error ? error.message : 'Google sign-in failed. Please try again.';
 }
 
 export async function signOutUser() {

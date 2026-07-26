@@ -27,6 +27,14 @@ paths:
       summary: Get the current credit balance
       responses:
         '200': {description: Credits, content: {application/json: {schema: {$ref: '#/components/schemas/CreditWallet'}}}}
+  /v1/prompts/complete:
+    post:
+      operationId: completePrompt
+      summary: Develop a prompt with the connected Sulphur runtime
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PromptCompletionRequest'}}}}
+      responses:
+        '200': {description: Completed prompt, content: {application/json: {schema: {$ref: '#/components/schemas/PromptCompletionResponse'}}}}
+        '503': {description: Runtime unavailable}
   /v1/assets/upload-url:
     post:
       operationId: createUploadUrl
@@ -124,6 +132,8 @@ components:
       allOf:
         - {$ref: '#/components/schemas/RuntimeStatus'}
         - {type: object, required: [baseUrl], properties: {baseUrl: {type: string}, health: {$ref: '#/components/schemas/RuntimeHealth'}}}
+    PromptCompletionRequest: {type: object, required: [prompt, mode], properties: {prompt: {type: string, minLength: 3, maxLength: 2400}, mode: {type: string, enum: [expand]}}}
+    PromptCompletionResponse: {type: object, required: [completedPrompt, mode, provider], properties: {completedPrompt: {type: string}, mode: {type: string, enum: [expand]}, provider: {type: string}}}
     GenerationStatus: {type: string, enum: [queued, preparing, generating, uploading, completed, failed, cancelled]}
     VideoSettings: {type: object, additionalProperties: true, required: [aspectRatio, durationSeconds, quality], properties: {aspectRatio: {type: string, enum: ['16:9','9:16','1:1']}, durationSeconds: {type: number, minimum: 0.1, maximum: 192}, quality: {type: string, enum: [draft, standard, high]}, seed: {type: integer, minimum: 0}, runtime: {type: string}, resolution: {type: string}, overallGoal: {type: string}, storyboard: {type: array, maxItems: 24, items: {type: object}}}}
     AssetPurpose: {type: string, enum: [start_frame, end_frame, reference]}
