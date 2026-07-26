@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/prompts/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Develop a prompt with the connected Sulphur runtime */
+        post: operations["completePrompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/assets/upload-url": {
         parameters: {
             query?: never;
@@ -282,6 +299,17 @@ export interface components {
             baseUrl: string;
             health?: components["schemas"]["RuntimeHealth"];
         };
+        PromptCompletionRequest: {
+            prompt: string;
+            /** @enum {string} */
+            mode: "expand";
+        };
+        PromptCompletionResponse: {
+            completedPrompt: string;
+            /** @enum {string} */
+            mode: "expand";
+            provider: string;
+        };
         /** @enum {string} */
         GenerationStatus: "queued" | "preparing" | "generating" | "uploading" | "completed" | "failed" | "cancelled";
         VideoSettings: {
@@ -464,6 +492,37 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CreditWallet"];
                 };
+            };
+        };
+    };
+    completePrompt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromptCompletionRequest"];
+            };
+        };
+        responses: {
+            /** @description Completed prompt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromptCompletionResponse"];
+                };
+            };
+            /** @description Runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
