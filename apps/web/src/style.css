@@ -128,7 +128,9 @@ body:has(.lf-page){background:radial-gradient(circle at 75% 10%,#27c5b624,transp
 .lf-preview>header{border-color:#1112}.lf-preview-tabs>span{border-color:#159d9133;background:#e8efec;color:#087f76}.lf-preview-tabs small{color:#626966}
 .lf-screen{border-color:#159d9155}.lf-stats span{border-color:#1112;background:#e8e6e0;color:#555b58}.lf-stats b{color:#087f76}
 .lf-history header small,.lf-history-grid button small{color:#656a67}.lf-history-grid button{border-color:#1112;background:#fff;color:#171717}.lf-history-grid button div{background:#dce9e5;color:#087f76}
-.lf-history-grid button div{width:100%;min-height:0;aspect-ratio:4/3;overflow:hidden}
+.lf-history-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+.lf-history-grid button{align-self:start;grid-template-rows:auto auto auto;overflow:hidden}
+.lf-history-grid button>.lf-history-thumbnail{width:100%;height:auto;min-height:0;max-height:180px;aspect-ratio:4/3;overflow:hidden}
 .lf-history-thumbnail img{display:block;width:100%;height:100%;object-fit:cover}
 .lf-history-thumbnail.placeholder span{padding:.7rem;color:#087f76;font-size:.62rem;font-weight:800;text-align:center;text-transform:uppercase}
 .lf-transition-modal{border-color:#159d9155;background:#f4f2ed;box-shadow:0 30px 100px #173e3733}.lf-transition-modal>header,.lf-transition-modal footer{border-color:#1112;background:#e8e6e0}.lf-transition-grid button{border-color:#1112;background:#fff;color:#444}.lf-transition-grid button.selected{border-color:#159d91;background:#1ab3a51a}.lf-transition-glyph{background:#dce9e5;color:#087f76}
