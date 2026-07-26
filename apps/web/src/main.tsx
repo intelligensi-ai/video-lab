@@ -345,10 +345,17 @@ function Landing() {
           <div className="home-orbit home-orbit-one"/>
           <div className="home-orbit home-orbit-two"/>
           <figure>
-            <img
-              src="/images/longform-ltx-storyboard-studio-film-roll.webp"
-              alt="A cinematic film strip carrying a sequence of connected storyboard scenes"
-            />
+            <video
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              poster="/images/longform-ltx-storyboard-studio-film-roll.webp"
+              aria-label="A cinematic film strip carrying a sequence of connected storyboard scenes"
+            >
+              <source src="/Video-lab-startup-video.mp4" type="video/mp4"/>
+            </video>
             <figcaption>
               <span>Continuity engine</span>
               <strong>One film. Every frame connected.</strong>
