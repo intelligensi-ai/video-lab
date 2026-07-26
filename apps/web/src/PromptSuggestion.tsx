@@ -39,6 +39,9 @@ export function PromptSuggestion({
   const hasPrompt = value.trim().length > 0;
   const expandedSuggestion = result || expandPrompt(value, suggestion, expansion);
   const accessibleLabel = label ?? (hasPrompt ? 'Expand this prompt' : 'Show a prompt suggestion');
+  const helpText = hasPrompt
+    ? 'Ask the AI prompt editor to develop the text already written in this field.'
+    : 'Open an example prompt that can be inserted into this field.';
 
   async function toggleSuggestion() {
     if (open) {
@@ -69,7 +72,7 @@ export function PromptSuggestion({
   }
 
   return (
-    <span className="prompt-suggestion">
+    <span className="prompt-suggestion" data-help={helpText}>
       <button
         type="button"
         className="prompt-suggestion-trigger"
