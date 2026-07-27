@@ -1,4 +1,5 @@
 export * from './generated.js';
+export const MAX_STORYBOARD_SCENES = 6;
 export const generationStatuses = ['queued','preparing','generating','uploading','completed','failed','cancelled'] as const;
 export type GenerationStatus = (typeof generationStatuses)[number];
 export interface VideoSettings { aspectRatio:'16:9'|'9:16'|'1:1'; durationSeconds:number; quality:'draft'|'standard'|'high'; seed?:number; [key:string]:unknown }

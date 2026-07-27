@@ -20,11 +20,9 @@ import {
 import type {
   Generation,
   RuntimeStatus,
-  CreditWallet,
   Me,
 } from "@video-lab/contracts";
 import LongFormStoryboardStudio from "./LongFormStoryboardStudio.js";
-import SulphurGeneratorPage from "./LtxSulphurGenerator.js";
 import { useAuthenticatedVideo } from "./AuthenticatedVideo.js";
 import { completeGoogleRedirectSignIn, getApiToken, getFriendlyAuthError, isProductionFirebase, loadRegistrationProfile, observeAuth, saveRegistrationProfile, signInWithGoogle, signOutUser } from "./auth.js";
 import type { User } from "firebase/auth";
@@ -97,13 +95,6 @@ function demoGenerationStatus(generation: Generation): Generation {
   return updated;
 }
 
-function demoCreditCost(settings: Generation["settings"]) {
-  const qualityMultiplier = { draft: 1, standard: 2, high: 3 }[
-    settings.quality
-  ];
-  return Math.ceil((settings.durationSeconds / 4) * qualityMultiplier);
-}
-
 async function demoApi<T>(path: string, init: RequestInit = {}) {
   const method = init.method ?? "GET";
   const generations = readDemoGenerations().map(demoGenerationStatus);
@@ -121,20 +112,11 @@ async function demoApi<T>(path: string, init: RequestInit = {}) {
   }
 
   if (path === "/v1/credits") {
-    const spent = generations
-      .filter((g) => g.status === "completed")
-      .reduce((sum, g) => sum + g.creditCost, 0);
-    const reserved = generations
-      .filter((g) =>
-        ["queued", "preparing", "generating", "uploading"].includes(g.status),
-      )
-      .reduce((sum, g) => sum + g.creditCost, 0);
-
     return {
       uid: token(),
-      available: Math.max(0, 12 - spent - reserved),
-      reserved,
-      spent,
+      available: 0,
+      reserved: 0,
+      spent: 0,
       updatedAt: nowIso(),
       version: generations.length + 1,
     } as T;
@@ -168,7 +150,7 @@ async function demoApi<T>(path: string, init: RequestInit = {}) {
       settings: body.settings,
       status: "queued",
       queuePosition: 1,
-      creditCost: demoCreditCost(body.settings),
+      creditCost: 0,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -294,7 +276,6 @@ function Shell() {
   const isLanding = location.pathname === "/";
   const navItems = [
     { to: "/storyboard", label: "Storyboard Studio" },
-    { to: "/studio", label: "Studio" },
     { to: "/gallery", label: "Gallery" },
     { to: "/account", label: "Account" },
     { to: "/admin", label: "Admin" },
@@ -335,8 +316,8 @@ function Shell() {
         <Route path="/login" element={<AuthEntry mode="login" />} />
         <Route path="/register" element={<AuthEntry mode="register" />} />
         <Route path="/storyboard" element={<ProtectedRoute element={<LongFormStoryboardStudio />} />} />
-        <Route path="/studio" element={<ProtectedRoute element={<SulphurGeneratorPage />} />} />
-        <Route path="/sulphur" element={<Navigate to="/studio" replace />} />
+        <Route path="/studio" element={<Navigate to="/storyboard" replace />} />
+        <Route path="/sulphur" element={<Navigate to="/storyboard" replace />} />
         <Route path="/gallery" element={<ProtectedRoute element={<Gallery />} />} />
         <Route path="/generations/:id" element={<ProtectedRoute element={<Detail />} />} />
         <Route path="/onboarding" element={<ProtectedRoute element={<Registration />} />} />
@@ -372,7 +353,7 @@ function AuthEntry({ mode }: { mode: "login" | "register" }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const requestedPath = (location.state as { from?: string } | null)?.from;
-  const destination = mode === "register" ? "/onboarding" : requestedPath || "/studio";
+  const destination = mode === "register" ? "/onboarding" : requestedPath || "/storyboard";
   useEffect(() => observeAuth((user) => {
     setFirebaseUser(user);
     setReady(true);
@@ -434,11 +415,11 @@ function Landing() {
             and transition—then carry visual continuity across the whole film.
           </p>
           <div className="home-actions">
-            <Link className="home-primary" to="/studio">Start creating <span>↗</span></Link>
+            <Link className="home-primary" to="/storyboard">Start creating <span>↗</span></Link>
             <Link className="home-secondary" to="/gallery">Explore your gallery</Link>
           </div>
           <div className="home-proof">
-            <span><b>24</b> scenes</span>
+            <span><b>6</b> scenes</span>
             <span><b>Frame</b> continuity</span>
             <span><b>Private</b> by default</span>
           </div>
@@ -478,7 +459,7 @@ function Landing() {
           <h2>From first frame<br/>to final cut.</h2>
         </header>
         <div className="home-cards">
-          <article><b>01</b><h3>Direct the story</h3><p>Plan up to 24 scenes around one clear artistic goal.</p></article>
+          <article><b>01</b><h3>Direct the story</h3><p>Plan up to 6 scenes around one clear artistic goal.</p></article>
           <article><b>02</b><h3>Anchor the image</h3><p>Guide characters, composition and style with visual references.</p></article>
           <article><b>03</b><h3>Carry continuity</h3><p>Flow the final frame of each scene into the opening of the next.</p></article>
           <article><b>04</b><h3>Finish the cut</h3><p>Control timing, visual randomisers, transitions and production settings.</p></article>
@@ -493,17 +474,13 @@ function Landing() {
       <footer className="home-footer">
         <span>© 2026 Intelligensi.ai</span>
         <div><a>Privacy</a><a>Terms</a></div>
-        <small>Trial credits are limited and non-transferable.</small>
+        <small>Your films are private by default.</small>
       </footer>
     </main>
   );
 }
 function Studio() {
   const nav = useNavigate();
-  const credits = useQuery({
-    queryKey: ["credits"],
-    queryFn: () => api<CreditWallet>("/v1/credits"),
-  });
   const runtime = useQuery({
     queryKey: ["runtime"],
     queryFn: () => api<RuntimeStatus>("/v1/runtime/status"),
@@ -563,10 +540,6 @@ function Studio() {
           Optional start, end, or reference image upload target is available
           through the API.
         </div>
-        <p>
-          Credits: {credits.data?.available ?? "…"} available /{" "}
-          {credits.data?.reserved ?? 0} reserved
-        </p>
         <p>
           Runtime: {runtime.data?.status} · Queue depth{" "}
           {runtime.data?.queueDepth}
@@ -661,10 +634,7 @@ function Detail() {
               <p className="error">Video retrieval failed: {video.error}</p>
             )}
             <p>{g.prompt}</p>
-            <p>
-              Cost: {g.creditCost} credits · Created{" "}
-              {new Date(g.createdAt).toLocaleString()}
-            </p>
+            <p>Created {new Date(g.createdAt).toLocaleString()}</p>
             {g.safeErrorMessage && (
               <p className="error">{g.safeErrorMessage}</p>
             )}
@@ -677,7 +647,7 @@ function Detail() {
               <button onClick={() => navigator.clipboard.writeText(g.prompt)}>
                 Copy prompt
               </button>
-              <Link className="button" to="/studio">Create Variation</Link>
+              <Link className="button" to="/storyboard">Create Variation</Link>
               {!["completed", "failed", "cancelled"].includes(g.status) && (
                 <button onClick={() => cancel.mutate()}>Cancel</button>
               )}
@@ -817,10 +787,6 @@ function Account() {
     localStorage.setItem("vl_profile_avatar", avatarChoice);
   }, [preferredName, creativeRole, avatarChoice]);
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/v1/me") });
-  const cr = useQuery({
-    queryKey: ["credits"],
-    queryFn: () => api<CreditWallet>("/v1/credits"),
-  });
   const googleProfile = firebaseUser?.providerData.find((provider) => provider.providerId === "google.com");
   const googleName = googleProfile?.displayName ?? firebaseUser?.displayName ?? "";
   const googleEmail = googleProfile?.email ?? (!firebaseUser?.isAnonymous ? firebaseUser?.email : "") ?? "";
@@ -877,16 +843,6 @@ function Account() {
           )}
         </section>
 
-        <section className="panel account-credits">
-          <span className="account-eyebrow">Usage</span>
-          <h2>Credits</h2>
-          <div className="account-credit-grid">
-            <span><b>{cr.data?.available ?? "…"}</b>Available</span>
-            <span><b>{cr.data?.reserved ?? "…"}</b>Reserved</span>
-            <span><b>{cr.data?.spent ?? "…"}</b>Spent</span>
-          </div>
-          <button disabled>Credit packs coming soon</button>
-        </section>
         </div>
 
         <div className="account-column">

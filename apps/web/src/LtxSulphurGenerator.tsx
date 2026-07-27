@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { Generation } from '@video-lab/contracts';
-import { generateSulphurVideo, getCredits, getGeneration, getRuntimeStatus, type ReferenceRole, type SulphurGenerationPayload } from './api.js';
+import { generateSulphurVideo, getGeneration, getRuntimeStatus, type ReferenceRole, type SulphurGenerationPayload } from './api.js';
 import { useAuthenticatedVideo } from './AuthenticatedVideo.js';
 import { PromptSuggestion } from './PromptSuggestion.js';
 
@@ -36,7 +36,6 @@ export default function SulphurGeneratorPage() {
   const [history, setHistory] = useState<Generation[]>([]);
   const [selected, setSelected] = useState<Generation | undefined>();
   const validation = useMemo(() => validate(form), [form]);
-  const credits = useQuery({ queryKey: ['credits'], queryFn: getCredits });
   const runtime = useQuery({ queryKey: ['runtime'], queryFn: getRuntimeStatus });
   const mutation = useMutation({
     mutationFn: () => generateSulphurVideo(buildSulphurPayload(form)),
@@ -67,7 +66,7 @@ export default function SulphurGeneratorPage() {
       </div>
       <div className="studio-health" aria-label="Studio status">
         <span><i/>{runtime.data?.status ?? 'Checking'}</span>
-        <span><b>{credits.data?.available ?? '…'}</b> credits</span>
+        <span><b>Private</b> session</span>
         <Link to="/gallery">Open gallery ↗</Link>
       </div>
     </header>
@@ -288,7 +287,7 @@ function GenerationPreview({
         <div><span>▶</span><strong>Your generated video will appear here</strong><p>Generation usually takes 20–40 seconds.</p></div>
       </div>}
     </div>
-    {generation && <div className="preview-meta"><span><b>{generation.settings.durationSeconds}s</b> duration</span><span><b>{generation.creditCost}</b> credits</span><span><b>{generation.settings.seed ?? 'Auto'}</b> seed</span></div>}
+    {generation && <div className="preview-meta"><span><b>{generation.settings.durationSeconds}s</b> duration</span><span><b>{generation.status}</b> status</span><span><b>{generation.settings.seed ?? 'Auto'}</b> seed</span></div>}
     {video.error && <div className="error-panel"><p>Video retrieval failed: {video.error}</p></div>}
     {error && <div className="error-panel"><strong>Generation failed</strong><p>{error.message}</p></div>}
     <div className="preview-actions">

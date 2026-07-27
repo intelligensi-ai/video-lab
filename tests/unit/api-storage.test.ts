@@ -27,11 +27,9 @@ describe('Firebase Storage configuration', () => {
 });
 
 describe('credit enforcement configuration', () => {
-  it('keeps credit limits enabled by default', () => {
-    expect(creditLimitsEnabled({})).toBe(true);
-  });
-
-  it('disables credit limits explicitly for testing', () => {
+  it('keeps credit limits disabled while the feature is parked', () => {
+    expect(creditLimitsEnabled({})).toBe(false);
+    expect(creditLimitsEnabled({ CREDIT_LIMITS_ENABLED: 'true' })).toBe(false);
     expect(creditLimitsEnabled({ CREDIT_LIMITS_ENABLED: 'false' })).toBe(false);
   });
 });

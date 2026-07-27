@@ -1,4 +1,5 @@
-import type { CreditWallet, Generation, RuntimeStatus } from '@video-lab/contracts';
+import { MAX_STORYBOARD_SCENES } from '@video-lab/contracts';
+import type { Generation, RuntimeStatus } from '@video-lab/contracts';
 import { getStorage, ref, uploadBytes } from 'firebase/storage';
 import { firebaseApp, getApiToken, getFirebaseUser, isProductionFirebase } from './auth.js';
 
@@ -142,7 +143,6 @@ export async function generateSulphurVideo(payload: SulphurGenerationPayload) {
   return generation;
 }
 
-export const getCredits = () => api<CreditWallet>('/v1/credits');
 export const getRuntimeStatus = () => api<RuntimeStatus>('/v1/runtime/status');
 export const getGeneration = (id: string) => api<Generation>(`/v1/generations/${id}`);
 export const getGallery = () => api<{ items: Generation[] }>('/v1/gallery');
@@ -193,6 +193,9 @@ export interface LongFormGenerationPayload {
 }
 
 export async function generateLongFormVideo(payload: LongFormGenerationPayload) {
+  if (payload.scenes.length > MAX_STORYBOARD_SCENES) {
+    throw new Error(`Storyboard supports up to ${MAX_STORYBOARD_SCENES} scenes per generation.`);
+  }
   await Promise.all([
     storeUserAsset(payload.globalVisualAnchor, 'globalVisualAnchor'),
     ...payload.references.map((reference) => storeUserAsset(reference.file, reference.role)),
