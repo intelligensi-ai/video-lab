@@ -1,13 +1,18 @@
 import { initializeApp } from 'firebase/app';
 import {
+  createUserWithEmailAndPassword,
   getRedirectResult,
   GoogleAuthProvider,
   getAuth,
   onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   signInAnonymously,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
   signOut,
+  updateProfile,
   type User,
 } from 'firebase/auth';
 import { doc, getDoc, getFirestore, setDoc } from 'firebase/firestore';
@@ -65,6 +70,24 @@ export async function signInWithGoogle() {
   }
 }
 
+export async function registerWithEmail(name: string, email: string, password: string) {
+  if (!firebaseAuth) throw new Error('Firebase Auth is not configured');
+  const credential = await createUserWithEmailAndPassword(firebaseAuth, email.trim(), password);
+  await updateProfile(credential.user, { displayName: name.trim() });
+  await sendEmailVerification(credential.user).catch(() => undefined);
+  return credential.user;
+}
+
+export async function signInWithEmail(email: string, password: string) {
+  if (!firebaseAuth) throw new Error('Firebase Auth is not configured');
+  return (await signInWithEmailAndPassword(firebaseAuth, email.trim(), password)).user;
+}
+
+export async function requestPasswordReset(email: string) {
+  if (!firebaseAuth) throw new Error('Firebase Auth is not configured');
+  await sendPasswordResetEmail(firebaseAuth, email.trim());
+}
+
 export async function completeGoogleRedirectSignIn() {
   if (!firebaseAuth) return;
   const result = await getRedirectResult(firebaseAuth);
@@ -77,12 +100,30 @@ export function getFriendlyAuthError(error: unknown) {
     return 'Google sign-in is not authorised for this domain. Please contact Video Lab support.';
   }
   if (code === 'auth/network-request-failed') {
-    return 'Google sign-in could not connect. Check your connection and try again.';
+    return 'Sign-in could not connect. Check your connection and try again.';
   }
   if (code === 'auth/account-exists-with-different-credential') {
     return 'An account already exists with this email using another sign-in method.';
   }
-  return error instanceof Error ? error.message : 'Google sign-in failed. Please try again.';
+  if (code === 'auth/email-already-in-use') {
+    return 'An account already exists with this email. Log in instead or reset your password.';
+  }
+  if (code === 'auth/invalid-email') {
+    return 'Enter a valid email address.';
+  }
+  if (code === 'auth/weak-password') {
+    return 'Choose a stronger password with at least 8 characters.';
+  }
+  if (['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found'].includes(code ?? '')) {
+    return 'The email or password is incorrect.';
+  }
+  if (code === 'auth/too-many-requests') {
+    return 'Too many attempts. Please wait a moment or reset your password.';
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return 'Email and password sign-in is not enabled yet. Please use Google or contact Video Lab support.';
+  }
+  return error instanceof Error ? error.message : 'Sign-in failed. Please try again.';
 }
 
 export async function signOutUser() {

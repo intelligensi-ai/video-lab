@@ -90,19 +90,12 @@ paths:
       operationId: pauseRuntime
       summary: Pause the runtime
       responses: {'200': {description: Runtime, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeStatus'}}}}}
-  /v1/admin/runtime/connect:
+  /v1/admin/runtime/discover:
     post:
-      operationId: connectRuntime
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeConnectRequest'}}}}
+      operationId: discoverRuntime
+      summary: Force a refresh of the private Deploy Studio runtime lease
       responses:
-        '200': {description: Runtime connected, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeConnectResponse'}}}}
-  /v1/admin/runtime/release:
-    post:
-      operationId: releaseRuntime
-      summary: Release the connected runtime so a replacement endpoint can be configured
-      responses:
-        '200': {description: Runtime released, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeStatus'}}}}
-        '409': {description: Runtime has an active generation}
+        '200': {description: Runtime discovery refreshed, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeStatus'}}}}
   /v1/admin/runtime/resume:
     post:
       operationId: resumeRuntime
@@ -127,11 +120,6 @@ components:
   schemas:
     Health: {type: object, required: [ok, service, version], properties: {ok: {type: boolean}, service: {type: string}, version: {type: string}}}
     RuntimeHealth: {type: object, required: [ok, provider], properties: {ok: {type: boolean}, provider: {type: string}, worker: {type: string}, ready: {type: boolean}, message: {type: string}}}
-    RuntimeConnectRequest: {type: object, properties: {lambdaIp: {type: string}, baseUrl: {type: string}}}
-    RuntimeConnectResponse:
-      allOf:
-        - {$ref: '#/components/schemas/RuntimeStatus'}
-        - {type: object, required: [baseUrl], properties: {baseUrl: {type: string}, health: {$ref: '#/components/schemas/RuntimeHealth'}}}
     PromptCompletionRequest: {type: object, required: [prompt, mode], properties: {prompt: {type: string, minLength: 3, maxLength: 2400}, mode: {type: string, enum: [expand]}}}
     PromptCompletionResponse: {type: object, required: [completedPrompt, mode, provider], properties: {completedPrompt: {type: string}, mode: {type: string, enum: [expand]}, provider: {type: string}}}
     GenerationStatus: {type: string, enum: [queued, preparing, generating, uploading, completed, failed, cancelled]}
@@ -144,6 +132,7 @@ components:
     GalleryPage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Generation'}}, nextCursor: {type: string}}}
     Me: {type: object, required: [uid, email, status, roles, termsVersion], properties: {uid: {type: string}, email: {type: string}, displayName: {type: string}, photoURL: {type: string}, status: {type: string, enum: [active, suspended]}, roles: {type: array, items: {type: string}}, termsVersion: {type: string}, trialGrantedAt: {type: string, format: date-time}}}
     CreditWallet: {type: object, required: [uid, available, reserved, spent, updatedAt, version], properties: {uid: {type: string}, available: {type: integer}, reserved: {type: integer}, spent: {type: integer}, updatedAt: {type: string, format: date-time}, version: {type: integer}}}
-    RuntimeStatus: {type: object, required: [provider, status, acceptingSubmissions, killSwitch, queueDepth, updatedAt], properties: {provider: {type: string}, status: {type: string, enum: [healthy, degraded, unavailable, paused]}, acceptingSubmissions: {type: boolean}, killSwitch: {type: boolean}, lastHeartbeatAt: {type: string, format: date-time}, activeGenerationId: {type: string}, queueDepth: {type: integer}, updatedAt: {type: string, format: date-time}, baseUrl: {type: string}}}
+    RuntimeDiscovery: {type: object, required: [source, state], properties: {source: {type: string, enum: [deploy-studio, environment, legacy, none]}, state: {type: string, enum: [connected, waiting, stale, unavailable]}, instanceId: {type: string}, leaseExpiresAt: {type: string, format: date-time}, lastPublishedAt: {type: string, format: date-time}, message: {type: string}}}
+    RuntimeStatus: {type: object, required: [provider, status, acceptingSubmissions, killSwitch, queueDepth, updatedAt], properties: {provider: {type: string}, status: {type: string, enum: [healthy, degraded, unavailable, paused]}, acceptingSubmissions: {type: boolean}, killSwitch: {type: boolean}, lastHeartbeatAt: {type: string, format: date-time}, activeGenerationId: {type: string}, queueDepth: {type: integer}, updatedAt: {type: string, format: date-time}, discovery: {$ref: '#/components/schemas/RuntimeDiscovery'}}}
     AdminCreditAdjustment: {type: object, required: [uid, amount, reason], properties: {uid: {type: string}, amount: {type: integer}, reason: {type: string, minLength: 3}}}
     Problem: {type: object, required: [type, title, status, detail, code, traceId], properties: {type: {type: string}, title: {type: string}, status: {type: integer}, detail: {type: string}, code: {type: string}, traceId: {type: string}, fieldErrors: {type: array, items: {type: object}}}}

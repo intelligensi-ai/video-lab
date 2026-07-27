@@ -24,7 +24,7 @@ import type {
 } from "@video-lab/contracts";
 import LongFormStoryboardStudio from "./LongFormStoryboardStudio.js";
 import { useAuthenticatedVideo } from "./AuthenticatedVideo.js";
-import { completeGoogleRedirectSignIn, getApiToken, getFriendlyAuthError, isProductionFirebase, loadRegistrationProfile, observeAuth, saveRegistrationProfile, signInWithGoogle, signOutUser } from "./auth.js";
+import { completeGoogleRedirectSignIn, getApiToken, getFriendlyAuthError, isProductionFirebase, loadRegistrationProfile, observeAuth, registerWithEmail, requestPasswordReset, saveRegistrationProfile, signInWithEmail, signInWithGoogle, signOutUser } from "./auth.js";
 import type { User } from "firebase/auth";
 import homeMarkUrl from "../../../public/fav-icon.png";
 import "./style.css";
@@ -37,11 +37,6 @@ const token = () => localStorage.getItem("vl_token") || "demo-user";
 type GenerationRequest = {
   prompt: string;
   settings: Generation["settings"];
-};
-
-type RuntimeConnectResponse = RuntimeStatus & {
-  baseUrl: string;
-  health?: { ok: boolean; provider: string; message?: string };
 };
 
 function nowIso() {
@@ -201,11 +196,7 @@ async function demoApi<T>(path: string, init: RequestInit = {}) {
     return { ok: true } as T;
   }
 
-  if (path === "/v1/admin/runtime/connect" && method === "POST") {
-    const body = JSON.parse(String(init.body ?? "{}")) as { lambdaIp?: string };
-    const baseUrl = body.lambdaIp?.startsWith("http")
-      ? body.lambdaIp
-      : `http://${body.lambdaIp}`;
+  if (path === "/v1/admin/runtime/discover" && method === "POST") {
     return {
       provider: "sulphur-ltx",
       status: "healthy",
@@ -216,8 +207,14 @@ async function demoApi<T>(path: string, init: RequestInit = {}) {
         ["queued", "preparing", "generating", "uploading"].includes(g.status),
       ).length,
       updatedAt: nowIso(),
-      baseUrl,
-      health: { ok: true, provider: "browser-demo", message: "healthy" },
+      discovery: {
+        source: "deploy-studio",
+        state: "connected",
+        instanceId: "local-demo",
+        leaseExpiresAt: new Date(Date.now() + 75_000).toISOString(),
+        lastPublishedAt: nowIso(),
+        message: "Deploy Studio runtime lease is current",
+      },
     } as T;
   }
 
@@ -243,7 +240,7 @@ async function api<T>(path: string, init: RequestInit = {}) {
       if (
         ENABLE_DEMO_API &&
         r.status === 404 &&
-        path !== "/v1/admin/runtime/connect"
+        path !== "/v1/admin/runtime/discover"
       ) {
         return demoApi<T>(path, init);
       }
@@ -351,7 +348,16 @@ function AuthEntry({ mode }: { mode: "login" | "register" }) {
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [ready, setReady] = useState(!isProductionFirebase);
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<"google" | "email" | "reset">();
   const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [discoverySource, setDiscoverySource] = useState("");
+  const [subscribeEmail, setSubscribeEmail] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const requestedPath = (location.state as { from?: string } | null)?.from;
   const destination = mode === "register" ? "/onboarding" : requestedPath || "/storyboard";
   useEffect(() => observeAuth((user) => {
@@ -367,17 +373,72 @@ function AuthEntry({ mode }: { mode: "login" | "register" }) {
       .catch((cause) => setError(getFriendlyAuthError(cause)));
   }, [destination, navigate]);
   useEffect(() => {
-    if (ready && firebaseUser && !firebaseUser.isAnonymous) navigate(destination, { replace: true });
-  }, [destination, firebaseUser, navigate, ready]);
+    if (ready && !busy && firebaseUser && !firebaseUser.isAnonymous) navigate(destination, { replace: true });
+  }, [busy, destination, firebaseUser, navigate, ready]);
   const connect = async () => {
     setBusy(true);
+    setBusyAction("google");
     setError(undefined);
+    setNotice(undefined);
     try {
       await signInWithGoogle();
     } catch (cause) {
       setError(getFriendlyAuthError(cause));
     } finally {
       setBusy(false);
+      setBusyAction(undefined);
+    }
+  };
+  const submitEmail = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError(undefined);
+    setNotice(undefined);
+    if (mode === "register") {
+      if (name.trim().length < 2) return setError("Enter your full name.");
+      if (password.length < 8) return setError("Create a password with at least 8 characters.");
+      if (password !== confirmPassword) return setError("The two passwords do not match.");
+      if (!discoverySource) return setError("Tell us how you heard about Video Lab.");
+      if (!acceptedTerms) return setError("Please accept the Terms and Privacy Policy to create an account.");
+    }
+    if (!email.trim() || !password) return setError("Enter your email and password.");
+    setBusy(true);
+    setBusyAction("email");
+    try {
+      if (mode === "register") {
+        await registerWithEmail(name, email, password);
+        await saveRegistrationProfile({
+          preferredName: name.trim(),
+          discoverySource,
+          productUpdates: subscribeEmail,
+          registrationMethod: "password",
+          termsAcceptedAt: new Date().toISOString(),
+          signupCompletedAt: new Date().toISOString(),
+        });
+      } else {
+        await signInWithEmail(email, password);
+      }
+      navigate(destination, { replace: true });
+    } catch (cause) {
+      setError(getFriendlyAuthError(cause));
+    } finally {
+      setBusy(false);
+      setBusyAction(undefined);
+    }
+  };
+  const resetPassword = async () => {
+    setError(undefined);
+    setNotice(undefined);
+    if (!email.trim()) return setError("Enter your email address first.");
+    setBusy(true);
+    setBusyAction("reset");
+    try {
+      await requestPasswordReset(email);
+      setNotice("Password reset email sent. Check your inbox.");
+    } catch (cause) {
+      setError(getFriendlyAuthError(cause));
+    } finally {
+      setBusy(false);
+      setBusyAction(undefined);
     }
   };
 
@@ -390,9 +451,28 @@ function AuthEntry({ mode }: { mode: "login" | "register" }) {
         ? "Continue creating cinematic video, storyboards and connected scenes."
         : "Create your private workspace for cinematic AI video and storyboard production."}</p>
       <button className="auth-google" type="button" disabled={busy || !ready} onClick={connect}>
-        <span>G</span>{busy ? "Connecting…" : `Continue with Google`}
+        <span>G</span>{busyAction === "google" ? "Connecting…" : `Continue with Google`}
       </button>
+      <div className="auth-divider"><span>or use email</span></div>
+      <form className="auth-email-form" onSubmit={submitEmail}>
+        {mode === "register" && <label><span>Full name</span><input type="text" autoComplete="name" value={name} placeholder="Your name" required onChange={(event) => setName(event.target.value)}/></label>}
+        <label><span>Email address</span><input type="email" autoComplete="email" value={email} placeholder="you@example.com" required onChange={(event) => setEmail(event.target.value)}/></label>
+        <div className={mode === "register" ? "auth-password-grid" : ""}>
+          <label><span>{mode === "register" ? "Create password" : "Password"}</span><input type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} value={password} placeholder={mode === "register" ? "At least 8 characters" : "Your password"} minLength={mode === "register" ? 8 : undefined} required onChange={(event) => setPassword(event.target.value)}/></label>
+          {mode === "register" && <label><span>Repeat password</span><input type="password" autoComplete="new-password" value={confirmPassword} placeholder="Repeat your password" minLength={8} required onChange={(event) => setConfirmPassword(event.target.value)}/></label>}
+        </div>
+        {mode === "register" && <>
+          <label><span>How did you hear about us?</span><select value={discoverySource} required onChange={(event) => setDiscoverySource(event.target.value)}><option value="">Select one</option><option>Search engine</option><option>Social media</option><option>Friend or colleague</option><option>Event or community</option><option>Article or newsletter</option><option>Other</option></select></label>
+          <div className="auth-consents">
+            <label><input type="checkbox" checked={subscribeEmail} onChange={(event) => setSubscribeEmail(event.target.checked)}/><span><b>Subscribe to email updates</b><small>Product news, creative ideas and occasional Video Lab updates. You can unsubscribe at any time.</small></span></label>
+            <label><input type="checkbox" required checked={acceptedTerms} onChange={(event) => setAcceptedTerms(event.target.checked)}/><span><b>I agree to the Terms and Privacy Policy</b><small>Required to create your private Video Lab account.</small></span></label>
+          </div>
+        </>}
+        <button className="auth-email-submit" type="submit" disabled={busy || !ready}>{busyAction === "email" ? (mode === "register" ? "Creating account…" : "Logging in…") : mode === "register" ? "Create account" : "Login"}</button>
+        {mode === "login" && <button className="auth-reset" type="button" disabled={busy} onClick={resetPassword}>{busyAction === "reset" ? "Sending…" : "Forgot password?"}</button>}
+      </form>
       {error && <p className="error">{error}</p>}
+      {notice && <p className="auth-notice">{notice}</p>}
       <div className="auth-switch">
         {mode === "login"
           ? <>New to Video Lab? <Link to="/register">Create an account</Link></>
@@ -882,112 +962,40 @@ function Account() {
 }
 function Admin() {
   const isLocalDevelopment = import.meta.env.DEV;
-  const [lambdaIp, setLambdaIp] = useState("");
-  const [connection, setConnection] = useState<RuntimeConnectResponse>();
-  const [connectError, setConnectError] = useState<string>();
   const r = useQuery({
     queryKey: ["runtime"],
     queryFn: () => api<RuntimeStatus>("/v1/runtime/status"),
+    refetchInterval: 15_000,
   });
   const call = (p: string) =>
     api<RuntimeStatus>(p, { method: "POST" }).then(() => r.refetch());
-  const connect = useMutation({
-    mutationFn: () =>
-      api<RuntimeConnectResponse>("/v1/admin/runtime/connect", {
-        method: "POST",
-        body: JSON.stringify({ lambdaIp }),
-      }),
-    onSuccess: (result) => {
-      setConnection(result);
-      setConnectError(undefined);
-      setLambdaIp("");
-      r.refetch();
-    },
-    onError: (error) => {
-      setConnection(undefined);
-      setConnectError(
-        error instanceof Error ? error.message : "Runtime connection failed",
-      );
-    },
+  const discover = useMutation({
+    mutationFn: () => api<RuntimeStatus>("/v1/admin/runtime/discover", { method: "POST" }),
+    onSuccess: () => r.refetch(),
   });
-  const release = useMutation({
-    mutationFn: () =>
-      api<RuntimeStatus>("/v1/admin/runtime/release", { method: "POST" }),
-    onSuccess: () => {
-      setConnection(undefined);
-      setConnectError(undefined);
-      r.refetch();
-    },
-    onError: (error) => {
-      setConnectError(
-        error instanceof Error ? error.message : "Runtime release failed",
-      );
-    },
-  });
-  const releaseRuntime = () => {
-    const currentBaseUrl = r.data?.baseUrl;
-    if (currentBaseUrl) {
-      try {
-        setLambdaIp(new URL(currentBaseUrl).hostname);
-      } catch {
-        setLambdaIp(currentBaseUrl.replace(/^https?:\/\//, "").split("/")[0]);
-      }
-    }
-    release.mutate();
-  };
+  const discovery = r.data?.discovery;
+  const connected = r.data?.status === "healthy" && discovery?.state === "connected";
   return (
     <main className="admin-page">
       <h1 className="editorial-page-title">Admin<span className="editorial-title-stop">.</span></h1>
-      <section className="panel">
-        <h2>Lambda runtime connection</h2>
-        <p>
-          Testing mode: enter a public Lambda IP to connect or replace the
-          current runtime.
-        </p>
-        <p className={r.data?.baseUrl ? "success" : "error"}>
-          Connected endpoint: {r.data?.baseUrl ?? "Not configured"}
-        </p>
-        {r.data?.baseUrl && (
-          <button
-            type="button"
-            disabled={release.isPending}
-            onClick={releaseRuntime}
-          >
-            {release.isPending ? "Releasing…" : "Release connection"}
-          </button>
-        )}
-        <div className="runtime-connect">
-          <label>
-            Lambda IP address
-            <input
-              value={lambdaIp}
-              onChange={(event) => {
-                setLambdaIp(event.target.value);
-                setConnection(undefined);
-                setConnectError(undefined);
-              }}
-              placeholder="150.136.94.140"
-            />
-          </label>
-          <button
-            disabled={!lambdaIp.trim() || connect.isPending}
-            onClick={() => connect.mutate()}
-          >
-            {connect.isPending
-              ? "Checking…"
-              : r.data?.baseUrl
-                ? "Replace connection"
-                : "Connect"}
-          </button>
+      <section className="panel runtime-discovery-panel">
+        <header>
+          <div>
+            <span className="account-eyebrow">Deploy Studio handover</span>
+            <h2>Automatic Lambda connection</h2>
+            <p>Deploy Studio securely publishes the active runtime. Video Lab validates its renewable lease and health automatically—no IP address is entered or exposed here.</p>
+          </div>
+          <span className={`runtime-discovery-state ${connected ? "connected" : ""}`}><i/>{r.isLoading ? "Checking" : connected ? "Connected" : discovery?.state ?? r.data?.status ?? "Unavailable"}</span>
+        </header>
+        <div className="runtime-discovery-grid">
+          <span><small>Discovery source</small><strong>{discovery?.source === "deploy-studio" ? "Deploy Studio" : discovery?.source ?? "Waiting"}</strong></span>
+          <span><small>Runtime health</small><strong>{r.data?.status ?? "Checking"}</strong></span>
+          <span><small>Lease expires</small><strong>{discovery?.leaseExpiresAt ? new Date(discovery.leaseExpiresAt).toLocaleTimeString() : "—"}</strong></span>
+          <span><small>Queue</small><strong>{r.data?.queueDepth ?? 0}</strong></span>
         </div>
-        {connection && (
-          <p className="success">
-            Connected to {connection.baseUrl}. Runtime status:{" "}
-            {connection.status}.
-          </p>
-        )}
-        {connectError && <p className="error">{connectError}</p>}
-        <pre>{JSON.stringify(r.data, null, 2)}</pre>
+        <p className={connected ? "success" : "runtime-discovery-message"}>{discovery?.message ?? "Waiting for Deploy Studio to publish the active runtime."}</p>
+        <button type="button" disabled={discover.isPending} onClick={() => discover.mutate()}>{discover.isPending ? "Refreshing…" : "Refresh handover"}</button>
+        {discover.error && <p className="error">{discover.error instanceof Error ? discover.error.message : "Runtime discovery failed"}</p>}
         {isLocalDevelopment && <>
           <button onClick={() => call("/v1/admin/runtime/pause")}>
             Pause submissions

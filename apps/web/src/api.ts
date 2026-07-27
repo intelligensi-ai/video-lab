@@ -225,6 +225,8 @@ export async function generateLongFormVideo(payload: LongFormGenerationPayload) 
     const endFrameBase64 = endFrameObjectPath ? undefined : await fileToDataUrl(scene.endFrame);
     return {
       ...scene,
+      trimStart: 0,
+      trimEnd: scene.duration,
       startFrame: undefined,
       endFrame: undefined,
       startFrameBase64,
@@ -233,7 +235,7 @@ export async function generateLongFormVideo(payload: LongFormGenerationPayload) 
       endFrameObjectPath,
     };
   }));
-  const durationSeconds = storyboard.reduce((total, scene) => total + Math.max(0.1, scene.trimEnd - scene.trimStart), 0);
+  const durationSeconds = storyboard.reduce((total, scene) => total + scene.duration, 0);
   const generation = await api<Generation>('/v1/generations', {
     method: 'POST',
     headers: { 'Idempotency-Key': crypto.randomUUID() },

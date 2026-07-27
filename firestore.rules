@@ -8,7 +8,8 @@ service cloud.firestore {
     match /creditLedger/{id} { allow read: if signedIn() && resource.data.uid == request.auth.uid; allow write: if false; }
     match /generations/{id} { allow read: if signedIn() && resource.data.uid == request.auth.uid; allow write: if false; }
     match /assets/{id} { allow read: if signedIn() && resource.data.uid == request.auth.uid; allow write: if false; }
-    match /runtimeState/{id} { allow read: if signedIn(); allow write: if false; }
+    match /runtimeState/{id} { allow read, write: if false; }
+    match /runtimeDiscovery/{id} { allow read, write: if false; }
     match /queue/{id} { allow read, write: if false; }
     match /adminAudit/{id} { allow read, write: if false; }
     match /systemMetrics/{id} { allow read: if signedIn(); allow write: if false; }

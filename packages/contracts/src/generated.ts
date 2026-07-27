@@ -191,7 +191,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/admin/runtime/connect": {
+    "/v1/admin/runtime/discover": {
         parameters: {
             query?: never;
             header?: never;
@@ -200,24 +200,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["connectRuntime"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/admin/runtime/release": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Release the connected runtime so a replacement endpoint can be configured */
-        post: operations["releaseRuntime"];
+        /** Force a refresh of the private Deploy Studio runtime lease */
+        post: operations["discoverRuntime"];
         delete?: never;
         options?: never;
         head?: never;
@@ -290,14 +274,6 @@ export interface components {
             worker?: string;
             ready?: boolean;
             message?: string;
-        };
-        RuntimeConnectRequest: {
-            lambdaIp?: string;
-            baseUrl?: string;
-        };
-        RuntimeConnectResponse: components["schemas"]["RuntimeStatus"] & {
-            baseUrl: string;
-            health?: components["schemas"]["RuntimeHealth"];
         };
         PromptCompletionRequest: {
             prompt: string;
@@ -396,6 +372,18 @@ export interface components {
             updatedAt: string;
             version: number;
         };
+        RuntimeDiscovery: {
+            /** @enum {string} */
+            source: "deploy-studio" | "environment" | "legacy" | "none";
+            /** @enum {string} */
+            state: "connected" | "waiting" | "stale" | "unavailable";
+            instanceId?: string;
+            /** Format: date-time */
+            leaseExpiresAt?: string;
+            /** Format: date-time */
+            lastPublishedAt?: string;
+            message?: string;
+        };
         RuntimeStatus: {
             provider: string;
             /** @enum {string} */
@@ -408,7 +396,7 @@ export interface components {
             queueDepth: number;
             /** Format: date-time */
             updatedAt: string;
-            baseUrl?: string;
+            discovery?: components["schemas"]["RuntimeDiscovery"];
         };
         AdminCreditAdjustment: {
             uid: string;
@@ -693,31 +681,7 @@ export interface operations {
             };
         };
     };
-    connectRuntime: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RuntimeConnectRequest"];
-            };
-        };
-        responses: {
-            /** @description Runtime connected */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RuntimeConnectResponse"];
-                };
-            };
-        };
-    };
-    releaseRuntime: {
+    discoverRuntime: {
         parameters: {
             query?: never;
             header?: never;
@@ -726,7 +690,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Runtime released */
+            /** @description Runtime discovery refreshed */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -734,13 +698,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RuntimeStatus"];
                 };
-            };
-            /** @description Runtime has an active generation */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };
