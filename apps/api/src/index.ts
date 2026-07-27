@@ -3,7 +3,53 @@ import { getFirestore } from 'firebase-admin/firestore';import { getStorage } fr
 type Principal={uid:string;email:string;admin:boolean}; let runtime=createRuntimeFromEnv();
 type StoredGeneration=Generation&{uid:string;runtimeJobId?:string;outputBytes?:Uint8Array;outputContentType?:string;outputObjectPath?:string};
 const users=new Map<string,Me>(); const wallets=new Map<string,CreditWallet>(); const gens=new Map<string,StoredGeneration>(); const queue:QueueItem[]=[]; const idempotency=new Map<string,string>(); const assets=new Map<string,{uid:string;purpose:string;objectPath:string}>(); let runtimeState:RuntimeStatus={provider:process.env.VIDEO_RUNTIME_PROVIDER??'mock',status:'healthy',acceptingSubmissions:true,killSwitch:false,queueDepth:0,updatedAt:nowIso(),lastHeartbeatAt:nowIso()};
-function publicGeneration(g:StoredGeneration):Generation{ const {uid:_uid,runtimeJobId:_runtimeJobId,outputBytes:_outputBytes,outputContentType:_outputContentType,outputObjectPath:_outputObjectPath,...generation}=g; return generation; }
+const base64FieldByObjectPathField:Record<string,string>={
+  globalVisualAnchorObjectPath:'globalVisualAnchorBase64',
+  seedFrameObjectPath:'seedFrameBase64',
+  startFrameObjectPath:'startFrameBase64',
+  endFrameObjectPath:'endFrameBase64',
+  referenceImageObjectPath:'referenceImageBase64',
+  styleReferenceObjectPath:'styleReferenceBase64',
+  subjectReferenceObjectPath:'subjectReferenceBase64',
+};
+export function stripEmbeddedMedia(value:unknown):unknown{
+  if(Array.isArray(value))return value.map(stripEmbeddedMedia);
+  if(!value||typeof value!=='object')return value;
+  return Object.fromEntries(Object.entries(value as Record<string,unknown>)
+    .filter(([key])=>!key.endsWith('Base64'))
+    .map(([key,nested])=>[key,stripEmbeddedMedia(nested)]));
+}
+function publicGeneration(g:StoredGeneration):Generation{ const {uid:_uid,runtimeJobId:_runtimeJobId,outputBytes:_outputBytes,outputContentType:_outputContentType,outputObjectPath:_outputObjectPath,...generation}=g; return {...generation,settings:stripEmbeddedMedia(generation.settings) as Generation['settings']}; }
+function isOwnedUploadPath(value:string,uid:string){return value.startsWith(`users/${uid}/uploads/`)&&!value.includes('..')&&!value.includes('\\')&&!value.includes('\0');}
+function validateAssetReferences(value:unknown,uid:string):void{
+  if(Array.isArray(value)){value.forEach(item=>validateAssetReferences(item,uid));return;}
+  if(!value||typeof value!=='object')return;
+  for(const [key,nested] of Object.entries(value as Record<string,unknown>)){
+    if(key in base64FieldByObjectPathField){
+      if(typeof nested!=='string'||!isOwnedUploadPath(nested,uid))throw problem(403,'asset_forbidden','Asset is not owned by caller');
+    }else validateAssetReferences(nested,uid);
+  }
+}
+async function uploadedAssetDataUrl(objectPath:string,uid:string){
+  if(!isOwnedUploadPath(objectPath,uid))throw problem(403,'asset_forbidden','Asset is not owned by caller');
+  adminApp();const file=getStorage().bucket().file(objectPath);const [[metadata],[bytes]]=await Promise.all([file.getMetadata(),file.download()]);
+  const contentType=typeof metadata.contentType==='string'&&metadata.contentType.startsWith('image/')?metadata.contentType:'image/png';
+  return `data:${contentType};base64,${bytes.toString('base64')}`;
+}
+async function hydrateAssetReferences(value:unknown,uid:string):Promise<unknown>{
+  if(Array.isArray(value))return Promise.all(value.map(item=>hydrateAssetReferences(item,uid)));
+  if(!value||typeof value!=='object')return value;
+  const hydrated=Object.fromEntries(await Promise.all(Object.entries(value as Record<string,unknown>).map(async([key,nested])=>[key,await hydrateAssetReferences(nested,uid)])));
+  await Promise.all(Object.entries(base64FieldByObjectPathField).map(async([objectPathField,base64Field])=>{
+    const objectPath=hydrated[objectPathField];
+    if(typeof objectPath==='string'&&typeof hydrated[base64Field]!=='string')hydrated[base64Field]=await uploadedAssetDataUrl(objectPath,uid);
+  }));
+  return hydrated;
+}
+async function runtimeGeneration(g:StoredGeneration):Promise<StoredGeneration>{
+  if(localAuth)return g;
+  return {...g,settings:await hydrateAssetReferences(g.settings,g.uid) as Generation['settings']};
+}
 function normalizeRuntimeBaseUrl(value:unknown){ if(typeof value!=='string') return undefined; const trimmed=value.trim(); if(!trimmed) return undefined; const withProtocol=/^https?:\/\//i.test(trimmed)?trimmed:`http://${trimmed}`; try{ const url=new URL(withProtocol); if(!['http:','https:'].includes(url.protocol)) return undefined; if(!url.hostname||['localhost','127.0.0.1','0.0.0.0','::1'].includes(url.hostname)) return undefined; url.username=''; url.password=''; url.pathname=''; url.search=''; url.hash=''; return url.toString().replace(/\/$/,''); }catch{return undefined;}}
 let runtimeBaseUrl=normalizeRuntimeBaseUrl(process.env.VIDEO_RUNTIME_BASE_URL);
 const localAuth=process.env.NODE_ENV==='test'||(process.env.NODE_ENV!=='production'&&!process.env.K_SERVICE);
@@ -29,7 +75,7 @@ app.get('/v1/me',auth,(req,res)=>res.json(users.get(res.locals.principal.uid)));
 app.get('/v1/credits',auth,(req,res)=>res.json(wallets.get(res.locals.principal.uid)));
 app.post('/v1/prompts/complete',auth,async(req,res,next)=>{try{await ensureRuntimeConfiguration();const prompt=String(req.body?.prompt??'').trim();const mode=String(req.body?.mode??'expand');if(prompt.length<3||prompt.length>2400)throw problem(400,'invalid_prompt','Prompt must be 3-2400 characters');if(mode!=='expand')throw problem(400,'invalid_prompt_mode','Prompt mode must be expand');if(!runtimeBaseUrl&&runtimeState.provider!=='mock')throw problem(503,'runtime_unavailable','Connect the Sulphur runtime to develop prompts');const result=await runtime.completePrompt(prompt,'expand');log('runtime_prompt_completed',{uid:res.locals.principal.uid,provider:result.provider,promptChars:prompt.length,resultChars:result.completedPrompt.length});res.json(result);}catch(e){next(e)}});
 app.post('/v1/assets/upload-url',auth,(req,res,next)=>{try{const {fileName,contentType,sizeBytes,purpose}=req.body; if(!['image/jpeg','image/png','image/webp'].includes(contentType)||sizeBytes>10485760) throw problem(400,'invalid_asset','Unsupported image type or size'); const assetId=nanoid(); const objectPath=`users/${res.locals.principal.uid}/uploads/${assetId}-${String(fileName).replace(/[^\w.-]/g,'_')}`; assets.set(assetId,{uid:res.locals.principal.uid,purpose,objectPath}); res.status(201).json({assetId,uploadUrl:`http://localhost:9199/upload/${objectPath}`,method:'PUT',expiresAt:new Date(Date.now()+10*60_000).toISOString(),objectPath});}catch(e){next(e)}});
-app.post('/v1/generations',auth,async(req,res,next)=>{try{await ensureRuntimeConfiguration();if(!runtimeState.acceptingSubmissions&&runtimeState.status==='unavailable'&&!runtimeState.killSwitch)await refreshRuntimeHealth();const p=res.locals.principal as Principal; const key=req.header('idempotency-key'); if(!key||key.length<8) throw problem(400,'idempotency_key_required','Idempotency-Key header is required'); const idem=`${p.uid}_${key}`; const existing=idempotency.get(idem); if(existing) {log('generation_idempotent_replay',{uid:p.uid,generationId:existing}); return res.json(gens.get(existing));} if(!runtimeState.acceptingSubmissions||runtimeState.killSwitch||!runtimeBaseUrl&&runtimeState.provider!=='mock') throw problem(503,'runtime_paused','Submissions are paused'); const active=[...gens.values()].find(g=>g.uid===p.uid&&['queued','preparing','generating','uploading'].includes(g.status)); if(active) throw problem(409,'active_generation_exists','Only one active generation is allowed'); const {prompt,settings,inputAssets=[]}=req.body; if(!prompt||prompt.length<8||prompt.length>1200) throw problem(400,'invalid_prompt','Prompt must be 8-1200 characters'); const storyboard=(settings as {storyboard?:unknown})?.storyboard;if(Array.isArray(storyboard)&&storyboard.length>MAX_STORYBOARD_SCENES)throw problem(400,'scene_limit_exceeded',`Storyboard supports up to ${MAX_STORYBOARD_SCENES} scenes per generation`); for(const a of inputAssets){ if(assets.get(a.assetId)?.uid!==p.uid) throw problem(403,'asset_forbidden','Asset is not owned by caller'); } const cost=0; log('generation_credit_free',{uid:p.uid}); const id=nanoid(); const gen:StoredGeneration={id,uid:p.uid,prompt,settings,inputAssets,status:'queued' as const,creditCost:cost,createdAt:nowIso(),updatedAt:nowIso(),queuePosition:queue.length+1}; gens.set(id,gen); await persistGeneration(gen); queue.push({generationId:id,createdAt:gen.createdAt,status:'queued',attempt:0}); runtimeState={...runtimeState,queueDepth:queue.filter(q=>q.status!=='done').length,updatedAt:nowIso()}; idempotency.set(idem,id); log('generation_submitted',{uid:p.uid,generationId:id}); res.status(201).json(gen); if(process.env.NODE_ENV!=='test'&&process.env.NODE_ENV!=='production'&&!process.env.FUNCTION_TARGET&&!process.env.K_SERVICE) void processOne('local-auto-worker');}catch(e){next(e)}});
+app.post('/v1/generations',auth,async(req,res,next)=>{try{await ensureRuntimeConfiguration();if(!runtimeState.acceptingSubmissions&&runtimeState.status==='unavailable'&&!runtimeState.killSwitch)await refreshRuntimeHealth();const p=res.locals.principal as Principal; const key=req.header('idempotency-key'); if(!key||key.length<8) throw problem(400,'idempotency_key_required','Idempotency-Key header is required'); const idem=`${p.uid}_${key}`; const existing=idempotency.get(idem); if(existing) {log('generation_idempotent_replay',{uid:p.uid,generationId:existing}); const replay=gens.get(existing);return replay?res.json(publicGeneration(replay)):res.status(404).end();} if(!runtimeState.acceptingSubmissions||runtimeState.killSwitch||!runtimeBaseUrl&&runtimeState.provider!=='mock') throw problem(503,'runtime_paused','Submissions are paused'); const active=[...gens.values()].find(g=>g.uid===p.uid&&['queued','preparing','generating','uploading'].includes(g.status)); if(active) throw problem(409,'active_generation_exists','Only one active generation is allowed'); const {prompt,settings,inputAssets=[]}=req.body; if(!prompt||prompt.length<8||prompt.length>1200) throw problem(400,'invalid_prompt','Prompt must be 8-1200 characters');validateAssetReferences(settings,p.uid); const storyboard=(settings as {storyboard?:unknown})?.storyboard;if(Array.isArray(storyboard)&&storyboard.length>MAX_STORYBOARD_SCENES)throw problem(400,'scene_limit_exceeded',`Storyboard supports up to ${MAX_STORYBOARD_SCENES} scenes per generation`); for(const a of inputAssets){ if(assets.get(a.assetId)?.uid!==p.uid) throw problem(403,'asset_forbidden','Asset is not owned by caller'); } const cost=0; log('generation_credit_free',{uid:p.uid}); const id=nanoid(); const gen:StoredGeneration={id,uid:p.uid,prompt,settings,inputAssets,status:'queued' as const,creditCost:cost,createdAt:nowIso(),updatedAt:nowIso(),queuePosition:queue.length+1}; gens.set(id,gen); await persistGeneration(gen); queue.push({generationId:id,createdAt:gen.createdAt,status:'queued',attempt:0}); runtimeState={...runtimeState,queueDepth:queue.filter(q=>q.status!=='done').length,updatedAt:nowIso()}; idempotency.set(idem,id); log('generation_submitted',{uid:p.uid,generationId:id}); res.status(201).json(publicGeneration(gen)); if(process.env.NODE_ENV!=='test'&&process.env.NODE_ENV!=='production'&&!process.env.FUNCTION_TARGET&&!process.env.K_SERVICE) void processOne('local-auto-worker');}catch(e){next(e)}});
 app.get('/v1/generations/:id',auth,async(req,res,next)=>{try{const id=String(req.params.id??''); const g=await findGeneration(id); if(!g||g.uid!==res.locals.principal.uid) throw problem(404,'not_found','Generation not found'); res.json(publicGeneration(g));}catch(e){next(e)}});
 app.get('/v1/generations/:id/download',auth,async(req,res,next)=>{try{const id=String(req.params.id??''); const g=await findGeneration(id); if(!g||g.uid!==res.locals.principal.uid) throw problem(404,'not_found','Generation not found'); res.type(g.outputContentType??'video/mp4').setHeader('Content-Disposition',`attachment; filename="${g.id}.mp4"`); if(g.outputBytes)return res.send(Buffer.from(g.outputBytes)); if(!g.outputObjectPath)throw problem(404,'output_not_available','Generation output is not available for download'); adminApp();const file=getStorage().bucket().file(g.outputObjectPath);const [exists]=await file.exists();if(!exists)throw problem(404,'output_not_available','Generation output is not available for download');file.createReadStream().on('error',next).pipe(res);}catch(e){next(e)}});
 app.post('/v1/generations/:id/cancel',auth,async(req,res,next)=>{try{const id=String(req.params.id??''); const g=await findGeneration(id); if(!g||g.uid!==res.locals.principal.uid) throw problem(404,'not_found','Generation not found'); if(['completed','failed','cancelled'].includes(g.status)) return res.json(publicGeneration(g)); if(g.runtimeJobId){try{await runtime.cancelGeneration(g.runtimeJobId);}catch(e){log('runtime_cancel_failed',{generationId:g.id,error:e instanceof Error?e.message:String(e)});}} const wallet=wallets.get(g.uid);if(creditLimitsEnabled()&&wallet&&wallet.reserved>=g.creditCost)wallets.set(g.uid,releaseCredits(wallet,g.creditCost)); const ng:StoredGeneration={...g,status:'cancelled' as const,updatedAt:nowIso(),safeErrorMessage:'Cancelled by user'}; gens.set(g.id,ng);await persistGeneration(ng); const q=queue.find(i=>i.generationId===g.id); if(q) q.status='done'; log('generation_cancelled',{uid:g.uid,generationId:g.id}); res.json(publicGeneration(ng));}catch(e){next(e)}});
@@ -47,7 +93,7 @@ export async function processOne(workerId='local-worker'){
   const g=gens.get(item.generationId); if(!g||g.status==='cancelled'){item.status='done';return;}
   try{
     const preparing={...g,status:'preparing' as const,updatedAt:nowIso()};gens.set(g.id,preparing);await persistGeneration(preparing);
-    const sub=await runtime.submitGeneration(g);
+    const sub=await runtime.submitGeneration(await runtimeGeneration(g));
     let st=await runtime.getGenerationStatus(sub.runtimeJobId);
     while(!['completed','failed','cancelled'].includes(st.state)){
       const current={...gens.get(g.id)!,status:st.state,updatedAt:nowIso(),runtimeJobId:sub.runtimeJobId};gens.set(g.id,current);

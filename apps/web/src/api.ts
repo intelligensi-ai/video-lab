@@ -79,7 +79,7 @@ function fileToDataUrl(file?: File) {
 }
 
 async function storeUserAsset(file: File | undefined, purpose: string) {
-  if (!file || !isProductionFirebase || !firebaseApp) return;
+  if (!file || !isProductionFirebase || !firebaseApp) return undefined;
   const user = await getFirebaseUser();
   const safeName = file.name.replace(/[^\w.-]/g, '_');
   const objectPath = `users/${user.uid}/uploads/${crypto.randomUUID()}-${safeName}`;
@@ -87,16 +87,18 @@ async function storeUserAsset(file: File | undefined, purpose: string) {
     contentType: file.type,
     customMetadata: { purpose },
   });
+  return objectPath;
 }
 
 export async function generateSulphurVideo(payload: SulphurGenerationPayload) {
-  await Promise.all(payload.references.map((reference) =>
+  const uploadedPaths = await Promise.all(payload.references.map((reference) =>
     storeUserAsset(reference.file, reference.role),
   ));
   const references = await Promise.all(
-    payload.references.map(async (ref) => ({
+    payload.references.map(async (ref, index) => ({
       ...ref,
-      dataUrl: await fileToDataUrl(ref.file),
+      objectPath: uploadedPaths[index],
+      dataUrl: uploadedPaths[index] ? undefined : await fileToDataUrl(ref.file),
     })),
   );
   const dataByRole = Object.fromEntries(
@@ -106,6 +108,11 @@ export async function generateSulphurVideo(payload: SulphurGenerationPayload) {
   ) as Partial<Record<ReferenceRole, string>>;
   const strengthByRole = Object.fromEntries(
     references.map((ref) => [strengthAliasByRole[ref.role], ref.strength]),
+  );
+  const objectPathByRole = Object.fromEntries(
+    references
+      .filter((ref) => ref.objectPath)
+      .map((ref) => [`${ref.role}ObjectPath`, ref.objectPath]),
   );
   const generation = await api<Generation>('/v1/generations', {
     method: 'POST',
@@ -135,6 +142,7 @@ export async function generateSulphurVideo(payload: SulphurGenerationPayload) {
         styleReferenceBase64: dataByRole.styleReference,
         subjectReferenceBase64: dataByRole.subjectReference,
         ...strengthByRole,
+        ...objectPathByRole,
       },
       inputAssets: [],
     }),
@@ -196,27 +204,33 @@ export async function generateLongFormVideo(payload: LongFormGenerationPayload) 
   if (payload.scenes.length > MAX_STORYBOARD_SCENES) {
     throw new Error(`Storyboard supports up to ${MAX_STORYBOARD_SCENES} scenes per generation.`);
   }
-  await Promise.all([
+  const [globalVisualAnchorObjectPath, ...uploadedScenePaths] = await Promise.all([
     storeUserAsset(payload.globalVisualAnchor, 'globalVisualAnchor'),
-    ...payload.references.map((reference) => storeUserAsset(reference.file, reference.role)),
     ...payload.scenes.flatMap((scene) => [
       storeUserAsset(scene.startFrame, `${scene.id}:startFrame`),
       storeUserAsset(scene.endFrame, `${scene.id}:endFrame`),
     ]),
   ]);
+  await Promise.all(
+    payload.references.map((reference) => storeUserAsset(reference.file, reference.role)),
+  );
   const globalVisualAnchorBase64 =
-    payload.globalVisualAnchorEnabled
+    payload.globalVisualAnchorEnabled && !globalVisualAnchorObjectPath
       ? await fileToDataUrl(payload.globalVisualAnchor)
       : undefined;
-  const storyboard = await Promise.all(payload.scenes.map(async (scene) => {
-    const startFrameBase64 = await fileToDataUrl(scene.startFrame);
-    const endFrameBase64 = await fileToDataUrl(scene.endFrame);
+  const storyboard = await Promise.all(payload.scenes.map(async (scene, index) => {
+    const startFrameObjectPath = uploadedScenePaths[index * 2];
+    const endFrameObjectPath = uploadedScenePaths[index * 2 + 1];
+    const startFrameBase64 = startFrameObjectPath ? undefined : await fileToDataUrl(scene.startFrame);
+    const endFrameBase64 = endFrameObjectPath ? undefined : await fileToDataUrl(scene.endFrame);
     return {
       ...scene,
       startFrame: undefined,
       endFrame: undefined,
       startFrameBase64,
       endFrameBase64,
+      startFrameObjectPath,
+      endFrameObjectPath,
     };
   }));
   const durationSeconds = storyboard.reduce((total, scene) => total + Math.max(0.1, scene.trimEnd - scene.trimStart), 0);
@@ -245,6 +259,7 @@ export async function generateLongFormVideo(payload: LongFormGenerationPayload) 
         seedMode: payload.seedMode,
         globalVisualAnchorEnabled: payload.globalVisualAnchorEnabled,
         globalVisualAnchorBase64,
+        globalVisualAnchorObjectPath,
         storyboard,
       },
       inputAssets: [],
