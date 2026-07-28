@@ -1,0 +1,44 @@
+import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import YAML from 'yaml';
+
+describe('openapi contract', () => {
+  const doc = YAML.parse(fs.readFileSync('contracts/video-lab.openapi.yaml', 'utf8'));
+
+  it('contains required endpoints and public states', () => {
+    for (const p of [
+      '/v1/health',
+      '/v1/me',
+      '/v1/credits',
+      '/v1/assets/upload-url',
+      '/v1/prompts/rewrite',
+      '/v1/generations',
+      '/v1/generations/{generationId}',
+      '/v1/generations/{generationId}/cancel',
+      '/v1/gallery',
+      '/v1/runtime/status',
+      '/v1/admin/runtime/pause',
+      '/v1/admin/runtime/resume',
+      '/v1/admin/runtime/stop',
+    ]) expect(doc.paths[p]).toBeTruthy();
+    expect(doc.components.schemas.GenerationStatus.enum).toEqual([
+      'queued',
+      'preparing',
+      'generating',
+      'uploading',
+      'completed',
+      'failed',
+      'cancelled',
+    ]);
+  });
+
+  it('defines the prompt rewrite request and response', () => {
+    expect(doc.paths['/v1/prompts/rewrite'].post.requestBody.required).toBe(true);
+    expect(doc.components.schemas.RewritePromptRequest.required).toContain('prompt');
+    expect(doc.components.schemas.RewritePromptResponse.required).toEqual(['rewrittenPrompt']);
+  });
+
+  it('requires idempotency key on generation submission', () => {
+    expect(doc.paths['/v1/generations'].post.parameters[0].required).toBe(true);
+  });
+});

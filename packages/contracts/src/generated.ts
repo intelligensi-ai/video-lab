@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/session/bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Exchange a bearer token for an httpOnly session cookie */
+        post: operations["bootstrapSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/assets/upload-url": {
         parameters: {
             query?: never;
@@ -66,6 +83,23 @@ export interface paths {
         put?: never;
         /** Create an asset upload target */
         post: operations["createUploadUrl"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/upload/{assetId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Upload asset bytes through the API proxy */
+        put: operations["uploadAsset"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -280,6 +314,9 @@ export interface components {
             expiresAt: string;
             objectPath: string;
         };
+        BootstrapSessionResponse: {
+            ok: boolean;
+        };
         CreateGenerationRequest: {
             prompt: string;
             settings: components["schemas"]["VideoSettings"];
@@ -372,6 +409,7 @@ export interface components {
     responses: never;
     parameters: {
         generationId: string;
+        assetId: string;
     };
     requestBodies: never;
     headers: never;
@@ -439,6 +477,26 @@ export interface operations {
             };
         };
     };
+    bootstrapSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session bootstrapped */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BootstrapSessionResponse"];
+                };
+            };
+        };
+    };
     createUploadUrl: {
         parameters: {
             query?: never;
@@ -459,6 +517,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CreateUploadUrlResponse"];
+                };
+            };
+        };
+    };
+    uploadAsset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assetId: components["parameters"]["assetId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Uploaded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok: boolean;
+                    };
                 };
             };
         };

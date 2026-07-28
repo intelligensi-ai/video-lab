@@ -1,0 +1,45 @@
+import { describe, expect, it } from 'vitest';
+import request from 'supertest';
+import { app, processOne } from '../../apps/api/dist/index.js';
+
+describe('api integration', () => {
+  const auth = { authorization: 'Bearer testuser' };
+
+  it('grants trial once and returns me', async () => {
+    const a = await request(app).get('/v1/me').set(auth).expect(200);
+    const b = await request(app).get('/v1/credits').set(auth).expect(200);
+    expect(a.body.uid).toBe('testuser');
+    expect(b.body.available).toBeGreaterThan(0);
+  });
+
+  it('bootstraps a session cookie from bearer auth', async () => {
+    const r = await request(app).post('/v1/session/bootstrap').set(auth).expect(200);
+    expect(r.body.ok).toBe(true);
+    expect(r.headers['set-cookie']?.some((c) => c.startsWith('vl_session='))).toBe(true);
+  });
+
+  it('submits idempotently, processes, and lists private gallery', async () => {
+    const body = { prompt: 'A cinematic ocean sunrise with glass monolith', settings: { aspectRatio: '16:9', durationSeconds: 4, quality: 'draft' } };
+    const a = await request(app).post('/v1/generations').set(auth).set('Idempotency-Key', 'same-key-123').send(body).expect(201);
+    const b = await request(app).post('/v1/generations').set(auth).set('Idempotency-Key', 'same-key-123').send(body).expect(200);
+    expect(b.body.id).toBe(a.body.id);
+    await processOne('test');
+    const g = await request(app).get(`/v1/generations/${a.body.id}`).set(auth).expect(200);
+    expect(g.body.status).toBe('completed');
+    const gal = await request(app).get('/v1/gallery').set(auth).expect(200);
+    expect(gal.body.items.some((x) => x.id === a.body.id)).toBe(true);
+  });
+
+  it('enforces admin and pause', async () => {
+    await request(app).post('/v1/admin/runtime/pause').set(auth).expect(403);
+    await request(app).post('/v1/admin/runtime/pause').set('authorization', 'Bearer admin-token').expect(200);
+    await request(app).post('/v1/admin/runtime/resume').set('authorization', 'Bearer admin-token').expect(200);
+  });
+
+  it('keeps uploads on same-origin proxy and validates asset ownership', async () => {
+    const up = await request(app).post('/v1/assets/upload-url').set({ authorization: 'Bearer owner' }).send({ fileName: 'a.png', contentType: 'image/png', sizeBytes: 100, purpose: 'reference' }).expect(201);
+    expect(up.body.uploadUrl).toBe('/v1/assets/upload/' + up.body.assetId);
+    await request(app).put(`/v1/assets/upload/${up.body.assetId}`).set({ authorization: 'Bearer owner' }).set('content-type', 'image/png').send(Buffer.from([1, 2, 3])).expect(200);
+    await request(app).post('/v1/generations').set({ authorization: 'Bearer other' }).set('Idempotency-Key', 'asset-key-123').send({ prompt: 'A cinematic prompt that is long', settings: { aspectRatio: '16:9', durationSeconds: 4, quality: 'draft' }, inputAssets: [{ assetId: up.body.assetId, purpose: 'reference' }] }).expect(403);
+  });
+});
