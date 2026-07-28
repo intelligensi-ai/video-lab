@@ -1,0 +1,26 @@
+"openapi: 3.0.0
+paths:
+  /v1/prompts/rewrite:
+    post:
+      summary: Rewrite prompt using Sulphur text-to-text model
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt:
+                  type: string
+      responses:
+        '200':
+          description: 'Rewritten prompt'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rewrittenPrompt:
+                    type: string"
+}
+"
