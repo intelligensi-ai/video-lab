@@ -6,6 +6,7 @@ const token = () => sessionStorage.getItem('vl_token') || localStorage.getItem('
 export async function api<T>(path: string, init: RequestInit = {}) {
   const r = await fetch(`${API}${path}`, {
     ...init,
+    credentials: 'include',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token()}`, ...init.headers },
   });
   if (!r.ok) {
@@ -128,6 +129,18 @@ export async function rewriteSulphurPrompt(payload: {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export async function bootstrapSession() {
+  const bearer = sessionStorage.getItem('vl_token') || localStorage.getItem('vl_token');
+  if (!bearer) return;
+  await fetch(`${API}/v1/session/bootstrap`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
+  });
+  sessionStorage.removeItem('vl_token');
+  localStorage.removeItem('vl_token');
 }
 
 export const getCredits = () => api<CreditWallet>('/v1/credits');
