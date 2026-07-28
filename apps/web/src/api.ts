@@ -47,7 +47,6 @@ export interface SulphurGenerationPayload {
   aspectRatio: '16:9' | '9:16' | '1:1';
   duration: 4 | 8 | 12;
   durationSeconds: 4 | 8 | 12;
-  seed?: number;
   guidance: number;
   cfgGuidance: number;
   frameRate: number;
@@ -123,7 +122,6 @@ export async function generateSulphurVideo(payload: SulphurGenerationPayload) {
         aspectRatio: payload.aspectRatio,
         durationSeconds: payload.durationSeconds,
         quality: payload.quality,
-        seed: payload.seed,
         negativePrompt: payload.negativePrompt,
         enhancePrompt: payload.enhancePrompt,
         resolution: payload.resolution,
@@ -192,8 +190,6 @@ export interface LongFormGenerationPayload {
   enhancePrompt: boolean;
   postProcess: string;
   outputFormat: string;
-  seedMode: string;
-  baseSeed: number;
   globalVisualAnchorEnabled: boolean;
   globalVisualAnchor?: File;
   references: SulphurReferenceInput[];
@@ -246,7 +242,6 @@ export async function generateLongFormVideo(payload: LongFormGenerationPayload) 
         aspectRatio: payload.resolution.startsWith('576x') || payload.resolution.startsWith('720x1280') ? '9:16' : payload.resolution.startsWith('1080x1080') ? '1:1' : '16:9',
         durationSeconds,
         quality: payload.postProcess === 'none' ? 'draft' : 'high',
-        seed: payload.baseSeed,
         overallGoal: payload.overallGoal,
         negativePrompt: payload.negativePrompt,
         resolution: payload.resolution,
@@ -258,7 +253,6 @@ export async function generateLongFormVideo(payload: LongFormGenerationPayload) 
         enhancePrompt: payload.enhancePrompt,
         postProcess: payload.postProcess,
         outputFormat: payload.outputFormat,
-        seedMode: payload.seedMode,
         globalVisualAnchorEnabled: payload.globalVisualAnchorEnabled,
         globalVisualAnchorBase64,
         globalVisualAnchorObjectPath,

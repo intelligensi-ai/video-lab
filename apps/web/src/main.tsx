@@ -211,9 +211,9 @@ async function demoApi<T>(path: string, init: RequestInit = {}) {
         source: "deploy-studio",
         state: "connected",
         instanceId: "local-demo",
-        leaseExpiresAt: new Date(Date.now() + 75_000).toISOString(),
+        leaseExpiresAt: undefined,
         lastPublishedAt: nowIso(),
-        message: "Deploy Studio runtime lease is current",
+        message: "Deploy Studio runtime lease is non-expiring for now",
       },
     } as T;
   }
@@ -263,6 +263,7 @@ async function api<T>(path: string, init: RequestInit = {}) {
 }
 function Shell() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(!isProductionFirebase);
   useEffect(() => observeAuth((user) => {
@@ -277,6 +278,10 @@ function Shell() {
     { to: "/account", label: "Account" },
     { to: "/admin", label: "Admin" },
   ];
+  const logout = async () => {
+    await signOutUser();
+    navigate("/login", { replace: true });
+  };
 
   return (
     <>
@@ -302,6 +307,7 @@ function Shell() {
               </NavLink>
             ))}
           </div>}
+          {signedIn && <button className="site-logout" type="button" onClick={logout}>Log out</button>}
           {authReady && !signedIn && <div className="site-auth-links">
             <NavLink to="/login">Log in</NavLink>
             <NavLink className="site-register-link" to="/register">Register</NavLink>
@@ -542,7 +548,7 @@ function Landing() {
           <article><b>01</b><h3>Direct the story</h3><p>Plan up to 6 scenes around one clear artistic goal.</p></article>
           <article><b>02</b><h3>Anchor the image</h3><p>Guide characters, composition and style with visual references.</p></article>
           <article><b>03</b><h3>Carry continuity</h3><p>Flow the final frame of each scene into the opening of the next.</p></article>
-          <article><b>04</b><h3>Finish the cut</h3><p>Control timing, visual randomisers, transitions and production settings.</p></article>
+          <article><b>04</b><h3>Finish the cut</h3><p>Control timing, transitions and production settings.</p></article>
         </div>
       </section>
 
@@ -741,7 +747,6 @@ function Detail() {
 }
 type RegistrationProfile = {
   country: string;
-  ageRange: string;
   industry: string;
   role: string;
   teamSize: string;
@@ -755,7 +760,6 @@ type RegistrationProfile = {
 
 const emptyRegistration: RegistrationProfile = {
   country: "",
-  ageRange: "",
   industry: "",
   role: "",
   teamSize: "",
@@ -795,6 +799,7 @@ function Registration() {
       await saveRegistrationProfile(completed);
       setProfile(completed);
       setSaved(true);
+      navigate("/storyboard", { replace: true });
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not save registration");
     } finally {
@@ -824,7 +829,6 @@ function Registration() {
           <h2>About your work</h2>
           <div className="registration-fields">
             <label><span>Country or region</span><input value={profile.country} placeholder="e.g. United Kingdom" onChange={(event) => update("country", event.target.value)}/></label>
-            <label><span>Age range</span><select value={profile.ageRange} onChange={(event) => update("ageRange", event.target.value)}><option value="">Prefer not to say</option><option>18–24</option><option>25–34</option><option>35–44</option><option>45–54</option><option>55–64</option><option>65+</option></select></label>
             <label><span>Industry</span><select value={profile.industry} onChange={(event) => update("industry", event.target.value)}><option value="">Select one</option><option>Film and television</option><option>Advertising and marketing</option><option>Design and creative services</option><option>Technology</option><option>Education</option><option>Media and publishing</option><option>Other</option></select></label>
             <label><span>Your role</span><input value={profile.role} placeholder="e.g. Director, founder, editor" onChange={(event) => update("role", event.target.value)}/></label>
             <label><span>Team size</span><select value={profile.teamSize} onChange={(event) => update("teamSize", event.target.value)}><option value="">Select one</option><option>Just me</option><option>2–10</option><option>11–50</option><option>51–200</option><option>201+</option></select></label>
@@ -990,7 +994,7 @@ function Admin() {
         <div className="runtime-discovery-grid">
           <span><small>Discovery source</small><strong>{discovery?.source === "deploy-studio" ? "Deploy Studio" : discovery?.source ?? "Waiting"}</strong></span>
           <span><small>Runtime health</small><strong>{r.data?.status ?? "Checking"}</strong></span>
-          <span><small>Lease expires</small><strong>{discovery?.leaseExpiresAt ? new Date(discovery.leaseExpiresAt).toLocaleTimeString() : "—"}</strong></span>
+          <span><small>Lease expires</small><strong>{discovery?.state === "connected" && !discovery.leaseExpiresAt ? "Non-expiring" : discovery?.leaseExpiresAt ? new Date(discovery.leaseExpiresAt).toLocaleTimeString() : "—"}</strong></span>
           <span><small>Queue</small><strong>{r.data?.queueDepth ?? 0}</strong></span>
         </div>
         <p className={connected ? "success" : "runtime-discovery-message"}>{discovery?.message ?? "Waiting for Deploy Studio to publish the active runtime."}</p>

@@ -335,6 +335,8 @@ export interface components {
             inputAssets?: Record<string, never>[];
             status: components["schemas"]["GenerationStatus"];
             queuePosition?: number;
+            progress?: number;
+            runtimeMessage?: string;
             creditCost: number;
             output?: {
                 downloadUrl?: string;

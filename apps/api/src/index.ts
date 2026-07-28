@@ -85,10 +85,9 @@ async function loadRuntimeDiscovery(force=false){
       const instanceId=typeof data.instanceId==='string'?data.instanceId:undefined;
       const details={source:'deploy-studio' as const,instanceId,lastPublishedAt:heartbeatAt?.toISOString(),leaseExpiresAt:leaseExpiresAt?.toISOString()};
       if(status!=='ready'){clearRuntimeEndpoint({...details,state:'waiting',message:`Deploy Studio reports ${status||'no status'}`});return;}
-      if(!leaseExpiresAt||leaseExpiresAt.getTime()<=Date.now()){clearRuntimeEndpoint({...details,state:'stale',message:'Deploy Studio runtime lease expired'});return;}
       if(!baseUrl){clearRuntimeEndpoint({...details,state:'unavailable',message:'Deploy Studio did not publish a valid runtime origin'});return;}
       useRuntimeEndpoint(baseUrl,'deploy-studio');
-      runtimeDiscovery={...details,state:'connected',message:'Deploy Studio runtime lease is current'};
+      runtimeDiscovery={...details,state:'connected',message:'Deploy Studio runtime lease is non-expiring for now'};
       return;
     }
     const environmentUrl=normalizeRuntimeBaseUrl(process.env.VIDEO_RUNTIME_BASE_URL);
@@ -136,7 +135,7 @@ export async function processOne(workerId='local-worker'){
     const sub=await runtime.submitGeneration(await runtimeGeneration(g));
     let st=await runtime.getGenerationStatus(sub.runtimeJobId);
     while(!['completed','failed','cancelled'].includes(st.state)){
-      const current={...gens.get(g.id)!,status:st.state,updatedAt:nowIso(),runtimeJobId:sub.runtimeJobId};gens.set(g.id,current);
+      const current={...gens.get(g.id)!,status:st.state,progress:Math.max(0,Math.min(100,st.progress)),runtimeMessage:st.message,updatedAt:nowIso(),runtimeJobId:sub.runtimeJobId};gens.set(g.id,current);
       await new Promise(r=>setTimeout(r,1000));st=await runtime.getGenerationStatus(sub.runtimeJobId);
     }
     if(gens.get(g.id)?.status==='cancelled'||st.state==='cancelled'){
@@ -147,7 +146,7 @@ export async function processOne(workerId='local-worker'){
       if(creditLimitsEnabled())wallets.set(g.uid,chargeCredits(wallets.get(g.uid)!,g.creditCost));
       const outputObjectPath=`users/${g.uid}/outputs/${g.id}.mp4`;
       if(!localAuth){adminApp();await getStorage().bucket().file(outputObjectPath).save(Buffer.from(out.bytes),{resumable:false,contentType:out.contentType,metadata:{cacheControl:'private,max-age=3600'}});}
-      const completed:StoredGeneration={...gens.get(g.id)!,status:'completed',output:{downloadUrl:`/api/v1/generations/${g.id}/download`,durationSeconds:out.durationSeconds},...(localAuth?{outputBytes:out.bytes}:{}),outputObjectPath,outputContentType:out.contentType,updatedAt:nowIso()};
+      const completed:StoredGeneration={...gens.get(g.id)!,status:'completed',progress:100,runtimeMessage:undefined,output:{downloadUrl:`/api/v1/generations/${g.id}/download`,durationSeconds:out.durationSeconds},...(localAuth?{outputBytes:out.bytes}:{}),outputObjectPath,outputContentType:out.contentType,updatedAt:nowIso()};
       gens.set(g.id,completed);await persistGeneration(completed);log('runtime_generation_completed',{generationId:g.id,outputObjectPath});
     }else throw new Error(st.message??st.state);
   }catch(e){

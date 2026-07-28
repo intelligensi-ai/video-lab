@@ -3,7 +3,16 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
-    match /users/{uid} { allow read: if isOwner(uid); allow create: if isOwner(uid) && !('roles' in request.resource.data); allow update: if isOwner(uid) && request.resource.data.roles == resource.data.roles && request.resource.data.uid == uid; allow delete: if false; }
+    function preservesRoles() {
+      return (!('roles' in resource.data) && !('roles' in request.resource.data))
+        || (('roles' in resource.data) && request.resource.data.roles == resource.data.roles);
+    }
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid) && request.resource.data.uid == uid && !('roles' in request.resource.data);
+      allow update: if isOwner(uid) && request.resource.data.uid == uid && preservesRoles();
+      allow delete: if false;
+    }
     match /creditWallets/{uid} { allow read: if isOwner(uid); allow write: if false; }
     match /creditLedger/{id} { allow read: if signedIn() && resource.data.uid == request.auth.uid; allow write: if false; }
     match /generations/{id} { allow read: if signedIn() && resource.data.uid == request.auth.uid; allow write: if false; }

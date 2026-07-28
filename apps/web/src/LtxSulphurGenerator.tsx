@@ -15,21 +15,21 @@ const previewCropAspectLabel = '16:9 landscape crop target';
 type RefState = { label: string; role: ReferenceRole; file?: File; preview?: string; strength: number };
 type FormState = {
   prompt: string; rewrittenPrompt: string; negativePrompt: string; promptMode: (typeof promptModes)[number]; quality: (typeof qualityPresets)[number]; duration: 4 | 8 | 12;
-  resolution: string; aspectRatio: '16:9' | '9:16' | '1:1'; frameRate: number; seed: string; guidance: number; cfgGuidance: number; motionStrength: number; cameraMotion: string; frameInfluence: number; enhancePrompt: boolean; outputFormat: string; references: RefState[];
+  resolution: string; aspectRatio: '16:9' | '9:16' | '1:1'; frameRate: number; guidance: number; cfgGuidance: number; motionStrength: number; cameraMotion: string; frameInfluence: number; enhancePrompt: boolean; outputFormat: string; references: RefState[];
 };
 
 const initialReferences: RefState[] = [
   { label: 'Start Frame', role: 'startFrame', strength: 0.75 }, { label: 'End Frame', role: 'endFrame', strength: 0.75 }, { label: 'Reference Image', role: 'referenceImage', strength: 0.6 }, { label: 'Style Reference', role: 'styleReference', strength: 0.5 }, { label: 'Subject Reference', role: 'subjectReference', strength: 0.65 },
 ];
 
-function initialForm(): FormState { return { prompt: '', rewrittenPrompt: '', negativePrompt: '', promptMode: 'Cinematic', quality: 'standard', duration: 4, resolution: '1280x720', aspectRatio: '16:9', frameRate: 24, seed: '', guidance: 5, cfgGuidance: 5, motionStrength: 0.55, cameraMotion: 'Slow dolly in', frameInfluence: 0.65, enhancePrompt: true, outputFormat: 'mp4', references: initialReferences }; }
+function initialForm(): FormState { return { prompt: '', rewrittenPrompt: '', negativePrompt: '', promptMode: 'Cinematic', quality: 'standard', duration: 4, resolution: '1280x720', aspectRatio: '16:9', frameRate: 24, guidance: 5, cfgGuidance: 5, motionStrength: 0.55, cameraMotion: 'Slow dolly in', frameInfluence: 0.65, enhancePrompt: true, outputFormat: 'mp4', references: initialReferences }; }
 
 export function hasSulphurGenerationInput(form: FormState) { return form.prompt.trim().length > 0 || form.references.some((ref) => ref.file); }
 export function previewFileAssetId(ref: RefState) { return ref.file ? `${ref.role}:${ref.file.name}` : undefined; }
 export function expandSulphurPreviewInput(form: FormState) { return { ...form, cropAspectRatio: previewCropAspectRatio, cropAspectLabel: previewCropAspectLabel }; }
-export function buildSulphurPayload(form: FormState): SulphurGenerationPayload { return { prompt: (form.rewrittenPrompt || form.prompt).trim(), negativePrompt: form.negativePrompt.trim() || undefined, enhancePrompt: form.enhancePrompt, resolution: form.resolution, aspectRatio: form.aspectRatio, duration: form.duration, durationSeconds: form.duration, seed: form.seed === '' ? undefined : Number(form.seed), guidance: form.guidance, cfgGuidance: form.cfgGuidance, frameRate: form.frameRate, motionStrength: form.motionStrength, cameraMotion: form.cameraMotion, frameInfluence: form.frameInfluence, promptMode: form.promptMode, quality: form.quality, outputFormat: form.outputFormat, references: form.references.filter((ref) => ref.file).map((ref) => ({ role: ref.role, file: ref.file, strength: ref.strength })) }; }
+export function buildSulphurPayload(form: FormState): SulphurGenerationPayload { return { prompt: (form.rewrittenPrompt || form.prompt).trim(), negativePrompt: form.negativePrompt.trim() || undefined, enhancePrompt: form.enhancePrompt, resolution: form.resolution, aspectRatio: form.aspectRatio, duration: form.duration, durationSeconds: form.duration, guidance: form.guidance, cfgGuidance: form.cfgGuidance, frameRate: form.frameRate, motionStrength: form.motionStrength, cameraMotion: form.cameraMotion, frameInfluence: form.frameInfluence, promptMode: form.promptMode, quality: form.quality, outputFormat: form.outputFormat, references: form.references.filter((ref) => ref.file).map((ref) => ({ role: ref.role, file: ref.file, strength: ref.strength })) }; }
 
-function validate(form: FormState) { const errors: string[] = []; if (!hasSulphurGenerationInput(form)) errors.push('Add a prompt or at least one visual reference.'); const prompt = (form.rewrittenPrompt || form.prompt).trim(); if (prompt && (prompt.length < 8 || prompt.length > 1200)) errors.push('Prompt must be 8-1200 characters.'); if (![4, 8, 12].includes(form.duration)) errors.push('Duration must be 4, 8, or 12 seconds.'); if (form.seed !== '' && (!Number.isInteger(Number(form.seed)) || Number(form.seed) < 0)) errors.push('Randomiser must be a positive whole number.'); if (form.guidance < 0 || form.guidance > 20 || form.cfgGuidance < 0 || form.cfgGuidance > 20) errors.push('Guidance values must be between 0 and 20.'); if (!/^\d+x\d+$/.test(form.resolution)) errors.push('Resolution must look like 1280x720.'); return errors; }
+function validate(form: FormState) { const errors: string[] = []; if (!hasSulphurGenerationInput(form)) errors.push('Add a prompt or at least one visual reference.'); const prompt = (form.rewrittenPrompt || form.prompt).trim(); if (prompt && (prompt.length < 8 || prompt.length > 1200)) errors.push('Prompt must be 8-1200 characters.'); if (![4, 8, 12].includes(form.duration)) errors.push('Duration must be 4, 8, or 12 seconds.'); if (form.guidance < 0 || form.guidance > 20 || form.cfgGuidance < 0 || form.cfgGuidance > 20) errors.push('Guidance values must be between 0 and 20.'); if (!/^\d+x\d+$/.test(form.resolution)) errors.push('Resolution must look like 1280x720.'); return errors; }
 
 export default function SulphurGeneratorPage() {
   const [form, setForm] = useState(initialForm);
@@ -114,7 +114,6 @@ export default function SulphurGeneratorPage() {
             ? item.settings.durationSeconds
             : current.duration) as 4 | 8 | 12,
           quality: item.settings.quality,
-          seed: item.settings.seed === undefined ? '' : String(item.settings.seed),
         }));
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }}
@@ -242,7 +241,7 @@ function GenerationControls({
   setForm: React.Dispatch<React.SetStateAction<FormState>>;
 }) {
   return <details className="panel studio-disclosure advanced-generation">
-    <summary><span>Advanced settings</span><small>Output, motion, AI guidance and seed</small></summary>
+    <summary><span>Advanced settings</span><small>Output, motion and AI guidance</small></summary>
     <div className="advanced-groups">
       <fieldset><legend>Output</legend><div className="control-grid">
         <label>Resolution<input value={form.resolution} onChange={(event) => setForm((current) => ({ ...current, resolution: event.target.value }))}/></label>
@@ -258,7 +257,6 @@ function GenerationControls({
       <fieldset><legend>AI guidance</legend><div className="control-grid">
         <label>CFG guidance<input type="number" step="0.5" value={form.cfgGuidance} onChange={(event) => setForm((current) => ({ ...current, cfgGuidance: Number(event.target.value) }))}/></label>
         <label>Guidance<input type="number" step="0.5" value={form.guidance} onChange={(event) => setForm((current) => ({ ...current, guidance: Number(event.target.value) }))}/></label>
-        <label>Seed<input value={form.seed} placeholder="Random" onChange={(event) => setForm((current) => ({ ...current, seed: event.target.value }))}/><button onClick={() => setForm((current) => ({ ...current, seed: String(Math.floor(Math.random() * 2147483647)) }))}>Randomise</button></label>
       </div></fieldset>
     </div>
   </details>;
@@ -287,7 +285,7 @@ function GenerationPreview({
         <div><span>▶</span><strong>Your generated video will appear here</strong><p>Generation usually takes 20–40 seconds.</p></div>
       </div>}
     </div>
-    {generation && <div className="preview-meta"><span><b>{generation.settings.durationSeconds}s</b> duration</span><span><b>{generation.status}</b> status</span><span><b>{generation.settings.seed ?? 'Auto'}</b> seed</span></div>}
+    {generation && <div className="preview-meta"><span><b>{generation.settings.durationSeconds}s</b> duration</span><span><b>{generation.status}</b> status</span></div>}
     {video.error && <div className="error-panel"><p>Video retrieval failed: {video.error}</p></div>}
     {error && <div className="error-panel"><strong>Generation failed</strong><p>{error.message}</p></div>}
     <div className="preview-actions">
@@ -332,7 +330,7 @@ function HistoryCard({
       {video.objectUrl ? <video src={video.objectUrl} muted preload="metadata"/> : <img src="/images/longform-ltx-storyboard-studio-film-roll.webp" alt=""/>}
       <span>{item.status}</span><i>▶</i>
     </button>
-    <div className="history-copy"><strong>{item.prompt}</strong><p>{item.settings.durationSeconds}s · Seed {item.settings.seed ?? 'Auto'} · {item.settings.quality}</p></div>
+    <div className="history-copy"><strong>{item.prompt}</strong><p>{item.settings.durationSeconds}s · {item.settings.quality}</p></div>
     <footer>
       <button onClick={() => onReuse(item)}>Reuse</button>
       {video.objectUrl && <a href={video.objectUrl} download={`${item.id}.mp4`}>Download</a>}
