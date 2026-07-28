@@ -27,6 +27,12 @@ paths:
       summary: Get the current credit balance
       responses:
         '200': {description: Credits, content: {application/json: {schema: {$ref: '#/components/schemas/CreditWallet'}}}}
+  /v1/session/bootstrap:
+    post:
+      operationId: bootstrapSession
+      summary: Exchange a bearer token for an httpOnly session cookie
+      responses:
+        '200': {description: Session bootstrapped, content: {application/json: {schema: {$ref: '#/components/schemas/BootstrapSessionResponse'}}}}
   /v1/assets/upload-url:
     post:
       operationId: createUploadUrl
@@ -34,6 +40,14 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateUploadUrlRequest'}}}}
       responses:
         '201': {description: Upload target, content: {application/json: {schema: {$ref: '#/components/schemas/CreateUploadUrlResponse'}}}}
+  /v1/assets/upload/{assetId}:
+    put:
+      operationId: uploadAsset
+      summary: Upload asset bytes through the API proxy
+      parameters: [{$ref: '#/components/parameters/assetId'}]
+      requestBody: {required: true, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+      responses:
+        '200': {description: Uploaded, content: {application/json: {schema: {type: object, required: [ok], properties: {ok: {type: boolean}}}}}}
   /v1/prompts/rewrite:
     post:
       operationId: rewritePrompt
@@ -110,6 +124,7 @@ components:
     bearerAuth: {type: http, scheme: bearer, bearerFormat: Firebase ID token}
   parameters:
     generationId: {name: generationId, in: path, required: true, schema: {type: string}}
+    assetId: {name: assetId, in: path, required: true, schema: {type: string}}
   schemas:
     Health: {type: object, required: [ok, service, version], properties: {ok: {type: boolean}, service: {type: string}, version: {type: string}}}
     GenerationStatus: {type: string, enum: [queued, preparing, generating, uploading, completed, failed, cancelled]}
@@ -117,6 +132,7 @@ components:
     AssetPurpose: {type: string, enum: [start_frame, end_frame, reference]}
     CreateUploadUrlRequest: {type: object, required: [fileName, contentType, sizeBytes, purpose], properties: {fileName: {type: string, maxLength: 160}, contentType: {type: string, enum: [image/jpeg,image/png,image/webp]}, sizeBytes: {type: integer, minimum: 1, maximum: 10485760}, purpose: {$ref: '#/components/schemas/AssetPurpose'}}}
     CreateUploadUrlResponse: {type: object, required: [assetId, uploadUrl, method, expiresAt, objectPath], properties: {assetId: {type: string}, uploadUrl: {type: string}, method: {type: string, enum: [PUT]}, expiresAt: {type: string, format: date-time}, objectPath: {type: string}}}
+    BootstrapSessionResponse: {type: object, required: [ok], properties: {ok: {type: boolean}}}
     CreateGenerationRequest: {type: object, required: [prompt, settings], properties: {prompt: {type: string, minLength: 8, maxLength: 1200}, settings: {$ref: '#/components/schemas/VideoSettings'}, inputAssets: {type: array, maxItems: 3, items: {type: object, required: [assetId, purpose], properties: {assetId: {type: string}, purpose: {$ref: '#/components/schemas/AssetPurpose'}}}}}}
     RewritePromptRequest: {type: object, required: [prompt], properties: {prompt: {type: string, minLength: 8, maxLength: 1200}, mode: {type: string}, negativePrompt: {type: string}, enhancePrompt: {type: boolean}}}
     RewritePromptResponse: {type: object, required: [rewrittenPrompt], properties: {rewrittenPrompt: {type: string}}}

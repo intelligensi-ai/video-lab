@@ -1,13 +1,12 @@
 import type { CreditWallet, Generation, RuntimeStatus } from '@video-lab/contracts';
 
 const API = import.meta.env.VITE_API_BASE_URL ?? '/api';
-const token = () => sessionStorage.getItem('vl_token') || localStorage.getItem('vl_token') || 'demo-user';
 
 export async function api<T>(path: string, init: RequestInit = {}) {
   const r = await fetch(`${API}${path}`, {
     ...init,
     credentials: 'include',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${token()}`, ...init.headers },
+    headers: { 'content-type': 'application/json', ...init.headers },
   });
   if (!r.ok) {
     const body = await r.json().catch(() => ({}));
@@ -77,7 +76,15 @@ async function uploadReferenceAsset(ref: SulphurReferenceInput) {
     method: 'POST',
     body: JSON.stringify({ fileName: ref.file.name, contentType: ref.file.type, sizeBytes: ref.file.size, purpose: ref.role }),
   });
-  const put = await fetch(upload.uploadUrl, { method: upload.method || 'PUT', headers: { 'content-type': ref.file.type }, body: ref.file });
+  const uploadUrl = upload.uploadUrl.startsWith('http')
+    ? upload.uploadUrl
+    : `${API}${upload.uploadUrl}`;
+  const put = await fetch(uploadUrl, {
+    method: upload.method || 'PUT',
+    credentials: 'include',
+    headers: { 'content-type': ref.file.type },
+    body: ref.file,
+  });
   if (!put.ok) throw new Error(`Upload failed for ${ref.file.name}: ${put.statusText}`);
   return upload.assetId;
 }
