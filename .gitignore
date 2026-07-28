@@ -8,5 +8,7 @@ coverage
 .playwright
 .pnpm-store
 *.tsbuildinfo
+tests/**/*.js
+Users/
 firebase-debug.log
 /*.mp4
