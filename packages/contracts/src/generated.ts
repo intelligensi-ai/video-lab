@@ -72,6 +72,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/prompts/rewrite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rewrite a storyboard prompt through the runtime text model */
+        post: operations["rewritePrompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/generations": {
         parameters: {
             query?: never;
@@ -271,6 +288,15 @@ export interface components {
                 purpose: components["schemas"]["AssetPurpose"];
             }[];
         };
+        RewritePromptRequest: {
+            prompt: string;
+            mode?: string;
+            negativePrompt?: string;
+            enhancePrompt?: boolean;
+        };
+        RewritePromptResponse: {
+            rewrittenPrompt: string;
+        };
         Generation: {
             id: string;
             prompt: string;
@@ -433,6 +459,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CreateUploadUrlResponse"];
+                };
+            };
+        };
+    };
+    rewritePrompt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RewritePromptRequest"];
+            };
+        };
+        responses: {
+            /** @description Rewritten prompt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RewritePromptResponse"];
                 };
             };
         };

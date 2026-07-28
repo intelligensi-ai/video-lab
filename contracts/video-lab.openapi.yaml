@@ -34,6 +34,13 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateUploadUrlRequest'}}}}
       responses:
         '201': {description: Upload target, content: {application/json: {schema: {$ref: '#/components/schemas/CreateUploadUrlResponse'}}}}
+  /v1/prompts/rewrite:
+    post:
+      operationId: rewritePrompt
+      summary: Rewrite a storyboard prompt through the runtime text model
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RewritePromptRequest'}}}}
+      responses:
+        '200': {description: Rewritten prompt, content: {application/json: {schema: {$ref: '#/components/schemas/RewritePromptResponse'}}}}
   /v1/generations:
     post:
       operationId: createGeneration
@@ -111,6 +118,8 @@ components:
     CreateUploadUrlRequest: {type: object, required: [fileName, contentType, sizeBytes, purpose], properties: {fileName: {type: string, maxLength: 160}, contentType: {type: string, enum: [image/jpeg,image/png,image/webp]}, sizeBytes: {type: integer, minimum: 1, maximum: 10485760}, purpose: {$ref: '#/components/schemas/AssetPurpose'}}}
     CreateUploadUrlResponse: {type: object, required: [assetId, uploadUrl, method, expiresAt, objectPath], properties: {assetId: {type: string}, uploadUrl: {type: string}, method: {type: string, enum: [PUT]}, expiresAt: {type: string, format: date-time}, objectPath: {type: string}}}
     CreateGenerationRequest: {type: object, required: [prompt, settings], properties: {prompt: {type: string, minLength: 8, maxLength: 1200}, settings: {$ref: '#/components/schemas/VideoSettings'}, inputAssets: {type: array, maxItems: 3, items: {type: object, required: [assetId, purpose], properties: {assetId: {type: string}, purpose: {$ref: '#/components/schemas/AssetPurpose'}}}}}}
+    RewritePromptRequest: {type: object, required: [prompt], properties: {prompt: {type: string, minLength: 8, maxLength: 1200}, mode: {type: string}, negativePrompt: {type: string}, enhancePrompt: {type: boolean}}}
+    RewritePromptResponse: {type: object, required: [rewrittenPrompt], properties: {rewrittenPrompt: {type: string}}}
     Generation: {type: object, required: [id, prompt, settings, status, creditCost, createdAt, updatedAt], properties: {id: {type: string}, prompt: {type: string}, settings: {$ref: '#/components/schemas/VideoSettings'}, inputAssets: {type: array, items: {type: object}}, status: {$ref: '#/components/schemas/GenerationStatus'}, queuePosition: {type: integer}, creditCost: {type: integer}, output: {type: object, properties: {downloadUrl: {type: string}, thumbnailUrl: {type: string}, durationSeconds: {type: integer}}}, safeErrorMessage: {type: string}, createdAt: {type: string, format: date-time}, updatedAt: {type: string, format: date-time}}}
     GalleryPage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Generation'}}, nextCursor: {type: string}}}
     Me: {type: object, required: [uid, email, status, roles, termsVersion], properties: {uid: {type: string}, email: {type: string}, displayName: {type: string}, photoURL: {type: string}, status: {type: string, enum: [active, suspended]}, roles: {type: array, items: {type: string}}, termsVersion: {type: string}, trialGrantedAt: {type: string, format: date-time}}}

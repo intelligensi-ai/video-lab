@@ -1,7 +1,7 @@
 import type { CreditWallet, Generation, RuntimeStatus } from '@video-lab/contracts';
 
 const API = import.meta.env.VITE_API_BASE_URL ?? '/api';
-const token = () => localStorage.getItem('vl_token') || 'demo-user';
+const token = () => sessionStorage.getItem('vl_token') || localStorage.getItem('vl_token') || 'demo-user';
 
 export async function api<T>(path: string, init: RequestInit = {}) {
   const r = await fetch(`${API}${path}`, {
@@ -115,6 +115,18 @@ export async function generateSulphurVideo(payload: SulphurGenerationPayload) {
       },
       inputAssets,
     }),
+  });
+}
+
+export async function rewriteSulphurPrompt(payload: {
+  prompt: string;
+  mode: string;
+  negativePrompt?: string;
+  enhancePrompt: boolean;
+}) {
+  return api<{ rewrittenPrompt: string }>('/v1/prompts/rewrite', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 }
 
