@@ -171,4 +171,3 @@ app.post('/v1/runtime/process-next',auth,processNextHandler);
 app.post('/v1/dev/process-one',auth,processNextHandler);
 app.use((err:unknown,req:express.Request,res:express.Response,_next:express.NextFunction)=>{if(!(typeof err==='object'&&err&&'status'in err))log('unhandled_api_error',{method:req.method,path:req.path,error:err instanceof Error?err.message:String(err)});const p=typeof err==='object'&&err&&'status'in err?err as ReturnType<typeof problem>:problem(500,'internal_error','Unexpected server error'); res.status(p.status).type('application/problem+json').json(p)});
 export const api=process.env.NODE_ENV==='test'?app:(await import('firebase-functions/v2/https')).onRequest({timeoutSeconds:3600,maxInstances:1},app);
-if(process.env.NODE_ENV!=='test'&&process.env.NODE_ENV!=='production'&&!process.env.FUNCTION_TARGET&&!process.env.K_SERVICE) app.listen(Number(process.env.PORT??5001),()=>console.log('api listening'));

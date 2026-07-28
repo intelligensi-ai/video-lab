@@ -1,9 +1,11 @@
 import { defineConfig } from 'vitest/config';
 import { fileURLToPath } from 'node:url';
 
+const projectRoot = fileURLToPath(new URL('./', import.meta.url));
 const root = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
 export default defineConfig({
+  root: projectRoot,
   resolve: {
     alias: {
       '@video-lab/contracts': root('./packages/contracts/src/index.ts'),
