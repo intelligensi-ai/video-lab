@@ -13,7 +13,10 @@ describe("SulphurLtxRuntimeAdapter", () => {
       vi.fn(async (url: string, init?: RequestInit) => {
         calls.push({ url, init });
         if (url.endsWith("/preview")) {
-          return Response.json({ id: "job-1", status: "queued" }, { status: 202 });
+          return Response.json(
+            { id: "job-1", status: "queued" },
+            { status: 202 },
+          );
         }
         return Response.json({ id: "job-1", status: "running" });
       }),
@@ -67,7 +70,9 @@ describe("SulphurLtxRuntimeAdapter", () => {
       payloadMode: "deploy-studio",
     });
 
-    await expect(adapter.completePrompt("A fox crosses a wet road")).resolves.toMatchObject({
+    await expect(
+      adapter.completePrompt("A fox crosses a wet road"),
+    ).resolves.toMatchObject({
       completedPrompt: "A fox is crossing a rain-dark road.",
       provider: "sulphur-gemma",
     });
@@ -86,7 +91,10 @@ describe("SulphurLtxRuntimeAdapter", () => {
             worker: "longform-ltx-storyboard-studio",
           });
         }
-        return Response.json({ id: "storyboard-job", status: "queued" }, { status: 202 });
+        return Response.json(
+          { id: "storyboard-job", status: "queued" },
+          { status: 202 },
+        );
       }),
     );
 
@@ -207,5 +215,82 @@ describe("SulphurLtxRuntimeAdapter", () => {
     expect(output.contentType).toBe("video/mp4");
     expect(output.durationSeconds).toBe(4);
     expect(output.bytes).toEqual(new Uint8Array([0, 0, 0, 24]));
+  });
+
+  it("maps an independent first-frame operation and accepts a PNG artifact", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        if (url.endsWith("/preview"))
+          return Response.json({ id: "frame-job" }, { status: 202 });
+        return new Response(new Uint8Array([137, 80, 78, 71]), {
+          headers: { "content-type": "image/png" },
+        });
+      }),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://runtime.test",
+      payloadMode: "deploy-studio",
+    });
+    await adapter.submitGeneration({
+      prompt: "A cinematic opening frame for a connected story",
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        aspectRatio: "16:9",
+        durationSeconds: 5,
+        quality: "draft",
+        operationScope: "start_frame",
+        operationSceneId: "scene-1",
+        framePrompt:
+          "A wide opening composition in cool rain and reflected teal light.",
+        storyboard: [
+          {
+            id: "scene-1",
+            title: "Opening",
+            prompt: "A founder crosses the wet street.",
+            duration: 5,
+            trimStart: 0,
+            trimEnd: 5,
+            seed: 1337,
+            transition: "cut",
+            transitionDuration: 0.75,
+            carryPreviousFrame: true,
+          },
+        ],
+      },
+    });
+    const payload = JSON.parse(String(calls[0].init?.body));
+    expect(payload).toMatchObject({
+      operation_scope: "start_frame",
+      operation_scene_id: "scene-1",
+      frame_prompt:
+        "A wide opening composition in cool rain and reflected teal light.",
+    });
+    await expect(adapter.fetchOutput("frame-job")).resolves.toMatchObject({
+      contentType: "image/png",
+    });
+  });
+
+  it("rejects a runtime-provided artifact URL on another origin", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/jobs/job-1/output"))
+          return new Response("missing", { status: 404 });
+        return Response.json({
+          status: "completed",
+          output_url: "http://169.254.169.254/latest/meta-data",
+        });
+      }),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://runtime.test",
+      payloadMode: "deploy-studio",
+    });
+    await expect(adapter.fetchOutput("job-1")).rejects.toThrow(
+      "outside its configured origin",
+    );
   });
 });

@@ -13,14 +13,20 @@ service cloud.firestore {
       allow update: if isOwner(uid) && request.resource.data.uid == uid && preservesRoles();
       allow delete: if false;
     }
-    match /creditWallets/{uid} { allow read: if isOwner(uid); allow write: if false; }
-    match /creditLedger/{id} { allow read: if signedIn() && resource.data.uid == request.auth.uid; allow write: if false; }
-    match /generations/{id} { allow read: if signedIn() && resource.data.uid == request.auth.uid; allow write: if false; }
-    match /assets/{id} { allow read: if signedIn() && resource.data.uid == request.auth.uid; allow write: if false; }
+    // API-managed records may contain internal object paths or runtime metadata.
+    // They are returned only through the authenticated same-origin gateway.
+    match /creditWallets/{uid} { allow read, write: if false; }
+    match /creditLedger/{id} { allow read, write: if false; }
+    match /generations/{id} { allow read, write: if false; }
+    match /assets/{id} { allow read, write: if false; }
+    match /storyboardDrafts/{uid} { allow read, write: if false; }
     match /runtimeState/{id} { allow read, write: if false; }
     match /runtimeDiscovery/{id} { allow read, write: if false; }
     match /queue/{id} { allow read, write: if false; }
+    match /generationQueue/{id} { allow read, write: if false; }
+    match /generationIdempotency/{id} { allow read, write: if false; }
+    match /generationActive/{id} { allow read, write: if false; }
     match /adminAudit/{id} { allow read, write: if false; }
-    match /systemMetrics/{id} { allow read: if signedIn(); allow write: if false; }
+    match /systemMetrics/{id} { allow read, write: if false; }
   }
 }

@@ -28,9 +28,20 @@ VIDEO_RUNTIME_DISCOVERY_DOCUMENT=current
 VIDEO_RUNTIME_DISCOVERY_REFRESH_MS=10000
 ```
 
-`VIDEO_RUNTIME_BASE_URL` and the old `runtimeState/config` document remain
-temporary server-side migration fallbacks only. Remove them after Deploy Studio
-has published and renewed the discovery lease successfully in production.
+`VIDEO_RUNTIME_BASE_URL` and the old `runtimeState/config` document are available
+only as explicit server-side migration fallbacks. Production ignores both unless
+`VIDEO_RUNTIME_ALLOW_ENV_FALLBACK=true`; normal deployments must use a valid,
+unexpired Deploy Studio lease.
+
+The adapter rejects redirects and refuses output URLs whose origin differs from
+the configured runtime. Production runtime origins must be HTTPS, contain no path,
+credentials, query or fragment, avoid private/link-local hosts, and match
+`VIDEO_RUNTIME_ALLOWED_ORIGINS` when configured.
+
+Storyboard enhancement is a separate server-only call to Deploy Studio's local
+Gemma endpoint. Video Lab validates exact shot cardinality, order and the strict
+response schema before returning suggestions to the browser. No paid LLM fallback
+is used.
 
 The implementation brief for the Deploy Studio repository is
 [`deploy-studio-runtime-handover-codex.md`](./deploy-studio-runtime-handover-codex.md).

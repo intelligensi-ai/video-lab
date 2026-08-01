@@ -17,18 +17,29 @@ import {
   useQuery,
   useMutation,
 } from "@tanstack/react-query";
-import type {
-  Generation,
-  RuntimeStatus,
-  Me,
-} from "@video-lab/contracts";
-import LongFormStoryboardStudio from "./LongFormStoryboardStudio.js";
+import type { Generation, RuntimeStatus, Me } from "@video-lab/contracts";
 import { useAuthenticatedVideo } from "./AuthenticatedVideo.js";
-import { completeGoogleRedirectSignIn, getApiToken, getFriendlyAuthError, isProductionFirebase, loadRegistrationProfile, observeAuth, registerWithEmail, requestPasswordReset, saveRegistrationProfile, signInWithEmail, signInWithGoogle, signOutUser } from "./auth.js";
+import {
+  completeGoogleRedirectSignIn,
+  getApiToken,
+  getFriendlyAuthError,
+  isProductionFirebase,
+  loadRegistrationProfile,
+  observeAuth,
+  registerWithEmail,
+  requestPasswordReset,
+  saveRegistrationProfile,
+  signInWithEmail,
+  signInWithGoogle,
+  signOutUser,
+} from "./auth.js";
 import type { User } from "firebase/auth";
 import homeMarkUrl from "../../../public/fav-icon.png";
 import "./style.css";
 const API = import.meta.env.VITE_API_BASE_URL ?? "/api";
+const LongFormStoryboardStudio = React.lazy(
+  () => import("./LongFormStoryboardStudio.js"),
+);
 const DEMO_GENERATIONS_KEY = "vl_demo_generations";
 const ENABLE_DEMO_API =
   import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_API === "true";
@@ -210,7 +221,6 @@ async function demoApi<T>(path: string, init: RequestInit = {}) {
       discovery: {
         source: "deploy-studio",
         state: "connected",
-        instanceId: "local-demo",
         leaseExpiresAt: undefined,
         lastPublishedAt: nowIso(),
         message: "Deploy Studio runtime lease is non-expiring for now",
@@ -266,17 +276,29 @@ function Shell() {
   const navigate = useNavigate();
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(!isProductionFirebase);
-  useEffect(() => observeAuth((user) => {
-    setFirebaseUser(user);
-    setAuthReady(true);
-  }), []);
-  const signedIn = !isProductionFirebase || Boolean(firebaseUser && !firebaseUser.isAnonymous);
+  useEffect(
+    () =>
+      observeAuth((user) => {
+        setFirebaseUser(user);
+        setAuthReady(true);
+      }),
+    [],
+  );
+  const signedIn =
+    !isProductionFirebase || Boolean(firebaseUser && !firebaseUser.isAnonymous);
+  const me = useQuery({
+    queryKey: ["me", firebaseUser?.uid ?? token()],
+    queryFn: () => api<Me>("/v1/me"),
+    enabled: signedIn,
+  });
   const isLanding = location.pathname === "/";
   const navItems = [
     { to: "/storyboard", label: "Storyboard Studio" },
     { to: "/gallery", label: "Gallery" },
     { to: "/account", label: "Account" },
-    { to: "/admin", label: "Admin" },
+    ...(me.data?.roles.includes("admin")
+      ? [{ to: "/admin", label: "Admin" }]
+      : []),
   ];
   const logout = async () => {
     await signOutUser();
@@ -285,63 +307,144 @@ function Shell() {
 
   return (
     <>
-      <nav className={`site-nav${signedIn ? " logged-in" : ""}`} aria-label="Primary navigation">
+      <nav
+        className={`site-nav${signedIn ? " logged-in" : ""}`}
+        aria-label="Primary navigation"
+      >
         <div className="site-nav-inner">
           <Link className="site-home-mark" to="/" aria-label="Video Lab home">
-            <img src={homeMarkUrl} alt=""/>
+            <img src={homeMarkUrl} alt="" />
           </Link>
-          {!isLanding && !signedIn && <Link className="site-brand" to="/" aria-label="Intelligensi.ai Video Lab home">
-            intelligensi<span>.ai</span> <b>Video Lab</b>
-          </Link>}
-          {signedIn && <div className="site-nav-links">
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  isActive ? "nav-link active" : "nav-link"
-                }
-                end={item.to === "/"}
-              >
-                {item.label}
+          {!isLanding && !signedIn && (
+            <Link
+              className="site-brand"
+              to="/"
+              aria-label="Intelligensi.ai Video Lab home"
+            >
+              intelligensi<span>.ai</span> <b>Video Lab</b>
+            </Link>
+          )}
+          {signedIn && (
+            <div className="site-nav-links">
+              {navItems.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    isActive ? "nav-link active" : "nav-link"
+                  }
+                  end={item.to === "/"}
+                >
+                  {item.label}
+                </NavLink>
+              ))}
+            </div>
+          )}
+          {signedIn && (
+            <button className="site-logout" type="button" onClick={logout}>
+              Log out
+            </button>
+          )}
+          {authReady && !signedIn && (
+            <div className="site-auth-links">
+              <NavLink to="/login">Log in</NavLink>
+              <NavLink className="site-register-link" to="/register">
+                Register
               </NavLink>
-            ))}
-          </div>}
-          {signedIn && <button className="site-logout" type="button" onClick={logout}>Log out</button>}
-          {authReady && !signedIn && <div className="site-auth-links">
-            <NavLink to="/login">Log in</NavLink>
-            <NavLink className="site-register-link" to="/register">Register</NavLink>
-          </div>}
+            </div>
+          )}
         </div>
       </nav>
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<AuthEntry mode="login" />} />
         <Route path="/register" element={<AuthEntry mode="register" />} />
-        <Route path="/storyboard" element={<ProtectedRoute element={<LongFormStoryboardStudio />} />} />
+        <Route
+          path="/storyboard"
+          element={
+            <ProtectedRoute
+              element={
+                <React.Suspense
+                  fallback={
+                    <main className="auth-page">
+                      <p>Opening your storyboard…</p>
+                    </main>
+                  }
+                >
+                  <LongFormStoryboardStudio />
+                </React.Suspense>
+              }
+            />
+          }
+        />
         <Route path="/studio" element={<Navigate to="/storyboard" replace />} />
-        <Route path="/sulphur" element={<Navigate to="/storyboard" replace />} />
-        <Route path="/gallery" element={<ProtectedRoute element={<Gallery />} />} />
-        <Route path="/generations/:id" element={<ProtectedRoute element={<Detail />} />} />
-        <Route path="/onboarding" element={<ProtectedRoute element={<Registration />} />} />
-        <Route path="/account" element={<ProtectedRoute element={<Account />} />} />
-        <Route path="/admin" element={<ProtectedRoute element={<Admin />} />} />
+        <Route
+          path="/sulphur"
+          element={<Navigate to="/storyboard" replace />}
+        />
+        <Route
+          path="/gallery"
+          element={<ProtectedRoute element={<Gallery />} />}
+        />
+        <Route
+          path="/generations/:id"
+          element={<ProtectedRoute element={<Detail />} />}
+        />
+        <Route
+          path="/onboarding"
+          element={<ProtectedRoute element={<Registration />} />}
+        />
+        <Route
+          path="/account"
+          element={<ProtectedRoute element={<Account />} />}
+        />
+        <Route
+          path="/admin"
+          element={<ProtectedRoute element={<AdminRoute />} />}
+        />
       </Routes>
     </>
   );
+}
+
+function AdminRoute() {
+  const me = useQuery({
+    queryKey: ["me", "admin-gate"],
+    queryFn: () => api<Me>("/v1/me"),
+  });
+  if (me.isLoading)
+    return (
+      <main>
+        <p>Checking administrator access…</p>
+      </main>
+    );
+  if (!me.data?.roles.includes("admin"))
+    return <Navigate to="/storyboard" replace />;
+  return <Admin />;
 }
 
 function ProtectedRoute({ element }: { element: React.ReactNode }) {
   const location = useLocation();
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [ready, setReady] = useState(!isProductionFirebase);
-  useEffect(() => observeAuth((user) => {
-    setFirebaseUser(user);
-    setReady(true);
-  }), []);
+  useEffect(
+    () =>
+      observeAuth((user) => {
+        setFirebaseUser(user);
+        setReady(true);
+      }),
+    [],
+  );
 
   if (!isProductionFirebase) return element;
-  if (!ready) return <main className="auth-page"><div className="auth-card"><p>Restoring your Video Lab session…</p></div></main>;
+  if (!ready)
+    return (
+      <main className="auth-page">
+        <div className="auth-card">
+          <p>Restoring your Video Lab session…</p>
+        </div>
+      </main>
+    );
   if (!firebaseUser || firebaseUser.isAnonymous) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
@@ -365,11 +468,16 @@ function AuthEntry({ mode }: { mode: "login" | "register" }) {
   const [subscribeEmail, setSubscribeEmail] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const requestedPath = (location.state as { from?: string } | null)?.from;
-  const destination = mode === "register" ? "/onboarding" : requestedPath || "/storyboard";
-  useEffect(() => observeAuth((user) => {
-    setFirebaseUser(user);
-    setReady(true);
-  }), []);
+  const destination =
+    mode === "register" ? "/onboarding" : requestedPath || "/storyboard";
+  useEffect(
+    () =>
+      observeAuth((user) => {
+        setFirebaseUser(user);
+        setReady(true);
+      }),
+    [],
+  );
   useEffect(() => {
     if (!isProductionFirebase) return;
     completeGoogleRedirectSignIn()
@@ -379,7 +487,8 @@ function AuthEntry({ mode }: { mode: "login" | "register" }) {
       .catch((cause) => setError(getFriendlyAuthError(cause)));
   }, [destination, navigate]);
   useEffect(() => {
-    if (ready && !busy && firebaseUser && !firebaseUser.isAnonymous) navigate(destination, { replace: true });
+    if (ready && !busy && firebaseUser && !firebaseUser.isAnonymous)
+      navigate(destination, { replace: true });
   }, [busy, destination, firebaseUser, navigate, ready]);
   const connect = async () => {
     setBusy(true);
@@ -401,12 +510,19 @@ function AuthEntry({ mode }: { mode: "login" | "register" }) {
     setNotice(undefined);
     if (mode === "register") {
       if (name.trim().length < 2) return setError("Enter your full name.");
-      if (password.length < 8) return setError("Create a password with at least 8 characters.");
-      if (password !== confirmPassword) return setError("The two passwords do not match.");
-      if (!discoverySource) return setError("Tell us how you heard about Video Lab.");
-      if (!acceptedTerms) return setError("Please accept the Terms and Privacy Policy to create an account.");
+      if (password.length < 8)
+        return setError("Create a password with at least 8 characters.");
+      if (password !== confirmPassword)
+        return setError("The two passwords do not match.");
+      if (!discoverySource)
+        return setError("Tell us how you heard about Video Lab.");
+      if (!acceptedTerms)
+        return setError(
+          "Please accept the Terms and Privacy Policy to create an account.",
+        );
     }
-    if (!email.trim() || !password) return setError("Enter your email and password.");
+    if (!email.trim() || !password)
+      return setError("Enter your email and password.");
     setBusy(true);
     setBusyAction("email");
     try {
@@ -448,45 +564,190 @@ function AuthEntry({ mode }: { mode: "login" | "register" }) {
     }
   };
 
-  return <main className="auth-page">
-    <section className="auth-card">
-      <Link className="auth-brand" to="/">intelligensi<span>.ai</span> <b>Video Lab</b></Link>
-      <span className="auth-eyebrow">{mode === "login" ? "Welcome back" : "Create your account"}</span>
-      <h1>{mode === "login" ? "Login" : "Join Video Lab"}</h1>
-      <p>{mode === "login"
-        ? "Continue creating cinematic video, storyboards and connected scenes."
-        : "Create your private workspace for cinematic AI video and storyboard production."}</p>
-      <button className="auth-google" type="button" disabled={busy || !ready} onClick={connect}>
-        <span>G</span>{busyAction === "google" ? "Connecting…" : `Continue with Google`}
-      </button>
-      <div className="auth-divider"><span>or use email</span></div>
-      <form className="auth-email-form" onSubmit={submitEmail}>
-        {mode === "register" && <label><span>Full name</span><input type="text" autoComplete="name" value={name} placeholder="Your name" required onChange={(event) => setName(event.target.value)}/></label>}
-        <label><span>Email address</span><input type="email" autoComplete="email" value={email} placeholder="you@example.com" required onChange={(event) => setEmail(event.target.value)}/></label>
-        <div className={mode === "register" ? "auth-password-grid" : ""}>
-          <label><span>{mode === "register" ? "Create password" : "Password"}</span><input type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} value={password} placeholder={mode === "register" ? "At least 8 characters" : "Your password"} minLength={mode === "register" ? 8 : undefined} required onChange={(event) => setPassword(event.target.value)}/></label>
-          {mode === "register" && <label><span>Repeat password</span><input type="password" autoComplete="new-password" value={confirmPassword} placeholder="Repeat your password" minLength={8} required onChange={(event) => setConfirmPassword(event.target.value)}/></label>}
+  return (
+    <main className="auth-page">
+      <section className="auth-card">
+        <Link className="auth-brand" to="/">
+          intelligensi<span>.ai</span> <b>Video Lab</b>
+        </Link>
+        <span className="auth-eyebrow">
+          {mode === "login" ? "Welcome back" : "Create your account"}
+        </span>
+        <h1>{mode === "login" ? "Login" : "Join Video Lab"}</h1>
+        <p>
+          {mode === "login"
+            ? "Continue creating cinematic video, storyboards and connected scenes."
+            : "Create your private workspace for cinematic AI video and storyboard production."}
+        </p>
+        <button
+          className="auth-google"
+          type="button"
+          disabled={busy || !ready}
+          onClick={connect}
+        >
+          <span>G</span>
+          {busyAction === "google" ? "Connecting…" : `Continue with Google`}
+        </button>
+        <div className="auth-divider">
+          <span>or use email</span>
         </div>
-        {mode === "register" && <>
-          <label><span>How did you hear about us?</span><select value={discoverySource} required onChange={(event) => setDiscoverySource(event.target.value)}><option value="">Select one</option><option>Search engine</option><option>Social media</option><option>Friend or colleague</option><option>Event or community</option><option>Article or newsletter</option><option>Other</option></select></label>
-          <div className="auth-consents">
-            <label><input type="checkbox" checked={subscribeEmail} onChange={(event) => setSubscribeEmail(event.target.checked)}/><span><b>Subscribe to email updates</b><small>Product news, creative ideas and occasional Video Lab updates. You can unsubscribe at any time.</small></span></label>
-            <label><input type="checkbox" required checked={acceptedTerms} onChange={(event) => setAcceptedTerms(event.target.checked)}/><span><b>I agree to the Terms and Privacy Policy</b><small>Required to create your private Video Lab account.</small></span></label>
+        <form className="auth-email-form" onSubmit={submitEmail}>
+          {mode === "register" && (
+            <label>
+              <span>Full name</span>
+              <input
+                type="text"
+                autoComplete="name"
+                value={name}
+                placeholder="Your name"
+                required
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+          )}
+          <label>
+            <span>Email address</span>
+            <input
+              type="email"
+              autoComplete="email"
+              value={email}
+              placeholder="you@example.com"
+              required
+              onChange={(event) => setEmail(event.target.value)}
+            />
+          </label>
+          <div className={mode === "register" ? "auth-password-grid" : ""}>
+            <label>
+              <span>
+                {mode === "register" ? "Create password" : "Password"}
+              </span>
+              <input
+                type="password"
+                autoComplete={
+                  mode === "register" ? "new-password" : "current-password"
+                }
+                value={password}
+                placeholder={
+                  mode === "register"
+                    ? "At least 8 characters"
+                    : "Your password"
+                }
+                minLength={mode === "register" ? 8 : undefined}
+                required
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </label>
+            {mode === "register" && (
+              <label>
+                <span>Repeat password</span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  placeholder="Repeat your password"
+                  minLength={8}
+                  required
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                />
+              </label>
+            )}
           </div>
-        </>}
-        <button className="auth-email-submit" type="submit" disabled={busy || !ready}>{busyAction === "email" ? (mode === "register" ? "Creating account…" : "Logging in…") : mode === "register" ? "Create account" : "Login"}</button>
-        {mode === "login" && <button className="auth-reset" type="button" disabled={busy} onClick={resetPassword}>{busyAction === "reset" ? "Sending…" : "Forgot password?"}</button>}
-      </form>
-      {error && <p className="error">{error}</p>}
-      {notice && <p className="auth-notice">{notice}</p>}
-      <div className="auth-switch">
-        {mode === "login"
-          ? <>New to Video Lab? <Link to="/register">Create an account</Link></>
-          : <>Already have an account? <Link to="/login">Log in</Link></>}
-      </div>
-      <small>By continuing, you agree to use Video Lab responsibly. Your workspace is private by default.</small>
-    </section>
-  </main>;
+          {mode === "register" && (
+            <>
+              <label>
+                <span>How did you hear about us?</span>
+                <select
+                  value={discoverySource}
+                  required
+                  onChange={(event) => setDiscoverySource(event.target.value)}
+                >
+                  <option value="">Select one</option>
+                  <option>Search engine</option>
+                  <option>Social media</option>
+                  <option>Friend or colleague</option>
+                  <option>Event or community</option>
+                  <option>Article or newsletter</option>
+                  <option>Other</option>
+                </select>
+              </label>
+              <div className="auth-consents">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={subscribeEmail}
+                    onChange={(event) =>
+                      setSubscribeEmail(event.target.checked)
+                    }
+                  />
+                  <span>
+                    <b>Subscribe to email updates</b>
+                    <small>
+                      Product news, creative ideas and occasional Video Lab
+                      updates. You can unsubscribe at any time.
+                    </small>
+                  </span>
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    required
+                    checked={acceptedTerms}
+                    onChange={(event) => setAcceptedTerms(event.target.checked)}
+                  />
+                  <span>
+                    <b>I agree to the Terms and Privacy Policy</b>
+                    <small>
+                      Required to create your private Video Lab account.
+                    </small>
+                  </span>
+                </label>
+              </div>
+            </>
+          )}
+          <button
+            className="auth-email-submit"
+            type="submit"
+            disabled={busy || !ready}
+          >
+            {busyAction === "email"
+              ? mode === "register"
+                ? "Creating account…"
+                : "Logging in…"
+              : mode === "register"
+                ? "Create account"
+                : "Login"}
+          </button>
+          {mode === "login" && (
+            <button
+              className="auth-reset"
+              type="button"
+              disabled={busy}
+              onClick={resetPassword}
+            >
+              {busyAction === "reset" ? "Sending…" : "Forgot password?"}
+            </button>
+          )}
+        </form>
+        {error && <p className="error">{error}</p>}
+        {notice && <p className="auth-notice">{notice}</p>}
+        <div className="auth-switch">
+          {mode === "login" ? (
+            <>
+              New to Video Lab? <Link to="/register">Create an account</Link>
+            </>
+          ) : (
+            <>
+              Already have an account? <Link to="/login">Log in</Link>
+            </>
+          )}
+        </div>
+        <small>
+          By continuing, you agree to use Video Lab responsibly. Your workspace
+          is private by default.
+        </small>
+      </section>
+    </main>
+  );
 }
 
 function Landing() {
@@ -494,25 +755,40 @@ function Landing() {
     <main className="home">
       <section className="home-hero">
         <div className="home-copy">
-          <div className="home-kicker"><span>●</span> Cinematic AI creation platform</div>
-          <h1><img src="/intelligensi-logo.png" alt="intelligensi.ai"/><em>Video Lab.</em></h1>
+          <div className="home-kicker">
+            <span>●</span> Cinematic AI creation platform
+          </div>
+          <h1>
+            <img src="/intelligensi-logo.png" alt="intelligensi.ai" />
+            <em>Video Lab.</em>
+          </h1>
           <p>
             Shape cinematic AI video scene by scene. Direct the image, movement
             and transition—then carry visual continuity across the whole film.
           </p>
           <div className="home-actions">
-            <Link className="home-primary" to="/storyboard">Start creating <span>↗</span></Link>
-            <Link className="home-secondary" to="/gallery">Explore your gallery</Link>
+            <Link className="home-primary" to="/storyboard">
+              Start creating <span>↗</span>
+            </Link>
+            <Link className="home-secondary" to="/gallery">
+              Explore your gallery
+            </Link>
           </div>
           <div className="home-proof">
-            <span><b>6</b> scenes</span>
-            <span><b>Frame</b> continuity</span>
-            <span><b>Private</b> by default</span>
+            <span>
+              <b>6</b> scenes
+            </span>
+            <span>
+              <b>Frame</b> continuity
+            </span>
+            <span>
+              <b>Private</b> by default
+            </span>
           </div>
         </div>
         <div className="home-visual">
-          <div className="home-orbit home-orbit-one"/>
-          <div className="home-orbit home-orbit-two"/>
+          <div className="home-orbit home-orbit-one" />
+          <div className="home-orbit home-orbit-two" />
           <figure>
             <video
               autoPlay
@@ -523,122 +799,89 @@ function Landing() {
               poster="/images/longform-ltx-storyboard-studio-film-roll.webp"
               aria-label="A cinematic film strip carrying a sequence of connected storyboard scenes"
             >
-              <source src="/Video-lab-startup-video.mp4" type="video/mp4"/>
+              <source src="/Video-lab-startup-video.mp4" type="video/mp4" />
             </video>
             <figcaption>
               <span>Continuity engine</span>
               <strong>One film. Every frame connected.</strong>
             </figcaption>
           </figure>
-          <div className="home-float home-float-top"><i/> Generator ready</div>
-          <Link className="home-float home-float-bottom" to="/login"><b>Login / Register</b><span>Enter Video Lab</span></Link>
+          <div className="home-float home-float-top">
+            <i /> Generator ready
+          </div>
+          <Link className="home-float home-float-bottom" to="/login">
+            <b>Login / Register</b>
+            <span>Enter Video Lab</span>
+          </Link>
         </div>
       </section>
 
-      <section className="home-marquee" aria-label="Video creation capabilities">
-        <div>STORYBOARD <span>✦</span> FRAME ANCHORS <span>✦</span> CINEMATIC TRANSITIONS <span>✦</span> LTX VIDEO <span>✦</span> STORYBOARD <span>✦</span></div>
+      <section
+        className="home-marquee"
+        aria-label="Video creation capabilities"
+      >
+        <div>
+          STORYBOARD <span>✦</span> FRAME ANCHORS <span>✦</span> CINEMATIC
+          TRANSITIONS <span>✦</span> LTX VIDEO <span>✦</span> STORYBOARD{" "}
+          <span>✦</span>
+        </div>
       </section>
 
       <section className="home-suite">
         <header>
           <span>Creative control, without the complexity</span>
-          <h2>From first frame<br/>to final cut.</h2>
+          <h2>
+            From first frame
+            <br />
+            to final cut.
+          </h2>
         </header>
         <div className="home-cards">
-          <article><b>01</b><h3>Direct the story</h3><p>Plan up to 6 scenes around one clear artistic goal.</p></article>
-          <article><b>02</b><h3>Anchor the image</h3><p>Guide characters, composition and style with visual references.</p></article>
-          <article><b>03</b><h3>Carry continuity</h3><p>Flow the final frame of each scene into the opening of the next.</p></article>
-          <article><b>04</b><h3>Finish the cut</h3><p>Control timing, transitions and production settings.</p></article>
+          <article>
+            <b>01</b>
+            <h3>Direct the story</h3>
+            <p>Plan up to 6 scenes around one clear artistic goal.</p>
+          </article>
+          <article>
+            <b>02</b>
+            <h3>Anchor the image</h3>
+            <p>
+              Guide characters, composition and style with visual references.
+            </p>
+          </article>
+          <article>
+            <b>03</b>
+            <h3>Carry continuity</h3>
+            <p>
+              Flow the final frame of each scene into the opening of the next.
+            </p>
+          </article>
+          <article>
+            <b>04</b>
+            <h3>Finish the cut</h3>
+            <p>Control timing, transitions and production settings.</p>
+          </article>
         </div>
       </section>
 
       <section className="home-final">
-        <div><span>Make the film only you can imagine.</span><h2>Ready when you are.</h2></div>
-        <Link className="home-primary" to="/storyboard">Open Storyboard <span>↗</span></Link>
+        <div>
+          <span>Make the film only you can imagine.</span>
+          <h2>Ready when you are.</h2>
+        </div>
+        <Link className="home-primary" to="/storyboard">
+          Open Storyboard <span>↗</span>
+        </Link>
       </section>
 
       <footer className="home-footer">
         <span>© 2026 Intelligensi.ai</span>
-        <div><a>Privacy</a><a>Terms</a></div>
+        <div>
+          <a>Privacy</a>
+          <a>Terms</a>
+        </div>
         <small>Your films are private by default.</small>
       </footer>
-    </main>
-  );
-}
-function Studio() {
-  const nav = useNavigate();
-  const runtime = useQuery({
-    queryKey: ["runtime"],
-    queryFn: () => api<RuntimeStatus>("/v1/runtime/status"),
-  });
-  const [prompt, setPrompt] = useState(
-    "A cinematic reveal of an intelligent glass monolith floating over an ocean at sunrise",
-  );
-  const [quality, setQuality] = useState<"draft" | "standard" | "high">(
-    "standard",
-  );
-  const create = useMutation({
-    mutationFn: () =>
-      api<Generation>("/v1/generations", {
-        method: "POST",
-        headers: { "Idempotency-Key": crypto.randomUUID() },
-        body: JSON.stringify({
-          prompt,
-          settings: { aspectRatio: "16:9", durationSeconds: 4, quality },
-        }),
-      }),
-    onSuccess: (g) => {
-      void api("/v1/runtime/process-next", { method: "POST" }).catch((error) =>
-        console.error("Generation worker request failed", error),
-      );
-      nav(`/generations/${g.id}`);
-    },
-  });
-  return (
-    <main>
-      <h1>Studio</h1>
-      <section className="panel">
-        <textarea
-          value={prompt}
-          maxLength={1200}
-          onChange={(e) => setPrompt(e.target.value)}
-        />
-        <p>{prompt.length}/1200 characters</p>
-        <div className="chips">
-          {["Volumetric light", "Handheld documentary", "Epic drone shot"].map(
-            (p) => (
-              <button onClick={() => setPrompt(prompt + " " + p)}>{p}</button>
-            ),
-          )}
-        </div>
-        <label>
-          Quality{" "}
-          <select
-            value={quality}
-            onChange={(e) => setQuality(e.target.value as typeof quality)}
-          >
-            <option>draft</option>
-            <option>standard</option>
-            <option>high</option>
-          </select>
-        </label>
-        <div className="drop">
-          Optional start, end, or reference image upload target is available
-          through the API.
-        </div>
-        <p>
-          Runtime: {runtime.data?.status} · Queue depth{" "}
-          {runtime.data?.queueDepth}
-        </p>
-        {create.error && <p className="error">{create.error.message}</p>}
-        <button
-          className="button"
-          disabled={create.isPending}
-          onClick={() => create.mutate()}
-        >
-          {create.isPending ? "Submitting…" : "Generate video"}
-        </button>
-      </section>
     </main>
   );
 }
@@ -649,7 +892,9 @@ function Gallery() {
   });
   return (
     <main className="gallery-page">
-      <h1 className="editorial-page-title">Gallery<span className="editorial-title-stop">.</span></h1>
+      <h1 className="editorial-page-title">
+        Gallery<span className="editorial-title-stop">.</span>
+      </h1>
       <div className="gallery-grid">
         {q.data?.items.length ? (
           q.data.items.map((g) => (
@@ -674,10 +919,21 @@ function Gallery() {
 function GalleryArtifact({ generation }: { generation: Generation }) {
   const video = useAuthenticatedVideo(generation.output?.downloadUrl);
   if (video.objectUrl) {
-    return <video className="video-preview gallery-media" src={video.objectUrl} controls preload="metadata" />;
+    return (
+      <video
+        className="video-preview gallery-media"
+        src={video.objectUrl}
+        controls
+        preload="metadata"
+      />
+    );
   }
   if (video.error) {
-    return <div className="thumb error gallery-media">Video unavailable: {video.error}</div>;
+    return (
+      <div className="thumb error gallery-media">
+        Video unavailable: {video.error}
+      </div>
+    );
   }
   return (
     <div className="thumb gallery-media">
@@ -710,10 +966,17 @@ function Detail() {
           <h1>Generation</h1>
           <section className="panel generation-detail-panel">
             {video.objectUrl ? (
-              <video className="video-preview" src={video.objectUrl} controls autoPlay />
+              <video
+                className="video-preview"
+                src={video.objectUrl}
+                controls
+                autoPlay
+              />
             ) : (
               <div className="thumb big">
-                {g.output?.downloadUrl ? "Retrieving completed video…" : g.status}
+                {g.output?.downloadUrl
+                  ? "Retrieving completed video…"
+                  : g.status}
               </div>
             )}
             {video.error && (
@@ -726,18 +989,29 @@ function Detail() {
             )}
             <div className="generation-detail-actions">
               {video.objectUrl && (
-                <a className="button" href={video.objectUrl} download={`${g.id}.mp4`}>
+                <a
+                  className="button"
+                  href={video.objectUrl}
+                  download={`${g.id}.mp4`}
+                >
                   Download
                 </a>
               )}
               <button onClick={() => navigator.clipboard.writeText(g.prompt)}>
                 Copy prompt
               </button>
-              <Link className="button" to="/storyboard">Create Variation</Link>
+              <Link className="button" to="/storyboard">
+                Create Variation
+              </Link>
               {!["completed", "failed", "cancelled"].includes(g.status) && (
                 <button onClick={() => cancel.mutate()}>Cancel</button>
               )}
-              <button onClick={() => proc.mutate()}>Run mock worker</button>
+              {import.meta.env.DEV &&
+                import.meta.env.VITE_ENABLE_DEMO_API === "true" && (
+                  <button onClick={() => proc.mutate()}>
+                    Run local mock worker
+                  </button>
+                )}
             </div>
           </section>
         </>
@@ -777,19 +1051,34 @@ function Registration() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
   const [profile, setProfile] = useState<RegistrationProfile>(() => {
-    try { return { ...emptyRegistration, ...JSON.parse(localStorage.getItem("vl_registration") ?? "{}") }; }
-    catch { return emptyRegistration; }
-  });
-  useEffect(() => observeAuth((user) => {
-    setFirebaseUser(user);
-    if (user && !user.isAnonymous) {
-      void loadRegistrationProfile().then((stored) => {
-        if (Object.keys(stored).length) setProfile((current) => ({ ...current, ...stored }));
-      }).catch(() => undefined);
+    try {
+      return {
+        ...emptyRegistration,
+        ...JSON.parse(localStorage.getItem("vl_registration") ?? "{}"),
+      };
+    } catch {
+      return emptyRegistration;
     }
-  }), []);
-  const update = <K extends keyof RegistrationProfile>(key: K, value: RegistrationProfile[K]) =>
-    setProfile((current) => ({ ...current, [key]: value }));
+  });
+  useEffect(
+    () =>
+      observeAuth((user) => {
+        setFirebaseUser(user);
+        if (user && !user.isAnonymous) {
+          void loadRegistrationProfile()
+            .then((stored) => {
+              if (Object.keys(stored).length)
+                setProfile((current) => ({ ...current, ...stored }));
+            })
+            .catch(() => undefined);
+        }
+      }),
+    [],
+  );
+  const update = <K extends keyof RegistrationProfile>(
+    key: K,
+    value: RegistrationProfile[K],
+  ) => setProfile((current) => ({ ...current, [key]: value }));
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setSaving(true);
@@ -801,7 +1090,9 @@ function Registration() {
       setSaved(true);
       navigate("/storyboard", { replace: true });
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not save registration");
+      setSaveError(
+        error instanceof Error ? error.message : "Could not save registration",
+      );
     } finally {
       setSaving(false);
     }
@@ -811,28 +1102,103 @@ function Registration() {
       <header className="registration-hero">
         <span>Welcome to Video Lab</span>
         <h1>Tell us a little about you</h1>
-        <p>Help us tailor the creative tools and communications you see. Demographic and marketing questions are optional.</p>
+        <p>
+          Help us tailor the creative tools and communications you see.
+          Demographic and marketing questions are optional.
+        </p>
       </header>
       <form className="registration-form" onSubmit={submit}>
         <section className="panel registration-identity">
           <span className="registration-step">01 · Your account</span>
           <h2>Google profile</h2>
           <div className="registration-google">
-            {firebaseUser?.photoURL ? <img src={firebaseUser.photoURL} alt="Google profile"/> : <span>{(firebaseUser?.displayName ?? firebaseUser?.email ?? "VL").slice(0, 2).toUpperCase()}</span>}
-            <div><strong>{firebaseUser?.displayName ?? "Guest creator"}</strong><small>{firebaseUser?.email ?? "Connect Google from your Account page"}</small></div>
+            {firebaseUser?.photoURL ? (
+              <img src={firebaseUser.photoURL} alt="Google profile" />
+            ) : (
+              <span>
+                {(firebaseUser?.displayName ?? firebaseUser?.email ?? "VL")
+                  .slice(0, 2)
+                  .toUpperCase()}
+              </span>
+            )}
+            <div>
+              <strong>{firebaseUser?.displayName ?? "Guest creator"}</strong>
+              <small>
+                {firebaseUser?.email ?? "Connect Google from your Account page"}
+              </small>
+            </div>
           </div>
-          <p>Your authentication details come from Google and remain managed by Firebase Auth.</p>
+          <p>
+            Your authentication details come from Google and remain managed by
+            Firebase Auth.
+          </p>
         </section>
 
         <section className="panel registration-demographics">
           <span className="registration-step">02 · Optional demographics</span>
           <h2>About your work</h2>
           <div className="registration-fields">
-            <label><span>Country or region</span><input value={profile.country} placeholder="e.g. United Kingdom" onChange={(event) => update("country", event.target.value)}/></label>
-            <label><span>Industry</span><select value={profile.industry} onChange={(event) => update("industry", event.target.value)}><option value="">Select one</option><option>Film and television</option><option>Advertising and marketing</option><option>Design and creative services</option><option>Technology</option><option>Education</option><option>Media and publishing</option><option>Other</option></select></label>
-            <label><span>Your role</span><input value={profile.role} placeholder="e.g. Director, founder, editor" onChange={(event) => update("role", event.target.value)}/></label>
-            <label><span>Team size</span><select value={profile.teamSize} onChange={(event) => update("teamSize", event.target.value)}><option value="">Select one</option><option>Just me</option><option>2–10</option><option>11–50</option><option>51–200</option><option>201+</option></select></label>
-            <label><span>Video AI experience</span><select value={profile.experienceLevel} onChange={(event) => update("experienceLevel", event.target.value)}><option value="">Select one</option><option>Just exploring</option><option>Beginner</option><option>Regular user</option><option>Advanced professional</option></select></label>
+            <label>
+              <span>Country or region</span>
+              <input
+                value={profile.country}
+                placeholder="e.g. United Kingdom"
+                onChange={(event) => update("country", event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Industry</span>
+              <select
+                value={profile.industry}
+                onChange={(event) => update("industry", event.target.value)}
+              >
+                <option value="">Select one</option>
+                <option>Film and television</option>
+                <option>Advertising and marketing</option>
+                <option>Design and creative services</option>
+                <option>Technology</option>
+                <option>Education</option>
+                <option>Media and publishing</option>
+                <option>Other</option>
+              </select>
+            </label>
+            <label>
+              <span>Your role</span>
+              <input
+                value={profile.role}
+                placeholder="e.g. Director, founder, editor"
+                onChange={(event) => update("role", event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Team size</span>
+              <select
+                value={profile.teamSize}
+                onChange={(event) => update("teamSize", event.target.value)}
+              >
+                <option value="">Select one</option>
+                <option>Just me</option>
+                <option>2–10</option>
+                <option>11–50</option>
+                <option>51–200</option>
+                <option>201+</option>
+              </select>
+            </label>
+            <label>
+              <span>Video AI experience</span>
+              <select
+                value={profile.experienceLevel}
+                onChange={(event) =>
+                  update("experienceLevel", event.target.value)
+                }
+              >
+                <option value="">Select one</option>
+                <option>Just exploring</option>
+                <option>Beginner</option>
+                <option>Regular user</option>
+                <option>Advanced professional</option>
+              </select>
+            </label>
           </div>
         </section>
 
@@ -840,18 +1206,90 @@ function Registration() {
           <span className="registration-step">03 · Product research</span>
           <h2>What brings you here?</h2>
           <div className="registration-fields">
-            <label><span>How did you hear about us?</span><select value={profile.discoverySource} onChange={(event) => update("discoverySource", event.target.value)}><option value="">Select one</option><option>Search engine</option><option>Social media</option><option>Friend or colleague</option><option>Event or community</option><option>Article or newsletter</option><option>Other</option></select></label>
-            <label><span>Primary goal</span><select value={profile.primaryGoal} onChange={(event) => update("primaryGoal", event.target.value)}><option value="">Select one</option><option>Create marketing videos</option><option>Develop films or storyboards</option><option>Prototype creative concepts</option><option>Create social content</option><option>Research video AI</option><option>Other</option></select></label>
+            <label>
+              <span>How did you hear about us?</span>
+              <select
+                value={profile.discoverySource}
+                onChange={(event) =>
+                  update("discoverySource", event.target.value)
+                }
+              >
+                <option value="">Select one</option>
+                <option>Search engine</option>
+                <option>Social media</option>
+                <option>Friend or colleague</option>
+                <option>Event or community</option>
+                <option>Article or newsletter</option>
+                <option>Other</option>
+              </select>
+            </label>
+            <label>
+              <span>Primary goal</span>
+              <select
+                value={profile.primaryGoal}
+                onChange={(event) => update("primaryGoal", event.target.value)}
+              >
+                <option value="">Select one</option>
+                <option>Create marketing videos</option>
+                <option>Develop films or storyboards</option>
+                <option>Prototype creative concepts</option>
+                <option>Create social content</option>
+                <option>Research video AI</option>
+                <option>Other</option>
+              </select>
+            </label>
           </div>
           <div className="registration-consents">
-            <label><input type="checkbox" checked={profile.productUpdates} onChange={(event) => update("productUpdates", event.target.checked)}/><span><b>Product news and creative tips</b><small>Occasional email updates. You can unsubscribe at any time.</small></span></label>
-            <label><input type="checkbox" checked={profile.researchInvites} onChange={(event) => update("researchInvites", event.target.checked)}/><span><b>Research invitations</b><small>Optional invitations to interviews, surveys and early feature tests.</small></span></label>
+            <label>
+              <input
+                type="checkbox"
+                checked={profile.productUpdates}
+                onChange={(event) =>
+                  update("productUpdates", event.target.checked)
+                }
+              />
+              <span>
+                <b>Product news and creative tips</b>
+                <small>
+                  Occasional email updates. You can unsubscribe at any time.
+                </small>
+              </span>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={profile.researchInvites}
+                onChange={(event) =>
+                  update("researchInvites", event.target.checked)
+                }
+              />
+              <span>
+                <b>Research invitations</b>
+                <small>
+                  Optional invitations to interviews, surveys and early feature
+                  tests.
+                </small>
+              </span>
+            </label>
           </div>
         </section>
 
         <footer className="registration-actions">
-          <p>{saveError ? <span className="error">{saveError}</span> : "We use these answers to improve Video Lab. Marketing consent is optional and recorded separately."}</p>
-          <div><button type="button" onClick={() => navigate("/account")}>Skip for now</button><button className="button" type="submit" disabled={saving}>{saving ? "Saving…" : saved ? "Saved" : "Complete registration"}</button></div>
+          <p>
+            {saveError ? (
+              <span className="error">{saveError}</span>
+            ) : (
+              "We use these answers to improve Video Lab. Marketing consent is optional and recorded separately."
+            )}
+          </p>
+          <div>
+            <button type="button" onClick={() => navigate("/account")}>
+              Skip for now
+            </button>
+            <button className="button" type="submit" disabled={saving}>
+              {saving ? "Saving…" : saved ? "Saved" : "Complete registration"}
+            </button>
+          </div>
         </footer>
       </form>
     </main>
@@ -861,9 +1299,15 @@ function Account() {
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [authError, setAuthError] = useState<string>();
   const [authBusy, setAuthBusy] = useState(false);
-  const [preferredName, setPreferredName] = useState(() => localStorage.getItem("vl_profile_name") ?? "");
-  const [creativeRole, setCreativeRole] = useState(() => localStorage.getItem("vl_profile_role") ?? "");
-  const [avatarChoice, setAvatarChoice] = useState(() => localStorage.getItem("vl_profile_avatar") ?? "google");
+  const [preferredName, setPreferredName] = useState(
+    () => localStorage.getItem("vl_profile_name") ?? "",
+  );
+  const [creativeRole, setCreativeRole] = useState(
+    () => localStorage.getItem("vl_profile_role") ?? "",
+  );
+  const [avatarChoice, setAvatarChoice] = useState(
+    () => localStorage.getItem("vl_profile_avatar") ?? "google",
+  );
   useEffect(() => observeAuth(setFirebaseUser), []);
   useEffect(() => {
     localStorage.setItem("vl_profile_name", preferredName);
@@ -871,94 +1315,179 @@ function Account() {
     localStorage.setItem("vl_profile_avatar", avatarChoice);
   }, [preferredName, creativeRole, avatarChoice]);
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/v1/me") });
-  const googleProfile = firebaseUser?.providerData.find((provider) => provider.providerId === "google.com");
-  const googleName = googleProfile?.displayName ?? firebaseUser?.displayName ?? "";
-  const googleEmail = googleProfile?.email ?? (!firebaseUser?.isAnonymous ? firebaseUser?.email : "") ?? "";
+  const googleProfile = firebaseUser?.providerData.find(
+    (provider) => provider.providerId === "google.com",
+  );
+  const googleName =
+    googleProfile?.displayName ?? firebaseUser?.displayName ?? "";
+  const googleEmail =
+    googleProfile?.email ??
+    (!firebaseUser?.isAnonymous ? firebaseUser?.email : "") ??
+    "";
   const googlePhoto = googleProfile?.photoURL ?? firebaseUser?.photoURL;
   const hasGoogleAccount = Boolean(googleProfile);
-  const displayName = googleName || preferredName.trim() || googleEmail || "Video Lab creator";
-  const initials = displayName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "VL";
+  const displayName =
+    googleName || preferredName.trim() || googleEmail || "Video Lab creator";
+  const initials =
+    displayName
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join("")
+      .toUpperCase() || "VL";
   const avatarOptions = [
-    ...(googlePhoto ? [{ id: "google", label: "Google photo", tone: "google" }] : []),
+    ...(googlePhoto
+      ? [{ id: "google", label: "Google photo", tone: "google" }]
+      : []),
     { id: "teal", label: "Teal initials", tone: "teal" },
     { id: "ink", label: "Ink initials", tone: "ink" },
     { id: "coral", label: "Coral initials", tone: "coral" },
   ];
   return (
     <main className="account-page">
-      <h1 className="editorial-page-title">Account<span className="editorial-title-stop">.</span></h1>
+      <h1 className="editorial-page-title">
+        Account<span className="editorial-title-stop">.</span>
+      </h1>
       <div className="account-layout">
         <div className="account-column">
-        <section className="panel account-profile">
-          <header className="account-profile-header">
-            {avatarChoice === "google" && googlePhoto ? (
-              <img className="account-avatar" src={googlePhoto} alt="Google account profile" />
-            ) : (
-              <span className={`account-avatar account-avatar-fallback ${avatarChoice}`}>{initials}</span>
+          <section className="panel account-profile">
+            <header className="account-profile-header">
+              {avatarChoice === "google" && googlePhoto ? (
+                <img
+                  className="account-avatar"
+                  src={googlePhoto}
+                  alt="Google account profile"
+                />
+              ) : (
+                <span
+                  className={`account-avatar account-avatar-fallback ${avatarChoice}`}
+                >
+                  {initials}
+                </span>
+              )}
+              <div>
+                <span className="account-eyebrow">
+                  {hasGoogleAccount
+                    ? "Signed in with Google"
+                    : "Video Lab profile"}
+                </span>
+                <h2>{displayName}</h2>
+                <p>{creativeRole.trim() || "Video Lab creator"}</p>
+              </div>
+            </header>
+            {!hasGoogleAccount && (
+              <button
+                disabled={authBusy}
+                onClick={async () => {
+                  setAuthBusy(true);
+                  setAuthError(undefined);
+                  try {
+                    await signInWithGoogle();
+                  } catch (error) {
+                    setAuthError(getFriendlyAuthError(error));
+                  } finally {
+                    setAuthBusy(false);
+                  }
+                }}
+              >
+                {authBusy ? "Connecting…" : "Continue with Google"}
+              </button>
             )}
-            <div>
-              <span className="account-eyebrow">{hasGoogleAccount ? "Signed in with Google" : "Video Lab profile"}</span>
-              <h2>{displayName}</h2>
-              <p>{creativeRole.trim() || "Video Lab creator"}</p>
-            </div>
-          </header>
-          {!hasGoogleAccount && (
-          <button disabled={authBusy} onClick={async () => {
-            setAuthBusy(true);
-            setAuthError(undefined);
-            try {
-              await signInWithGoogle();
-            } catch (error) {
-              setAuthError(getFriendlyAuthError(error));
-            } finally {
-              setAuthBusy(false);
-            }
-          }}>{authBusy ? "Connecting…" : "Continue with Google"}</button>
-          )}
-          {authError && <p className="error">{authError}</p>}
-          {hasGoogleAccount ? (
-            <div className="account-contact">
-              <span>Email address</span>
-              <strong>{googleEmail}</strong>
-              <small>Your name, email and profile photo come from your Google account.</small>
-            </div>
-          ) : (
-            <p className="account-signin-copy">Connect Google to keep your profile and videos available across devices.</p>
-          )}
-        </section>
-
+            {authError && <p className="error">{authError}</p>}
+            {hasGoogleAccount ? (
+              <div className="account-contact">
+                <span>Email address</span>
+                <strong>{googleEmail}</strong>
+                <small>
+                  Your name, email and profile photo come from your Google
+                  account.
+                </small>
+              </div>
+            ) : (
+              <p className="account-signin-copy">
+                Connect Google to keep your profile and videos available across
+                devices.
+              </p>
+            )}
+          </section>
         </div>
 
         <div className="account-column">
-        <section className="panel account-preferences">
-          <span className="account-eyebrow">Optional profile</span>
-          <h2>Make it yours</h2>
-          <p>Add optional details for your Video Lab profile. These do not change your Google account.</p>
-          <Link className="account-registration-link" to="/onboarding">Complete demographic and marketing preferences →</Link>
-          <label><span>Preferred name</span><input value={preferredName} placeholder={googleName || "Your preferred name"} onChange={(event) => setPreferredName(event.target.value)} /></label>
-          <label><span>Creative role</span><input value={creativeRole} placeholder="e.g. Director, editor, founder" onChange={(event) => setCreativeRole(event.target.value)} /></label>
-          <fieldset className="account-avatar-picker">
-            <legend>Select an avatar</legend>
-            {avatarOptions.map((option) => {
-              const useGooglePhoto = option.id === "google" && googlePhoto;
-              return <label key={option.id} className={avatarChoice === option.id ? "selected" : ""}>
-                <input type="radio" name="account-avatar" value={option.id} checked={avatarChoice === option.id} onChange={() => setAvatarChoice(option.id)} />
-                {useGooglePhoto ? <img src={googlePhoto} alt="" /> : <span className={`account-avatar-option ${option.tone}`}>{initials}</span>}
-                <small>{option.label}</small>
-              </label>;
-            })}
-          </fieldset>
-        </section>
+          <section className="panel account-preferences">
+            <span className="account-eyebrow">Optional profile</span>
+            <h2>Make it yours</h2>
+            <p>
+              Add optional details for your Video Lab profile. These do not
+              change your Google account.
+            </p>
+            <Link className="account-registration-link" to="/onboarding">
+              Complete demographic and marketing preferences →
+            </Link>
+            <label>
+              <span>Preferred name</span>
+              <input
+                value={preferredName}
+                placeholder={googleName || "Your preferred name"}
+                onChange={(event) => setPreferredName(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Creative role</span>
+              <input
+                value={creativeRole}
+                placeholder="e.g. Director, editor, founder"
+                onChange={(event) => setCreativeRole(event.target.value)}
+              />
+            </label>
+            <fieldset className="account-avatar-picker">
+              <legend>Select an avatar</legend>
+              {avatarOptions.map((option) => {
+                const useGooglePhoto = option.id === "google" && googlePhoto;
+                return (
+                  <label
+                    key={option.id}
+                    className={avatarChoice === option.id ? "selected" : ""}
+                  >
+                    <input
+                      type="radio"
+                      name="account-avatar"
+                      value={option.id}
+                      checked={avatarChoice === option.id}
+                      onChange={() => setAvatarChoice(option.id)}
+                    />
+                    {useGooglePhoto ? (
+                      <img src={googlePhoto} alt="" />
+                    ) : (
+                      <span className={`account-avatar-option ${option.tone}`}>
+                        {initials}
+                      </span>
+                    )}
+                    <small>{option.label}</small>
+                  </label>
+                );
+              })}
+            </fieldset>
+          </section>
 
-        <section className="panel account-security">
-          <span className="account-eyebrow">Account controls</span>
-          <h2>Privacy and access</h2>
-          <p>Trial granted {me.data?.trialGrantedAt ? new Date(me.data.trialGrantedAt).toLocaleDateString() : "—"}. For a data deletion request, contact operations.</p>
-          <button onClick={async () => {
-            await signOutUser();
-            location.href = "/";
-          }}>Sign out</button>
-        </section>
+          <section className="panel account-security">
+            <span className="account-eyebrow">Account controls</span>
+            <h2>Privacy and access</h2>
+            <p>
+              Trial granted{" "}
+              {me.data?.trialGrantedAt
+                ? new Date(me.data.trialGrantedAt).toLocaleDateString()
+                : "—"}
+              . For a data deletion request, contact operations.
+            </p>
+            <button
+              onClick={async () => {
+                await signOutUser();
+                location.href = "/";
+              }}
+            >
+              Sign out
+            </button>
+          </section>
         </div>
       </div>
     </main>
@@ -974,42 +1503,100 @@ function Admin() {
   const call = (p: string) =>
     api<RuntimeStatus>(p, { method: "POST" }).then(() => r.refetch());
   const discover = useMutation({
-    mutationFn: () => api<RuntimeStatus>("/v1/admin/runtime/discover", { method: "POST" }),
+    mutationFn: () =>
+      api<RuntimeStatus>("/v1/admin/runtime/discover", { method: "POST" }),
     onSuccess: () => r.refetch(),
   });
   const discovery = r.data?.discovery;
-  const connected = r.data?.status === "healthy" && discovery?.state === "connected";
+  const connected =
+    r.data?.status === "healthy" && discovery?.state === "connected";
   return (
     <main className="admin-page">
-      <h1 className="editorial-page-title">Admin<span className="editorial-title-stop">.</span></h1>
+      <h1 className="editorial-page-title">
+        Admin<span className="editorial-title-stop">.</span>
+      </h1>
       <section className="panel runtime-discovery-panel">
         <header>
           <div>
             <span className="account-eyebrow">Deploy Studio handover</span>
             <h2>Automatic Lambda connection</h2>
-            <p>Deploy Studio securely publishes the active runtime. Video Lab validates its renewable lease and health automatically—no IP address is entered or exposed here.</p>
+            <p>
+              Deploy Studio securely publishes the active runtime. Video Lab
+              validates its renewable lease and health automatically—no IP
+              address is entered or exposed here.
+            </p>
           </div>
-          <span className={`runtime-discovery-state ${connected ? "connected" : ""}`}><i/>{r.isLoading ? "Checking" : connected ? "Connected" : discovery?.state ?? r.data?.status ?? "Unavailable"}</span>
+          <span
+            className={`runtime-discovery-state ${connected ? "connected" : ""}`}
+          >
+            <i />
+            {r.isLoading
+              ? "Checking"
+              : connected
+                ? "Connected"
+                : (discovery?.state ?? r.data?.status ?? "Unavailable")}
+          </span>
         </header>
         <div className="runtime-discovery-grid">
-          <span><small>Discovery source</small><strong>{discovery?.source === "deploy-studio" ? "Deploy Studio" : discovery?.source ?? "Waiting"}</strong></span>
-          <span><small>Runtime health</small><strong>{r.data?.status ?? "Checking"}</strong></span>
-          <span><small>Lease expires</small><strong>{discovery?.state === "connected" && !discovery.leaseExpiresAt ? "Non-expiring" : discovery?.leaseExpiresAt ? new Date(discovery.leaseExpiresAt).toLocaleTimeString() : "—"}</strong></span>
-          <span><small>Queue</small><strong>{r.data?.queueDepth ?? 0}</strong></span>
+          <span>
+            <small>Discovery source</small>
+            <strong>
+              {discovery?.source === "deploy-studio"
+                ? "Deploy Studio"
+                : (discovery?.source ?? "Waiting")}
+            </strong>
+          </span>
+          <span>
+            <small>Runtime health</small>
+            <strong>{r.data?.status ?? "Checking"}</strong>
+          </span>
+          <span>
+            <small>Lease expires</small>
+            <strong>
+              {discovery?.state === "connected" && !discovery.leaseExpiresAt
+                ? "Non-expiring"
+                : discovery?.leaseExpiresAt
+                  ? new Date(discovery.leaseExpiresAt).toLocaleTimeString()
+                  : "—"}
+            </strong>
+          </span>
+          <span>
+            <small>Queue</small>
+            <strong>{r.data?.queueDepth ?? 0}</strong>
+          </span>
         </div>
-        <p className={connected ? "success" : "runtime-discovery-message"}>{discovery?.message ?? "Waiting for Deploy Studio to publish the active runtime."}</p>
-        <button type="button" disabled={discover.isPending} onClick={() => discover.mutate()}>{discover.isPending ? "Refreshing…" : "Refresh handover"}</button>
-        {discover.error && <p className="error">{discover.error instanceof Error ? discover.error.message : "Runtime discovery failed"}</p>}
-        {isLocalDevelopment && <>
-          <button onClick={() => call("/v1/admin/runtime/pause")}>
-            Pause submissions
-          </button>
-          <button onClick={() => call("/v1/admin/runtime/resume")}>Resume</button>
-          <button onClick={() => call("/v1/admin/runtime/stop")}>
-            Kill switch
-          </button>
-          <p>Pause and kill-switch controls remain administrator-only.</p>
-        </>}
+        <p className={connected ? "success" : "runtime-discovery-message"}>
+          {discovery?.message ??
+            "Waiting for Deploy Studio to publish the active runtime."}
+        </p>
+        <button
+          type="button"
+          disabled={discover.isPending}
+          onClick={() => discover.mutate()}
+        >
+          {discover.isPending ? "Refreshing…" : "Refresh handover"}
+        </button>
+        {discover.error && (
+          <p className="error">
+            {discover.error instanceof Error
+              ? discover.error.message
+              : "Runtime discovery failed"}
+          </p>
+        )}
+        {isLocalDevelopment && (
+          <>
+            <button onClick={() => call("/v1/admin/runtime/pause")}>
+              Pause submissions
+            </button>
+            <button onClick={() => call("/v1/admin/runtime/resume")}>
+              Resume
+            </button>
+            <button onClick={() => call("/v1/admin/runtime/stop")}>
+              Kill switch
+            </button>
+            <p>Pause and kill-switch controls remain administrator-only.</p>
+          </>
+        )}
       </section>
     </main>
   );

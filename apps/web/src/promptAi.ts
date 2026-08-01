@@ -1,12 +1,7 @@
-import { getAI, getGenerativeModel, GoogleAIBackend } from 'firebase/ai';
-import { firebaseApp } from './auth.js';
-import { api } from './api.js';
+import { api } from "./api.js";
 
 export type PromptSuggestionKind =
-  | 'film-brief'
-  | 'video-scene'
-  | 'storyboard-scene'
-  | 'negative';
+  "film-brief" | "video-scene" | "storyboard-scene" | "negative";
 
 const SYSTEM_INSTRUCTION = `You are the prompt editor for a premium cinematic AI application.
 Interpret the user's idea semantically. Recognise and quietly correct obvious misspellings in named
@@ -19,16 +14,16 @@ it, add headings, mention your research, or explain your choices. Use precise, e
 than a checklist.`;
 
 const TASKS: Record<PromptSuggestionKind, string> = {
-  'film-brief': `Expand this seed into a coherent original film overview of 140–190 words. Begin with
+  "film-brief": `Expand this seed into a coherent original film overview of 140–190 words. Begin with
   a confident one-sentence statement of genre, period, setting and central dramatic premise. Establish
   a clear beginning, escalation and destination; consistent principal characters and locations; visual
   palette, lighting, lens and camera language; tactile material detail; emotional tone; and practical
   continuity rules that can guide every scene. If the seed references a known work, author, myth or
   historical event, identify it accurately and use its genuine high-level themes and narrative context.`,
-  'video-scene': `Expand this into one production-ready cinematic shot description of 70–110 words.
+  "video-scene": `Expand this into one production-ready cinematic shot description of 70–110 words.
   Specify the subject and one clear action, setting, motivated camera movement, lens and framing,
   lighting direction, palette, materials, atmosphere and a deliberate final composition.`,
-  'storyboard-scene': `Expand this into one storyboard scene direction of 70–110 words. Describe one
+  "storyboard-scene": `Expand this into one storyboard scene direction of 70–110 words. Describe one
   precise story beat and subject action, motivated camera movement, lens and framing, lighting
   progression, continuity from the preceding image and a final composition that leads naturally into
   the next scene.`,
@@ -37,13 +32,23 @@ const TASKS: Record<PromptSuggestionKind, string> = {
   conflicts without adding positive creative direction.`,
 };
 
-export function buildPromptExpansionRequest(value: string, kind: PromptSuggestionKind) {
+export function buildPromptExpansionRequest(
+  value: string,
+  kind: PromptSuggestionKind,
+) {
   return `${TASKS[kind]}\n\nUser's seed:\n${value.trim()}`;
 }
 
-export function getKnownReferenceFallback(value: string, kind: PromptSuggestionKind) {
+export function getKnownReferenceFallback(
+  value: string,
+  kind: PromptSuggestionKind,
+) {
   const seed = value.toLowerCase();
-  if (kind !== 'film-brief' || !/\bhomer\b/.test(seed) || !/\b(?:odyssey|odyssy|odess?y)\b/.test(seed)) {
+  if (
+    kind !== "film-brief" ||
+    !/\bhomer\b/.test(seed) ||
+    !/\b(?:odyssey|odyssy|odess?y)\b/.test(seed)
+  ) {
     return undefined;
   }
 
@@ -53,43 +58,38 @@ export function getKnownReferenceFallback(value: string, kind: PromptSuggestionK
 function trimAtWord(text: string, maxLength = 1200) {
   const cleaned = text
     .trim()
-    .replace(/^["“]|["”]$/g, '')
-    .replace(/\s+/g, ' ');
+    .replace(/^["“]|["”]$/g, "")
+    .replace(/\s+/g, " ");
   if (cleaned.length <= maxLength) return cleaned;
   const shortened = cleaned.slice(0, maxLength + 1);
-  const lastSpace = shortened.lastIndexOf(' ');
-  return `${shortened.slice(0, lastSpace > maxLength * .75 ? lastSpace : maxLength).trimEnd()}.`;
+  const lastSpace = shortened.lastIndexOf(" ");
+  return `${shortened.slice(0, lastSpace > maxLength * 0.75 ? lastSpace : maxLength).trimEnd()}.`;
 }
 
-export async function generatePromptExpansion(value: string, kind: PromptSuggestionKind) {
+export async function generatePromptExpansion(
+  value: string,
+  kind: PromptSuggestionKind,
+) {
   const prompt = `${SYSTEM_INSTRUCTION}\n\n${buildPromptExpansionRequest(value, kind)}`;
   try {
-    const result = await api<{ completedPrompt: string; provider: string }>('/v1/prompts/complete', {
-      method: 'POST',
-      body: JSON.stringify({ prompt, mode: 'expand' }),
-    });
+    const result = await api<{ completedPrompt: string; provider: string }>(
+      "/v1/prompts/complete",
+      {
+        method: "POST",
+        body: JSON.stringify({ prompt, mode: "expand" }),
+      },
+    );
     const expanded = trimAtWord(result.completedPrompt);
     if (expanded) return expanded;
-  } catch {
-    // Fall back to Firebase AI when the Lambda runtime is not connected or ready.
+  } catch (error) {
+    const knownReference = getKnownReferenceFallback(value, kind);
+    if (knownReference) return knownReference;
+    throw new Error(
+      "Local prompt assistance is temporarily unavailable. Your original text has not been changed.",
+      { cause: error },
+    );
   }
-
-  if (!firebaseApp) {
-    throw new Error('AI prompt development is available when Sulphur or Firebase AI is configured.');
-  }
-
-  const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
-  const model = getGenerativeModel(ai, {
-    model: 'gemini-3.6-flash',
-    systemInstruction: SYSTEM_INSTRUCTION,
-    ...(kind === 'film-brief' ? { tools: [{ googleSearch: {} }] } : {}),
-    generationConfig: {
-      maxOutputTokens: kind === 'film-brief' ? 320 : 220,
-      temperature: .65,
-    },
-  });
-  const result = await model.generateContent(buildPromptExpansionRequest(value, kind));
-  const expanded = trimAtWord(result.response.text());
-  if (!expanded) throw new Error('The AI returned an empty prompt.');
-  return expanded;
+  throw new Error(
+    "Local prompt assistance returned an empty suggestion. Your original text has not been changed.",
+  );
 }

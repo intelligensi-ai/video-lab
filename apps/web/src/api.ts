@@ -1,15 +1,24 @@
-import { MAX_STORYBOARD_SCENES } from '@video-lab/contracts';
-import type { Generation, RuntimeStatus } from '@video-lab/contracts';
-import { getStorage, ref, uploadBytes } from 'firebase/storage';
-import { firebaseApp, getApiToken, getFirebaseUser, isProductionFirebase } from './auth.js';
+import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
+import type {
+  Generation,
+  RuntimeStatus,
+  StoryboardContinuityBible,
+  StoryboardEnhancementRequest,
+  StoryboardEnhancementResponse,
+} from "@video-lab/contracts";
+import { getApiToken } from "./auth.js";
 
-const API = import.meta.env.VITE_API_BASE_URL ?? '/api';
+const API = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 export async function api<T>(path: string, init: RequestInit = {}) {
   const token = await getApiToken();
   const r = await fetch(`${API}${path}`, {
     ...init,
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...init.headers },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+      ...init.headers,
+    },
   });
   if (!r.ok) {
     const body = await r.json().catch(() => ({}));
@@ -20,9 +29,17 @@ export async function api<T>(path: string, init: RequestInit = {}) {
 
 export async function fetchGenerationOutput(downloadUrl: string) {
   const token = await getApiToken();
-  const path = downloadUrl.startsWith('/api/') ? downloadUrl.slice(4) : downloadUrl;
-  const url = /^https?:\/\//i.test(path) ? path : `${API}${path}`;
-  const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  const path = downloadUrl.startsWith("/api/")
+    ? downloadUrl.slice(4)
+    : downloadUrl;
+  if (!path.startsWith("/v1/generations/") || !path.endsWith("/download")) {
+    throw new Error(
+      "The generation output address is not a Video Lab address.",
+    );
+  }
+  const response = await fetch(`${API}${path}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.detail ?? body.title ?? response.statusText);
@@ -30,7 +47,12 @@ export async function fetchGenerationOutput(downloadUrl: string) {
   return response.blob();
 }
 
-export type ReferenceRole = 'startFrame' | 'endFrame' | 'referenceImage' | 'styleReference' | 'subjectReference';
+export type ReferenceRole =
+  | "startFrame"
+  | "endFrame"
+  | "referenceImage"
+  | "styleReference"
+  | "subjectReference";
 
 export interface SulphurReferenceInput {
   role: ReferenceRole;
@@ -44,7 +66,7 @@ export interface SulphurGenerationPayload {
   negativePrompt?: string;
   enhancePrompt: boolean;
   resolution: string;
-  aspectRatio: '16:9' | '9:16' | '1:1';
+  aspectRatio: "16:9" | "9:16" | "1:1";
   duration: 4 | 8 | 12;
   durationSeconds: 4 | 8 | 12;
   guidance: number;
@@ -54,17 +76,17 @@ export interface SulphurGenerationPayload {
   cameraMotion: string;
   frameInfluence: number;
   promptMode: string;
-  quality: 'draft' | 'standard' | 'high';
+  quality: "draft" | "standard" | "high";
   outputFormat: string;
   references: SulphurReferenceInput[];
 }
 
 const strengthAliasByRole: Record<ReferenceRole, string> = {
-  startFrame: 'startFrameStrength',
-  endFrame: 'endFrameStrength',
-  referenceImage: 'referenceImageStrength',
-  styleReference: 'styleReferenceStrength',
-  subjectReference: 'subjectReferenceStrength',
+  startFrame: "startFrameStrength",
+  endFrame: "endFrameStrength",
+  referenceImage: "referenceImageStrength",
+  styleReference: "styleReferenceStrength",
+  subjectReference: "subjectReferenceStrength",
 };
 
 function fileToDataUrl(file?: File) {
@@ -78,26 +100,51 @@ function fileToDataUrl(file?: File) {
 }
 
 async function storeUserAsset(file: File | undefined, purpose: string) {
-  if (!file || !isProductionFirebase || !firebaseApp) return undefined;
-  const user = await getFirebaseUser();
-  const safeName = file.name.replace(/[^\w.-]/g, '_');
-  const objectPath = `users/${user.uid}/uploads/${crypto.randomUUID()}-${safeName}`;
-  await uploadBytes(ref(getStorage(firebaseApp), objectPath), file, {
-    contentType: file.type,
-    customMetadata: { purpose },
+  if (!file) return undefined;
+  const normalizedPurpose = purpose.includes("start")
+    ? "start_frame"
+    : purpose.includes("end")
+      ? "end_frame"
+      : "reference";
+  const target = await api<{
+    uploadUrl: string;
+    assetId: string;
+    method: "PUT";
+  }>("/v1/assets/upload-url", {
+    method: "POST",
+    body: JSON.stringify({
+      fileName: file.name,
+      contentType: file.type,
+      sizeBytes: file.size,
+      purpose: normalizedPurpose,
+    }),
   });
-  return objectPath;
+  const token = await getApiToken();
+  const response = await fetch(`${API}${target.uploadUrl}`, {
+    method: target.method,
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": file.type,
+    },
+    body: file,
+  });
+  if (!response.ok) throw new Error("The frame upload could not be completed.");
+  return target.assetId;
 }
 
 export async function generateSulphurVideo(payload: SulphurGenerationPayload) {
-  const uploadedPaths = await Promise.all(payload.references.map((reference) =>
-    storeUserAsset(reference.file, reference.role),
-  ));
+  const uploadedAssetIds = await Promise.all(
+    payload.references.map((reference) =>
+      storeUserAsset(reference.file, reference.role),
+    ),
+  );
   const references = await Promise.all(
     payload.references.map(async (ref, index) => ({
       ...ref,
-      objectPath: uploadedPaths[index],
-      dataUrl: uploadedPaths[index] ? undefined : await fileToDataUrl(ref.file),
+      assetId: uploadedAssetIds[index],
+      dataUrl: uploadedAssetIds[index]
+        ? undefined
+        : await fileToDataUrl(ref.file),
     })),
   );
   const dataByRole = Object.fromEntries(
@@ -108,14 +155,14 @@ export async function generateSulphurVideo(payload: SulphurGenerationPayload) {
   const strengthByRole = Object.fromEntries(
     references.map((ref) => [strengthAliasByRole[ref.role], ref.strength]),
   );
-  const objectPathByRole = Object.fromEntries(
+  const assetIdByRole = Object.fromEntries(
     references
-      .filter((ref) => ref.objectPath)
-      .map((ref) => [`${ref.role}ObjectPath`, ref.objectPath]),
+      .filter((ref) => ref.assetId)
+      .map((ref) => [`${ref.role}AssetId`, ref.assetId]),
   );
-  const generation = await api<Generation>('/v1/generations', {
-    method: 'POST',
-    headers: { 'Idempotency-Key': crypto.randomUUID() },
+  const generation = await api<Generation>("/v1/generations", {
+    method: "POST",
+    headers: { "Idempotency-Key": crypto.randomUUID() },
     body: JSON.stringify({
       prompt: payload.prompt,
       settings: {
@@ -140,28 +187,32 @@ export async function generateSulphurVideo(payload: SulphurGenerationPayload) {
         styleReferenceBase64: dataByRole.styleReference,
         subjectReferenceBase64: dataByRole.subjectReference,
         ...strengthByRole,
-        ...objectPathByRole,
+        ...assetIdByRole,
       },
       inputAssets: [],
     }),
   });
-  startRuntimeWorker();
   return generation;
 }
 
-export const getRuntimeStatus = () => api<RuntimeStatus>('/v1/runtime/status');
-export const getGeneration = (id: string) => api<Generation>(`/v1/generations/${id}`);
-export const getGallery = () => api<{ items: Generation[] }>('/v1/gallery');
-export const cancelGeneration = (id: string) => api<Generation>(`/v1/generations/${id}/cancel`, { method: 'POST' });
-export const processOne = () => api('/v1/runtime/process-next', { method: 'POST' });
-
-function startRuntimeWorker() {
-  void processOne().catch((error) => {
-    console.error('Generation worker request failed', error);
-  });
-}
-
-export type StoryboardTransition = 'cut' | 'crossfade' | 'fade_black' | 'fade_white' | 'slide_left' | 'slide_right' | 'wipe_left' | 'wipe_right' | 'zoom_warp' | 'radial' | 'blur_dissolve';
+export const getRuntimeStatus = () => api<RuntimeStatus>("/v1/runtime/status");
+export const getGeneration = (id: string) =>
+  api<Generation>(`/v1/generations/${id}`);
+export const getGallery = () => api<{ items: Generation[] }>("/v1/gallery");
+export const cancelGeneration = (id: string) =>
+  api<Generation>(`/v1/generations/${id}/cancel`, { method: "POST" });
+export type StoryboardTransition =
+  | "cut"
+  | "crossfade"
+  | "fade_black"
+  | "fade_white"
+  | "slide_left"
+  | "slide_right"
+  | "wipe_left"
+  | "wipe_right"
+  | "zoom_warp"
+  | "radial"
+  | "blur_dissolve";
 
 export interface StoryboardScenePayload {
   id: string;
@@ -176,10 +227,17 @@ export interface StoryboardScenePayload {
   startFrame?: File;
   endFrame?: File;
   carryPreviousFrame: boolean;
+  narrativePurpose?: string;
+  firstFramePrompt?: string;
+  lastFramePrompt?: string;
+  continuityNotes?: string;
+  promptOrigin?: "user" | "agent";
+  staleReason?: string;
 }
 
 export interface LongFormGenerationPayload {
   overallGoal: string;
+  originalOverallGoal?: string;
   negativePrompt: string;
   resolution: string;
   fps: number;
@@ -194,55 +252,79 @@ export interface LongFormGenerationPayload {
   globalVisualAnchor?: File;
   references: SulphurReferenceInput[];
   scenes: StoryboardScenePayload[];
+  continuityBible: StoryboardContinuityBible;
 }
 
-export async function generateLongFormVideo(payload: LongFormGenerationPayload) {
+export async function generateLongFormVideo(
+  payload: LongFormGenerationPayload,
+) {
   if (payload.scenes.length > MAX_STORYBOARD_SCENES) {
-    throw new Error(`Storyboard supports up to ${MAX_STORYBOARD_SCENES} scenes per generation.`);
+    throw new Error(
+      `Storyboard supports up to ${MAX_STORYBOARD_SCENES} scenes per generation.`,
+    );
   }
-  const [globalVisualAnchorObjectPath, ...uploadedScenePaths] = await Promise.all([
-    storeUserAsset(payload.globalVisualAnchor, 'globalVisualAnchor'),
-    ...payload.scenes.flatMap((scene) => [
-      storeUserAsset(scene.startFrame, `${scene.id}:startFrame`),
-      storeUserAsset(scene.endFrame, `${scene.id}:endFrame`),
-    ]),
-  ]);
+  const [globalVisualAnchorAssetId, ...uploadedSceneAssetIds] =
+    await Promise.all([
+      storeUserAsset(payload.globalVisualAnchor, "globalVisualAnchor"),
+      ...payload.scenes.flatMap((scene) => [
+        storeUserAsset(scene.startFrame, `${scene.id}:startFrame`),
+        storeUserAsset(scene.endFrame, `${scene.id}:endFrame`),
+      ]),
+    ]);
   await Promise.all(
-    payload.references.map((reference) => storeUserAsset(reference.file, reference.role)),
+    payload.references.map((reference) =>
+      storeUserAsset(reference.file, reference.role),
+    ),
   );
   const globalVisualAnchorBase64 =
-    payload.globalVisualAnchorEnabled && !globalVisualAnchorObjectPath
+    payload.globalVisualAnchorEnabled && !globalVisualAnchorAssetId
       ? await fileToDataUrl(payload.globalVisualAnchor)
       : undefined;
-  const storyboard = await Promise.all(payload.scenes.map(async (scene, index) => {
-    const startFrameObjectPath = uploadedScenePaths[index * 2];
-    const endFrameObjectPath = uploadedScenePaths[index * 2 + 1];
-    const startFrameBase64 = startFrameObjectPath ? undefined : await fileToDataUrl(scene.startFrame);
-    const endFrameBase64 = endFrameObjectPath ? undefined : await fileToDataUrl(scene.endFrame);
-    return {
-      ...scene,
-      trimStart: 0,
-      trimEnd: scene.duration,
-      startFrame: undefined,
-      endFrame: undefined,
-      startFrameBase64,
-      endFrameBase64,
-      startFrameObjectPath,
-      endFrameObjectPath,
-    };
-  }));
-  const durationSeconds = storyboard.reduce((total, scene) => total + scene.duration, 0);
-  const generation = await api<Generation>('/v1/generations', {
-    method: 'POST',
-    headers: { 'Idempotency-Key': crypto.randomUUID() },
+  const storyboard = await Promise.all(
+    payload.scenes.map(async (scene, index) => {
+      const startFrameAssetId = uploadedSceneAssetIds[index * 2];
+      const endFrameAssetId = uploadedSceneAssetIds[index * 2 + 1];
+      const startFrameBase64 = startFrameAssetId
+        ? undefined
+        : await fileToDataUrl(scene.startFrame);
+      const endFrameBase64 = endFrameAssetId
+        ? undefined
+        : await fileToDataUrl(scene.endFrame);
+      return {
+        ...scene,
+        trimStart: 0,
+        trimEnd: scene.duration,
+        startFrame: undefined,
+        endFrame: undefined,
+        startFrameBase64,
+        endFrameBase64,
+        startFrameAssetId,
+        endFrameAssetId,
+      };
+    }),
+  );
+  const durationSeconds = storyboard.reduce(
+    (total, scene) => total + scene.duration,
+    0,
+  );
+  const generation = await api<Generation>("/v1/generations", {
+    method: "POST",
+    headers: { "Idempotency-Key": crypto.randomUUID() },
     body: JSON.stringify({
       prompt: payload.overallGoal,
       settings: {
-        runtime: 'longform-ltx-storyboard-studio',
-        aspectRatio: payload.resolution.startsWith('576x') || payload.resolution.startsWith('720x1280') ? '9:16' : payload.resolution.startsWith('1080x1080') ? '1:1' : '16:9',
+        runtime: "longform-ltx-storyboard-studio",
+        aspectRatio:
+          payload.resolution.startsWith("576x") ||
+          payload.resolution.startsWith("720x1280")
+            ? "9:16"
+            : payload.resolution.startsWith("1080x1080")
+              ? "1:1"
+              : "16:9",
         durationSeconds,
-        quality: payload.postProcess === 'none' ? 'draft' : 'high',
+        quality: payload.postProcess === "none" ? "draft" : "high",
         overallGoal: payload.overallGoal,
+        filmBible: payload.continuityBible,
         negativePrompt: payload.negativePrompt,
         resolution: payload.resolution,
         fps: payload.fps,
@@ -255,12 +337,145 @@ export async function generateLongFormVideo(payload: LongFormGenerationPayload) 
         outputFormat: payload.outputFormat,
         globalVisualAnchorEnabled: payload.globalVisualAnchorEnabled,
         globalVisualAnchorBase64,
-        globalVisualAnchorObjectPath,
+        globalVisualAnchorAssetId,
         storyboard,
       },
       inputAssets: [],
     }),
   });
-  startRuntimeWorker();
   return generation;
 }
+
+export const emptyContinuityBible = (): StoryboardContinuityBible => ({
+  characters: "",
+  wardrobe: "",
+  props: "",
+  location: "",
+  sceneGeometry: "",
+  timeOfDay: "",
+  lighting: "",
+  palette: "",
+  lens: "",
+  cameraPosition: "",
+  cameraMovement: "",
+  visualStyle: "",
+  audio: "",
+});
+
+export function storyboardEnhancementRequest(
+  payload: LongFormGenerationPayload,
+  targetShotNumber?: number,
+): StoryboardEnhancementRequest {
+  return {
+    masterPrompt: payload.overallGoal,
+    shotCount: payload.scenes.length,
+    generationMode: payload.scenes.some(
+      (scene) => scene.startFrame || scene.endFrame,
+    )
+      ? "mixed"
+      : "text_to_video",
+    continuityBible: payload.continuityBible,
+    shots: payload.scenes.map((scene, index) => ({
+      shotNumber: index + 1,
+      title: scene.title,
+      prompt: scene.prompt,
+      durationSeconds: scene.duration,
+      generationMode:
+        scene.startFrame || scene.endFrame ? "image_to_video" : "text_to_video",
+    })),
+    targetShotNumber,
+  };
+}
+
+export const enhanceStoryboard = (
+  payload: LongFormGenerationPayload,
+  targetShotNumber?: number,
+) =>
+  api<StoryboardEnhancementResponse>("/v1/storyboards/enhance", {
+    method: "POST",
+    body: JSON.stringify(
+      storyboardEnhancementRequest(payload, targetShotNumber),
+    ),
+  });
+
+export async function generateStoryboardFrame(
+  payload: LongFormGenerationPayload,
+  scene: StoryboardScenePayload,
+  edge: "start" | "end",
+) {
+  const framePrompt =
+    (edge === "start"
+      ? scene.firstFramePrompt
+      : scene.lastFramePrompt
+    )?.trim() || scene.prompt;
+  const storyboard = [
+    {
+      id: scene.id,
+      title: scene.title,
+      prompt: scene.prompt,
+      duration: scene.duration,
+      trimStart: 0,
+      trimEnd: scene.duration,
+      seed: scene.seed,
+      transition: scene.transition,
+      transitionDuration: scene.transitionDuration,
+      carryPreviousFrame: scene.carryPreviousFrame,
+    },
+  ];
+  return api<Generation>("/v1/generations", {
+    method: "POST",
+    headers: { "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify({
+      prompt: payload.overallGoal,
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        aspectRatio: payload.resolution.includes("x1280")
+          ? "9:16"
+          : payload.resolution.includes("1080x1080")
+            ? "1:1"
+            : "16:9",
+        durationSeconds: scene.duration,
+        quality: "draft",
+        projectId: `video-lab-${scene.id}`,
+        operationScope: edge === "start" ? "start_frame" : "end_frame",
+        operationSceneId: scene.id,
+        framePrompt,
+        overallGoal: payload.overallGoal,
+        filmBible: payload.continuityBible,
+        resolution: payload.resolution,
+        imageSteps: payload.imageSteps,
+        baseSeed: scene.seed,
+        storyboard,
+      },
+      inputAssets: [],
+    }),
+  });
+}
+
+export async function waitForGeneration(id: string, timeoutMs = 20 * 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const generation = await getGeneration(id);
+    if (["completed", "failed", "cancelled"].includes(generation.status))
+      return generation;
+    await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+  }
+  throw new Error(
+    "Generation is still running. You can safely return to it from your project history.",
+  );
+}
+
+export const getStoryboardDraft = () =>
+  api<{
+    form: Partial<LongFormGenerationPayload> | null;
+    updatedAt: string | null;
+  }>("/v1/storyboards/draft");
+
+export const saveStoryboardDraft = (form: Record<string, unknown>) =>
+  api<{ form: Partial<LongFormGenerationPayload>; updatedAt: string }>(
+    "/v1/storyboards/draft",
+    {
+      method: "PUT",
+      body: JSON.stringify({ form }),
+    },
+  );

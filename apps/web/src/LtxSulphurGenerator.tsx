@@ -7,14 +7,13 @@ import { useAuthenticatedVideo } from './AuthenticatedVideo.js';
 import { PromptSuggestion } from './PromptSuggestion.js';
 
 const promptModes = ['Cinematic', 'Storyboard', 'Product', 'Character'] as const;
-const qualityPresets = ['draft', 'standard', 'high'] as const;
 const sulphurQualityDefaults = { draft: { guidance: 3, cfgGuidance: 3, frameRate: 24 }, standard: { guidance: 5, cfgGuidance: 5, frameRate: 24 }, high: { guidance: 7, cfgGuidance: 7, frameRate: 30 } };
 const previewCropAspectRatio = '16:9';
 const previewCropAspectLabel = '16:9 landscape crop target';
 
 type RefState = { label: string; role: ReferenceRole; file?: File; preview?: string; strength: number };
 type FormState = {
-  prompt: string; rewrittenPrompt: string; negativePrompt: string; promptMode: (typeof promptModes)[number]; quality: (typeof qualityPresets)[number]; duration: 4 | 8 | 12;
+  prompt: string; rewrittenPrompt: string; negativePrompt: string; promptMode: (typeof promptModes)[number]; quality: 'draft' | 'standard' | 'high'; duration: 4 | 8 | 12;
   resolution: string; aspectRatio: '16:9' | '9:16' | '1:1'; frameRate: number; guidance: number; cfgGuidance: number; motionStrength: number; cameraMotion: string; frameInfluence: number; enhancePrompt: boolean; outputFormat: string; references: RefState[];
 };
 
