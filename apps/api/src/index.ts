@@ -63,6 +63,24 @@ const adminEmails=new Set((process.env.ADMIN_EMAILS??'').split(',').map(email=>e
 export function firebaseStorageBucket(env:NodeJS.ProcessEnv=process.env){if(env.FIREBASE_STORAGE_BUCKET?.trim())return env.FIREBASE_STORAGE_BUCKET.trim();try{const config=JSON.parse(env.FIREBASE_CONFIG??'{}') as {storageBucket?:unknown};if(typeof config.storageBucket==='string'&&config.storageBucket.trim())return config.storageBucket.trim();}catch{/* Fall through to the project-derived bucket. */}const projectId=env.GCLOUD_PROJECT??env.GOOGLE_CLOUD_PROJECT;return projectId?`${projectId}.firebasestorage.app`:undefined;}
 function adminApp(){if(!getApps().length) initializeApp({credential:applicationDefault(),storageBucket:firebaseStorageBucket()});}
 function createRuntimeAdapter(baseUrl:string){return new SulphurLtxRuntimeAdapter({baseUrl,token:process.env.VIDEO_RUNTIME_API_TOKEN,healthPath:process.env.VIDEO_RUNTIME_HEALTH_PATH??'/health',submitPath:process.env.VIDEO_RUNTIME_SUBMIT_PATH,statusPath:process.env.VIDEO_RUNTIME_STATUS_PATH,cancelPath:process.env.VIDEO_RUNTIME_CANCEL_PATH,outputPath:process.env.VIDEO_RUNTIME_OUTPUT_PATH,authHeaderName:process.env.VIDEO_RUNTIME_AUTH_HEADER,authScheme:process.env.VIDEO_RUNTIME_AUTH_SCHEME,payloadMode:process.env.VIDEO_RUNTIME_PAYLOAD_MODE==='sulphur'?'sulphur':'deploy-studio',timeoutMs:Number(process.env.VIDEO_RUNTIME_TIMEOUT_MS??120000)});}
+async function connectRuntimeEndpoint(baseUrl:string,source:RuntimeDiscovery['source'],message:string){
+  const adapter=createRuntimeAdapter(baseUrl);
+  let health:Awaited<ReturnType<SulphurLtxRuntimeAdapter['healthCheck']>>;
+  try{
+    health=await adapter.healthCheck();
+  }catch(e){
+    const detail=e instanceof Error&&e.name==='AbortError'
+      ? 'Runtime health check timed out'
+      : e instanceof Error?e.message:String(e);
+    throw problem(503,'runtime_health_unreachable',`Could not reach runtime health endpoint: ${detail}`);
+  }
+  if(!health.ok)throw problem(503,'runtime_health_failed','Runtime health check did not report ready');
+  runtimeBaseUrl=baseUrl;
+  runtime=adapter;
+  runtimeDiscovery={source,state:'connected',message};
+  runtimeState={...runtimeState,provider:health.provider,status:'healthy',acceptingSubmissions:true,killSwitch:false,lastHeartbeatAt:nowIso(),updatedAt:nowIso()};
+  log('runtime_endpoint_connected',{source});
+}
 function discoveryDate(value:unknown){if(value instanceof Date)return value;if(typeof value==='string'||typeof value==='number'){const date=new Date(value);return Number.isNaN(date.getTime())?undefined:date;}if(value&&typeof value==='object'&&'toDate'in value&&typeof (value as {toDate?:unknown}).toDate==='function')return (value as {toDate:()=>Date}).toDate();return undefined;}
 function useRuntimeEndpoint(baseUrl:string,source:RuntimeDiscovery['source']){if(runtimeBaseUrl!==baseUrl){runtimeBaseUrl=baseUrl;runtime=createRuntimeAdapter(baseUrl);log('runtime_endpoint_discovered',{source});}if(runtimeState.provider==='mock')runtimeState={...runtimeState,provider:'sulphur-ltx',updatedAt:nowIso()};}
 function clearRuntimeEndpoint(discovery:RuntimeDiscovery){runtimeBaseUrl=undefined;runtimeDiscovery=discovery;if(runtimeState.status!=='paused'&&!runtimeState.killSwitch)runtimeState={...runtimeState,status:'unavailable',acceptingSubmissions:false,updatedAt:nowIso()};}
@@ -122,6 +140,7 @@ app.post('/v1/generations/:id/cancel',auth,async(req,res,next)=>{try{const id=St
 app.get('/v1/gallery',auth,async(req,res,next)=>{try{const p=res.locals.principal as Principal; const status=req.query.status; if(!localAuth){adminApp();let query=getFirestore().collection('generations').where('uid','==',p.uid).orderBy('createdAt','desc').limit(Number(req.query.limit??20));const snapshot=await query.get();const items=snapshot.docs.map(doc=>doc.data() as StoredGeneration).filter(g=>!status||g.status===status).map(publicGeneration);return res.json({items});} const items=[...gens.values()].filter(g=>g.uid===p.uid&&(!status||g.status===status)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,Number(req.query.limit??20)).map(publicGeneration); res.json({items});}catch(e){next(e)}});
 app.get('/v1/runtime/status',auth,async(_req,res,next)=>{try{await ensureRuntimeConfiguration();await refreshRuntimeHealth();res.json(publicRuntimeStatus());}catch(e){next(e)}});
 app.post('/v1/admin/runtime/discover',admin,async(_req,res,next)=>{try{runtimeDiscoveryCheckedAt=0;await loadRuntimeDiscovery(true);await refreshRuntimeHealth();log('admin_runtime_discovery_refreshed',{source:runtimeDiscovery.source,state:runtimeDiscovery.state});res.json(publicRuntimeStatus());}catch(e){next(e)}});
+app.post('/v1/admin/runtime/connect',admin,async(req,res,next)=>{try{const baseUrl=normalizeRuntimeBaseUrl(req.body?.baseUrl);if(!baseUrl)throw problem(400,'invalid_runtime_origin','Enter a valid HTTP or HTTPS runtime origin');await connectRuntimeEndpoint(baseUrl,'environment','Manual admin connection is active until Deploy Studio publishes a healthy handover');res.json(publicRuntimeStatus());}catch(e){next(e)}});
 app.post('/v1/admin/runtime/pause',admin,(_req,res)=>{runtimeState={...runtimeState,acceptingSubmissions:false,status:'paused',updatedAt:nowIso()}; log('admin_runtime_paused'); res.json(runtimeState)});
 app.post('/v1/admin/runtime/resume',admin,(_req,res)=>{runtimeState={...runtimeState,acceptingSubmissions:true,killSwitch:false,status:'healthy',updatedAt:nowIso()}; log('admin_runtime_resumed'); res.json(runtimeState)});
 app.post('/v1/admin/runtime/stop',admin,(_req,res)=>{runtimeState={...runtimeState,acceptingSubmissions:false,killSwitch:true,status:'unavailable',updatedAt:nowIso()}; log('admin_kill_switch_enabled'); res.json(runtimeState)});

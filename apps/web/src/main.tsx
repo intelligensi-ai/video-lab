@@ -966,6 +966,7 @@ function Account() {
 }
 function Admin() {
   const isLocalDevelopment = import.meta.env.DEV;
+  const [manualRuntimeOrigin, setManualRuntimeOrigin] = useState("http://209.20.158.84:7860");
   const r = useQuery({
     queryKey: ["runtime"],
     queryFn: () => api<RuntimeStatus>("/v1/runtime/status"),
@@ -975,6 +976,13 @@ function Admin() {
     api<RuntimeStatus>(p, { method: "POST" }).then(() => r.refetch());
   const discover = useMutation({
     mutationFn: () => api<RuntimeStatus>("/v1/admin/runtime/discover", { method: "POST" }),
+    onSuccess: () => r.refetch(),
+  });
+  const connectManual = useMutation({
+    mutationFn: () => api<RuntimeStatus>("/v1/admin/runtime/connect", {
+      method: "POST",
+      body: JSON.stringify({ baseUrl: manualRuntimeOrigin }),
+    }),
     onSuccess: () => r.refetch(),
   });
   const discovery = r.data?.discovery;
@@ -987,7 +995,7 @@ function Admin() {
           <div>
             <span className="account-eyebrow">Deploy Studio handover</span>
             <h2>Automatic Lambda connection</h2>
-            <p>Deploy Studio securely publishes the active runtime. Video Lab validates its renewable lease and health automatically—no IP address is entered or exposed here.</p>
+            <p>Deploy Studio securely publishes the active runtime. Video Lab validates its renewable lease and health automatically. If the handover is stuck, an administrator can force a health check against the known Lambda origin.</p>
           </div>
           <span className={`runtime-discovery-state ${connected ? "connected" : ""}`}><i/>{r.isLoading ? "Checking" : connected ? "Connected" : discovery?.state ?? r.data?.status ?? "Unavailable"}</span>
         </header>
@@ -1000,6 +1008,14 @@ function Admin() {
         <p className={connected ? "success" : "runtime-discovery-message"}>{discovery?.message ?? "Waiting for Deploy Studio to publish the active runtime."}</p>
         <button type="button" disabled={discover.isPending} onClick={() => discover.mutate()}>{discover.isPending ? "Refreshing…" : "Refresh handover"}</button>
         {discover.error && <p className="error">{discover.error instanceof Error ? discover.error.message : "Runtime discovery failed"}</p>}
+        <form className="runtime-manual-connect" onSubmit={(event) => {
+          event.preventDefault();
+          connectManual.mutate();
+        }}>
+          <label><span>Known Lambda runtime origin</span><input value={manualRuntimeOrigin} placeholder="http://209.20.158.84:7860" onChange={(event) => setManualRuntimeOrigin(event.target.value)} /></label>
+          <button type="submit" disabled={connectManual.isPending}>{connectManual.isPending ? "Checking…" : "Check and connect"}</button>
+        </form>
+        {connectManual.error && <p className="error">{connectManual.error instanceof Error ? connectManual.error.message : "Manual runtime connection failed"}</p>}
         {isLocalDevelopment && <>
           <button onClick={() => call("/v1/admin/runtime/pause")}>
             Pause submissions
