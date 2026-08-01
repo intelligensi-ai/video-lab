@@ -1,28 +1,41 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
-import type { Generation } from "@video-lab/contracts";
+import type {
+  Generation,
+  StoryboardProjectSummary,
+} from "@video-lab/contracts";
 import {
+  assembleStoryboardFilm,
   cancelGeneration,
+  createStoryboardProject,
+  deleteStoryboardProject,
   emptyContinuityBible,
   enhanceStoryboard,
   fetchGenerationOutput,
   generateStoryboardFrame,
+  generateStoryboardScene,
   generateLongFormVideo,
   getGallery,
   getGeneration,
   getRuntimeStatus,
+  getStoryboardDraft,
+  listStoryboardProjects,
   waitForGeneration,
   type LongFormGenerationPayload,
   type ReferenceRole,
   type StoryboardScenePayload,
   type StoryboardTransition,
 } from "./api.js";
-import { useAuthenticatedVideo } from "./AuthenticatedVideo.js";
+import {
+  AuthenticatedVideo,
+  useAuthenticatedVideo,
+} from "./AuthenticatedVideo.js";
 import { PromptSuggestion } from "./PromptSuggestion.js";
 import { getFirebaseUser, isProductionFirebase } from "./auth.js";
 import {
+  deleteStoryboardSession,
   loadStoryboardSession,
   saveStoryboardSession,
 } from "./storyboardSession.js";
@@ -35,29 +48,6 @@ type LongFormReference = {
   strength: number;
   helper: string;
 };
-
-const initialReferences: LongFormReference[] = [
-  {
-    label: "Reference image",
-    role: "referenceImage",
-    strength: 0.6,
-    helper: "Guide composition, environment, props and overall visual content.",
-  },
-  {
-    label: "Reference character(s)",
-    role: "subjectReference",
-    strength: 0.65,
-    helper:
-      "Keep the principal character identity and appearance consistent between scenes.",
-  },
-  {
-    label: "Style images",
-    role: "styleReference",
-    strength: 0.5,
-    helper:
-      "Guide palette, lighting, texture and cinematography across the film.",
-  },
-];
 
 const transitionOptions: Array<{
   value: StoryboardTransition;
@@ -142,6 +132,9 @@ const initialScenes: StoryboardScenePayload[] = [
     trimStart: 0,
     trimEnd: 5,
     seed: 1337,
+    seedOverrideEnabled: false,
+    summary: "",
+    continuityOverrides: {},
     transition: "cut",
     transitionDuration: 0.75,
     carryPreviousFrame: true,
@@ -154,6 +147,9 @@ const initialScenes: StoryboardScenePayload[] = [
     trimStart: 0,
     trimEnd: 5,
     seed: 1338,
+    seedOverrideEnabled: false,
+    summary: "",
+    continuityOverrides: {},
     transition: "crossfade",
     transitionDuration: 0.75,
     carryPreviousFrame: true,
@@ -188,11 +184,71 @@ const initialForm: LongFormGenerationPayload = {
   enhancePrompt: true,
   postProcess: "none",
   outputFormat: "mp4",
+  globalSeed: DEFAULT_SCENE_SEED,
+  seedPolicy: "global_locked",
   globalVisualAnchorEnabled: false,
   scenes: initialScenes,
-  references: initialReferences,
   continuityBible: emptyContinuityBible(),
 };
+
+const freshInitialForm = (): LongFormGenerationPayload =>
+  globalThis.structuredClone(initialForm);
+
+function markAcceptedClipsStale(
+  form: LongFormGenerationPayload,
+  staleReason: string,
+): LongFormGenerationPayload {
+  return {
+    ...form,
+    scenes: form.scenes.map((scene) =>
+      scene.acceptedVideoGenerationId ? { ...scene, staleReason } : scene,
+    ),
+  };
+}
+
+async function hydrateGeneratedFrameFiles(form: LongFormGenerationPayload) {
+  const scenes = await Promise.all(
+    form.scenes.map(async (scene) => {
+      const hydrate = async (
+        generationId: string | undefined,
+        current: File | undefined,
+        edge: "start" | "end",
+      ) => {
+        if (current || !generationId) return current;
+        try {
+          const generation = await getGeneration(generationId);
+          if (
+            generation.status !== "completed" ||
+            !generation.output?.downloadUrl ||
+            generation.output.kind !== "frame"
+          )
+            return undefined;
+          const blob = await fetchGenerationOutput(
+            generation.output.downloadUrl,
+          );
+          if (!blob.type.startsWith("image/")) return undefined;
+          const extension =
+            blob.type === "image/jpeg"
+              ? "jpg"
+              : blob.type === "image/webp"
+                ? "webp"
+                : "png";
+          return new File([blob], `${scene.id}-${edge}-frame.${extension}`, {
+            type: blob.type,
+          });
+        } catch {
+          return undefined;
+        }
+      };
+      const [startFrame, endFrame] = await Promise.all([
+        hydrate(scene.startFrameGenerationId, scene.startFrame, "start"),
+        hydrate(scene.endFrameGenerationId, scene.endFrame, "end"),
+      ]);
+      return { ...scene, startFrame, endFrame };
+    }),
+  );
+  return { ...form, scenes };
+}
 
 type EnhancementAction = {
   apply: "all" | "master" | "shot";
@@ -202,18 +258,27 @@ type FrameState = {
   status: "idle" | "queued" | "generating" | "failed";
   error?: string;
 };
+type SceneRenderState = FrameState;
 
 export default function LongFormStoryboardStudio() {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState(initialForm);
+  const [form, setForm] = useState(freshInitialForm);
   const [history, setHistory] = useState<Generation[]>([]);
   const [selected, setSelected] = useState<Generation>();
   const [helpMode, setHelpMode] = useState(false);
   const [sessionOwner, setSessionOwner] = useState("");
+  const [projects, setProjects] = useState<StoryboardProjectSummary[]>([]);
+  const [projectId, setProjectId] = useState("");
+  const [projectTitle, setProjectTitle] = useState("Untitled film");
+  const [projectError, setProjectError] = useState("");
+  const [projectBusy, setProjectBusy] = useState(false);
   const [undoForm, setUndoForm] = useState<LongFormGenerationPayload>();
   const [frameStates, setFrameStates] = useState<Record<string, FrameState>>(
     {},
   );
+  const [sceneRenderStates, setSceneRenderStates] = useState<
+    Record<string, SceneRenderState>
+  >({});
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<
     "loading" | "saving" | "saved" | "error"
@@ -224,17 +289,23 @@ export default function LongFormStoryboardStudio() {
   });
   const gallery = useQuery({ queryKey: ["gallery"], queryFn: getGallery });
   const mutation = useMutation({
-    mutationFn: () => generateLongFormVideo(form),
+    mutationFn: () => {
+      if (!projectId) throw new Error("Choose a project before rendering.");
+      return generateLongFormVideo(form, projectId);
+    },
     onSuccess: (generation) => {
       setSelected(generation);
       setHistory((items) => [generation, ...items].slice(0, 8));
-      setForm((current) => ({
-        ...current,
-        scenes: current.scenes.map((scene) => ({
-          ...scene,
-          staleReason: undefined,
-        })),
-      }));
+    },
+  });
+  const assembly = useMutation({
+    mutationFn: () => {
+      if (!projectId) throw new Error("Choose a project before assembling.");
+      return assembleStoryboardFilm(form, projectId);
+    },
+    onSuccess: (generation) => {
+      setSelected(generation);
+      setHistory((items) => [generation, ...items].slice(0, 8));
     },
   });
   const enhancement = useMutation({
@@ -244,13 +315,16 @@ export default function LongFormStoryboardStudio() {
       setUndoForm(form);
       setForm((current) => {
         if (action.apply === "master") {
-          return {
-            ...current,
-            originalOverallGoal:
-              current.originalOverallGoal ?? current.overallGoal,
-            overallGoal: result.polishedMasterPrompt,
-            continuityBible: result.continuityBible,
-          };
+          return markAcceptedClipsStale(
+            {
+              ...current,
+              originalOverallGoal:
+                current.originalOverallGoal ?? current.overallGoal,
+              overallGoal: result.polishedMasterPrompt,
+              continuityBible: result.continuityBible,
+            },
+            "The film brief or continuity bible changed after this clip was accepted. Render this scene again before assembly.",
+          );
         }
         if (action.apply === "shot" && action.targetShotNumber) {
           const enhanced = result.shots[0];
@@ -268,7 +342,9 @@ export default function LongFormStoryboardStudio() {
                     continuityNotes: enhanced.continuityNotes,
                     promptOrigin: "agent",
                     staleReason:
-                      scene.startFrame || scene.endFrame
+                      scene.startFrame ||
+                      scene.endFrame ||
+                      scene.acceptedVideoGenerationId
                         ? "This shot prompt changed after its frame anchors were created. Review or regenerate them before rendering."
                         : scene.staleReason,
                   }
@@ -294,7 +370,9 @@ export default function LongFormStoryboardStudio() {
               continuityNotes: enhanced.continuityNotes,
               promptOrigin: "agent" as const,
               staleReason:
-                scene.startFrame || scene.endFrame
+                scene.startFrame ||
+                scene.endFrame ||
+                scene.acceptedVideoGenerationId
                   ? "The enhanced direction changed after these frame anchors were created. Review or regenerate them before rendering."
                   : scene.staleReason,
             };
@@ -320,24 +398,47 @@ export default function LongFormStoryboardStudio() {
         const owner = isProductionFirebase
           ? (await getFirebaseUser()).uid
           : localStorage.getItem("vl_token") || "demo-user";
-        const saved = await loadStoryboardSession(owner);
+        const listed = await listStoryboardProjects();
+        let available = listed.items;
+        if (!available.length) {
+          const legacy = await getStoryboardDraft().catch(() => ({
+            form: null,
+            updatedAt: null,
+          }));
+          const created = await createStoryboardProject(
+            "Untitled film",
+            (legacy.form ?? freshInitialForm()) as Record<string, unknown>,
+          );
+          available = [created];
+        }
+        const activeProject = available[0];
+        const saved = await loadStoryboardSession(owner, activeProject.id);
         if (!active) return;
         setSessionOwner(owner);
+        setProjects(available);
+        setProjectId(activeProject.id);
+        setProjectTitle(activeProject.title);
         if (saved) {
-          setForm({
+          const normalized = {
             ...initialForm,
             ...saved,
             scenes: saved.scenes?.length
               ? saved.scenes.slice(0, MAX_STORYBOARD_SCENES).map((scene) => ({
                   ...scene,
-                  trimStart: 0,
-                  trimEnd: scene.duration,
+                  trimStart: Math.max(0, scene.trimStart ?? 0),
+                  trimEnd: Math.min(
+                    scene.duration,
+                    scene.trimEnd ?? scene.duration,
+                  ),
+                  summary: scene.summary ?? "",
+                  continuityOverrides: scene.continuityOverrides ?? {},
+                  seedOverrideEnabled: scene.seedOverrideEnabled === true,
                 }))
               : initialScenes,
-            references: saved.references?.length
-              ? saved.references
-              : initialReferences,
-          });
+            globalSeed: saved.globalSeed ?? DEFAULT_SCENE_SEED,
+            seedPolicy: saved.seedPolicy ?? "global_locked",
+          } satisfies LongFormGenerationPayload;
+          setForm(await hydrateGeneratedFrameFiles(normalized));
         }
         setSessionReady(true);
         setSessionStatus("saved");
@@ -353,15 +454,33 @@ export default function LongFormStoryboardStudio() {
     };
   }, []);
   useEffect(() => {
-    if (!sessionReady || !sessionOwner) return;
+    if (!sessionReady || !sessionOwner || !projectId) return;
     setSessionStatus("saving");
     const timer = window.setTimeout(() => {
-      void saveStoryboardSession(sessionOwner, form)
-        .then(() => setSessionStatus("saved"))
+      void saveStoryboardSession(sessionOwner, projectId, projectTitle, form)
+        .then(() => {
+          setSessionStatus("saved");
+          setProjects((items) =>
+            items
+              .map((project) =>
+                project.id === projectId
+                  ? {
+                      ...project,
+                      title: projectTitle,
+                      sceneCount: form.scenes.length,
+                      updatedAt: new Date().toISOString(),
+                    }
+                  : project,
+              )
+              .sort((left, right) =>
+                right.updatedAt.localeCompare(left.updatedAt),
+              ),
+          );
+        })
         .catch(() => setSessionStatus("error"));
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [form, sessionOwner, sessionReady]);
+  }, [form, projectId, projectTitle, sessionOwner, sessionReady]);
   const generation = useQuery({
     queryKey: ["generation", selected?.id],
     queryFn: () => getGeneration(selected!.id),
@@ -377,6 +496,7 @@ export default function LongFormStoryboardStudio() {
   const currentGeneration = generation.data ?? selected;
   const isRendering =
     mutation.isPending ||
+    assembly.isPending ||
     Boolean(
       currentGeneration &&
       !["completed", "failed", "cancelled"].includes(currentGeneration.status),
@@ -394,6 +514,103 @@ export default function LongFormStoryboardStudio() {
       });
     },
   });
+  const openProject = async (nextProjectId: string) => {
+    if (!sessionOwner || nextProjectId === projectId) return;
+    const summary = projects.find((project) => project.id === nextProjectId);
+    if (!summary) return;
+    setProjectBusy(true);
+    setProjectError("");
+    setSessionReady(false);
+    setSessionStatus("loading");
+    try {
+      const saved = await loadStoryboardSession(sessionOwner, nextProjectId);
+      const normalized = saved
+        ? ({
+            ...freshInitialForm(),
+            ...saved,
+            scenes: saved.scenes.map((scene) => ({
+              ...scene,
+              summary: scene.summary ?? "",
+              continuityOverrides: scene.continuityOverrides ?? {},
+              seedOverrideEnabled: scene.seedOverrideEnabled === true,
+            })),
+          } satisfies LongFormGenerationPayload)
+        : freshInitialForm();
+      setForm(await hydrateGeneratedFrameFiles(normalized));
+      setProjectId(nextProjectId);
+      setProjectTitle(summary.title);
+      setUndoForm(undefined);
+      setFrameStates({});
+      setSceneRenderStates({});
+      setSessionReady(true);
+      setSessionStatus("saved");
+    } catch (error) {
+      setProjectError(
+        error instanceof Error ? error.message : "Project could not be opened.",
+      );
+      setSessionReady(true);
+      setSessionStatus("error");
+    } finally {
+      setProjectBusy(false);
+    }
+  };
+  const createProject = async () => {
+    setProjectBusy(true);
+    setProjectError("");
+    try {
+      const title = `Untitled film ${projects.length + 1}`;
+      const created = await createStoryboardProject(
+        title,
+        freshInitialForm() as unknown as Record<string, unknown>,
+      );
+      setProjects((items) => [created, ...items]);
+      setProjectId(created.id);
+      setProjectTitle(created.title);
+      setForm(freshInitialForm());
+      setUndoForm(undefined);
+      setFrameStates({});
+      setSceneRenderStates({});
+      setSessionReady(true);
+      setSessionStatus("saved");
+    } catch (error) {
+      setProjectError(
+        error instanceof Error
+          ? error.message
+          : "Project could not be created.",
+      );
+    } finally {
+      setProjectBusy(false);
+    }
+  };
+  const removeProject = async () => {
+    if (!projectId || projects.length <= 1) return;
+    if (
+      !window.confirm(
+        `Delete “${projectTitle}” and schedule its assets for removal?`,
+      )
+    )
+      return;
+    setProjectBusy(true);
+    setProjectError("");
+    try {
+      await deleteStoryboardProject(projectId);
+      await deleteStoryboardSession(sessionOwner, projectId).catch(
+        () => undefined,
+      );
+      const remaining = projects.filter((project) => project.id !== projectId);
+      setProjects(remaining);
+      setProjectId("");
+      await openProject(remaining[0].id);
+    } catch (error) {
+      setProjectError(
+        error instanceof Error
+          ? error.message
+          : "Project could not be deleted.",
+      );
+    } finally {
+      setProjectBusy(false);
+    }
+  };
   const totalSeconds = useMemo(
     () => form.scenes.reduce((sum, scene) => sum + scene.duration, 0),
     [form.scenes],
@@ -417,7 +634,14 @@ export default function LongFormStoryboardStudio() {
       [stateKey]: { status: "queued" },
     }));
     try {
-      const submitted = await generateStoryboardFrame(form, scene, edge);
+      if (!projectId)
+        throw new Error("Choose a project before generating frames.");
+      const submitted = await generateStoryboardFrame(
+        form,
+        scene,
+        edge,
+        projectId,
+      );
       setFrameStates((current) => ({
         ...current,
         [stateKey]: { status: "generating" },
@@ -442,6 +666,8 @@ export default function LongFormStoryboardStudio() {
       });
       updateScene(index, {
         [edge === "start" ? "startFrame" : "endFrame"]: file,
+        [edge === "start" ? "startFrameGenerationId" : "endFrameGenerationId"]:
+          completed.id,
         staleReason:
           "A frame anchor changed after the previous storyboard render. Generate the film again to use it.",
       });
@@ -458,6 +684,54 @@ export default function LongFormStoryboardStudio() {
             error instanceof Error
               ? error.message
               : `The ${edge} frame could not be generated.`,
+        },
+      }));
+    }
+  };
+  const renderScene = async (index: number) => {
+    const scene = form.scenes[index];
+    if (!projectId) return;
+    setSceneRenderStates((current) => ({
+      ...current,
+      [scene.id]: { status: "queued" },
+    }));
+    try {
+      const submitted = await generateStoryboardScene(form, scene, projectId);
+      setSelected(submitted);
+      setHistory((items) => [submitted, ...items].slice(0, 8));
+      setSceneRenderStates((current) => ({
+        ...current,
+        [scene.id]: { status: "generating" },
+      }));
+      const completed = await waitForGeneration(submitted.id);
+      if (
+        completed.status !== "completed" ||
+        completed.output?.kind !== "video"
+      )
+        throw new Error(
+          completed.safeErrorMessage || "The scene clip was not generated.",
+        );
+      updateScene(index, {
+        acceptedVideoGenerationId: completed.id,
+        staleReason: undefined,
+      });
+      setSelected(completed);
+      setHistory((items) =>
+        items.map((item) => (item.id === completed.id ? completed : item)),
+      );
+      setSceneRenderStates((current) => ({
+        ...current,
+        [scene.id]: { status: "idle" },
+      }));
+    } catch (error) {
+      setSceneRenderStates((current) => ({
+        ...current,
+        [scene.id]: {
+          status: "failed",
+          error:
+            error instanceof Error
+              ? error.message
+              : "The scene clip could not be generated.",
         },
       }));
     }
@@ -485,7 +759,10 @@ export default function LongFormStoryboardStudio() {
                 duration: 5,
                 trimStart: 0,
                 trimEnd: 5,
-                seed: DEFAULT_SCENE_SEED + current.scenes.length,
+                seed: current.globalSeed + current.scenes.length,
+                seedOverrideEnabled: false,
+                summary: "",
+                continuityOverrides: {},
                 transition: "crossfade",
                 transitionDuration: 0.75,
                 carryPreviousFrame: true,
@@ -503,6 +780,15 @@ export default function LongFormStoryboardStudio() {
     !form.overallGoal.trim() ||
     !form.scenes.length ||
     form.scenes.some((scene) => !scene.prompt.trim());
+  const runtimeMaxScenes = Math.min(
+    MAX_STORYBOARD_SCENES,
+    runtime.data?.capabilities?.maxScenes ?? MAX_STORYBOARD_SCENES,
+  );
+  const allScenesAccepted =
+    form.scenes.length > 0 &&
+    form.scenes.every(
+      (scene) => scene.acceptedVideoGenerationId && !scene.staleReason,
+    );
 
   return (
     <main className={`lf-page ${helpMode ? "help-mode" : ""}`}>
@@ -569,6 +855,75 @@ export default function LongFormStoryboardStudio() {
       </header>
       <div className="lf-layout">
         <div className="lf-controls">
+          <section
+            className="lf-panel lf-projects"
+            aria-label="Storyboard projects"
+          >
+            <div className="lf-section-head">
+              <div>
+                <span className="lf-label">Your projects</span>
+                <h2>Continue a film</h2>
+              </div>
+              <div className="lf-project-actions">
+                <button
+                  type="button"
+                  className="lf-outline"
+                  disabled={projectBusy}
+                  onClick={() => void createProject()}
+                >
+                  New project
+                </button>
+                <button
+                  type="button"
+                  className="lf-delete"
+                  disabled={projectBusy || projects.length <= 1}
+                  onClick={() => void removeProject()}
+                >
+                  Delete project
+                </button>
+              </div>
+            </div>
+            <div className="lf-project-fields">
+              <label>
+                <span>Open project</span>
+                <select
+                  aria-label="Open storyboard project"
+                  value={projectId}
+                  disabled={projectBusy}
+                  onChange={(event) => void openProject(event.target.value)}
+                >
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.title} · {project.sceneCount} scene
+                      {project.sceneCount === 1 ? "" : "s"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Project title</span>
+                <input
+                  aria-label="Project title"
+                  value={projectTitle}
+                  maxLength={120}
+                  onChange={(event) => setProjectTitle(event.target.value)}
+                  onBlur={() =>
+                    setProjectTitle((title) => title.trim() || "Untitled film")
+                  }
+                  required
+                />
+              </label>
+            </div>
+            <p>
+              Projects, prompts, generated frame references and accepted clips
+              are private to your account and reopen across sessions.
+            </p>
+            {projectError && (
+              <p className="lf-error" role="alert">
+                {projectError}
+              </p>
+            )}
+          </section>
           <section className="lf-panel lf-goal">
             <span className="lf-label">Creative brief</span>
             <div className="prompt-field-heading">
@@ -579,10 +934,12 @@ export default function LongFormStoryboardStudio() {
                 expansion="Expand this into a coherent film brief with a clear narrative progression, consistent characters and locations, a defined visual palette, lighting and lens language, material detail, emotional tone and continuity rules for every scene."
                 kind="film-brief"
                 onUse={(suggestion) =>
-                  setForm((current) => ({
-                    ...current,
-                    overallGoal: suggestion,
-                  }))
+                  setForm((current) =>
+                    markAcceptedClipsStale(
+                      { ...current, overallGoal: suggestion },
+                      "The film brief changed after this clip was accepted. Render this scene again before assembly.",
+                    ),
+                  )
                 }
               />
             </div>
@@ -595,10 +952,12 @@ export default function LongFormStoryboardStudio() {
                 value={form.overallGoal}
                 placeholder="Describe the story, subject, visual language and continuity for the whole film…"
                 onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    overallGoal: event.target.value,
-                  }))
+                  setForm((current) =>
+                    markAcceptedClipsStale(
+                      { ...current, overallGoal: event.target.value },
+                      "The film brief changed after this clip was accepted. Render this scene again before assembly.",
+                    ),
+                  )
                 }
               />
             </div>
@@ -632,11 +991,16 @@ export default function LongFormStoryboardStudio() {
                 <button
                   type="button"
                   onClick={() =>
-                    setForm((current) => ({
-                      ...current,
-                      overallGoal:
-                        current.originalOverallGoal ?? current.overallGoal,
-                    }))
+                    setForm((current) =>
+                      markAcceptedClipsStale(
+                        {
+                          ...current,
+                          overallGoal:
+                            current.originalOverallGoal ?? current.overallGoal,
+                        },
+                        "The film brief changed after this clip was accepted. Render this scene again before assembly.",
+                      ),
+                    )
                   }
                 >
                   Restore original brief
@@ -675,10 +1039,12 @@ export default function LongFormStoryboardStudio() {
                 <select
                   value={form.resolution}
                   onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      resolution: event.target.value,
-                    }))
+                    setForm((current) =>
+                      markAcceptedClipsStale(
+                        { ...current, resolution: event.target.value },
+                        "The output resolution changed after this clip was accepted. Render this scene again before assembly.",
+                      ),
+                    )
                   }
                 >
                   <option value="1024x576">Landscape Draft 1024x576</option>
@@ -695,10 +1061,12 @@ export default function LongFormStoryboardStudio() {
                 <select
                   value={form.fps}
                   onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      fps: Number(event.target.value),
-                    }))
+                    setForm((current) =>
+                      markAcceptedClipsStale(
+                        { ...current, fps: Number(event.target.value) },
+                        "The frame rate changed after this clip was accepted. Render this scene again before assembly.",
+                      ),
+                    )
                   }
                 >
                   <option value={24}>24 fps</option>
@@ -706,7 +1074,55 @@ export default function LongFormStoryboardStudio() {
                   <option value={30}>30 fps</option>
                 </select>
               </Field>
+              <Field
+                label="Visual seed policy"
+                help="A locked seed gives every scene the same identity anchor. Scene overrides allow deliberate variation without random drift."
+              >
+                <select
+                  value={form.seedPolicy}
+                  onChange={(event) =>
+                    setForm((current) =>
+                      markAcceptedClipsStale(
+                        {
+                          ...current,
+                          seedPolicy: event.target.value as
+                            "global_locked" | "scene_overrides",
+                        },
+                        "The visual seed policy changed after this clip was accepted. Render this scene again before assembly.",
+                      ),
+                    )
+                  }
+                >
+                  <option value="global_locked">
+                    Lock one seed across the film
+                  </option>
+                  <option value="scene_overrides">
+                    Allow deliberate scene overrides
+                  </option>
+                </select>
+              </Field>
+              <NumberField
+                label="Global visual seed"
+                help="Keeps reproducible visual choices across the film. It does not replace prompt or frame continuity."
+                value={form.globalSeed}
+                min={0}
+                max={999999999}
+                step={1}
+                onChange={(globalSeed) =>
+                  setForm((current) =>
+                    markAcceptedClipsStale(
+                      { ...current, globalSeed },
+                      "The global visual seed changed after this clip was accepted. Render this scene again before assembly.",
+                    ),
+                  )
+                }
+              />
             </div>
+            <p className="lf-capability-note">
+              This generator supports up to {runtimeMaxScenes} scenes, 1–8
+              seconds per scene, independent frame anchors, individual scene
+              renders and final assembly with audio preserved.
+            </p>
             <div className="lf-plan">
               <button
                 type="button"
@@ -722,7 +1138,7 @@ export default function LongFormStoryboardStudio() {
                 data-help="Shows the number of planned scenes and their combined running time."
               >
                 <strong>
-                  {form.scenes.length}/{MAX_STORYBOARD_SCENES}
+                  {form.scenes.length}/{runtimeMaxScenes}
                 </strong>{" "}
                 scenes
                 <br />
@@ -743,8 +1159,8 @@ export default function LongFormStoryboardStudio() {
               <button
                 type="button"
                 className="lf-primary lf-add"
-                data-help="Append a new editable scene card, up to the six-scene GPU-safe limit."
-                disabled={form.scenes.length >= MAX_STORYBOARD_SCENES}
+                data-help="Append a new editable scene card up to the active LongForm runtime limit."
+                disabled={form.scenes.length >= runtimeMaxScenes}
                 onClick={addScene}
               >
                 ＋ Add scene
@@ -771,6 +1187,10 @@ export default function LongFormStoryboardStudio() {
                   })
                 }
                 promptBusy={enhancement.isPending}
+                renderState={sceneRenderStates[scene.id] ?? { status: "idle" }}
+                onRender={() => void renderScene(index)}
+                globalSeed={form.globalSeed}
+                seedPolicy={form.seedPolicy}
               />
             ))}
           </section>
@@ -787,25 +1207,30 @@ export default function LongFormStoryboardStudio() {
                     <textarea
                       value={form.continuityBible[key]}
                       onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          continuityBible: {
-                            ...current.continuityBible,
-                            [key]: event.target.value,
-                          },
-                        }))
+                        setForm((current) =>
+                          markAcceptedClipsStale(
+                            {
+                              ...current,
+                              continuityBible: {
+                                ...current.continuityBible,
+                                [key]: event.target.value,
+                              },
+                            },
+                            "The continuity bible changed after this clip was accepted. Render this scene again before assembly.",
+                          ),
+                        )
                       }
                     />
                   </label>
                 ))}
               </div>
             </details>
-            <LongFormReferencePanel
-              references={form.references as LongFormReference[]}
-              onChange={(references) =>
-                setForm((current) => ({ ...current, references }))
-              }
-            />
+            <p className="lf-capability-note">
+              Character and style image references are not offered here because
+              the active LongForm worker does not apply them. Use the continuity
+              bible and per-scene first/last frames instead; the studio will not
+              upload an image that the generator ignores.
+            </p>
             <div className="lf-bible-grid">
               <UploadBox
                 label="Global visual anchor"
@@ -827,10 +1252,15 @@ export default function LongFormStoryboardStudio() {
                   type="checkbox"
                   checked={form.globalVisualAnchorEnabled}
                   onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      globalVisualAnchorEnabled: event.target.checked,
-                    }))
+                    setForm((current) =>
+                      markAcceptedClipsStale(
+                        {
+                          ...current,
+                          globalVisualAnchorEnabled: event.target.checked,
+                        },
+                        "The visual-anchor policy changed after this clip was accepted. Render this scene again before assembly.",
+                      ),
+                    )
                   }
                 />
                 <span /> Enable anchor fallback
@@ -868,7 +1298,12 @@ export default function LongFormStoryboardStudio() {
                   max={8}
                   step={0.25}
                   onChange={(value) =>
-                    setForm((current) => ({ ...current, guidanceScale: value }))
+                    setForm((current) =>
+                      markAcceptedClipsStale(
+                        { ...current, guidanceScale: value },
+                        "LTX guidance changed after this clip was accepted. Render this scene again before assembly.",
+                      ),
+                    )
                   }
                 />
                 <Range
@@ -879,10 +1314,12 @@ export default function LongFormStoryboardStudio() {
                   max={1}
                   step={0.05}
                   onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      startFrameStrength: value,
-                    }))
+                    setForm((current) =>
+                      markAcceptedClipsStale(
+                        { ...current, startFrameStrength: value },
+                        "Start-frame strength changed after this clip was accepted. Render this scene again before assembly.",
+                      ),
+                    )
                   }
                 />
                 <Range
@@ -893,10 +1330,12 @@ export default function LongFormStoryboardStudio() {
                   max={1}
                   step={0.05}
                   onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      endFrameStrength: value,
-                    }))
+                    setForm((current) =>
+                      markAcceptedClipsStale(
+                        { ...current, endFrameStrength: value },
+                        "End-frame strength changed after this clip was accepted. Render this scene again before assembly.",
+                      ),
+                    )
                   }
                 />
                 <Field
@@ -906,10 +1345,15 @@ export default function LongFormStoryboardStudio() {
                   <select
                     value={form.enhancePrompt ? "yes" : "no"}
                     onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        enhancePrompt: event.target.value === "yes",
-                      }))
+                      setForm((current) =>
+                        markAcceptedClipsStale(
+                          {
+                            ...current,
+                            enhancePrompt: event.target.value === "yes",
+                          },
+                          "Runtime prompt enhancement changed after this clip was accepted. Render this scene again before assembly.",
+                        ),
+                      )
                     }
                   >
                     <option value="yes">Enabled</option>
@@ -965,10 +1409,12 @@ export default function LongFormStoryboardStudio() {
                     expansion="Also exclude compression artefacts, unstable motion, inconsistent identity or wardrobe, continuity breaks, unwanted text, lighting shifts and anything that conflicts with the film's visual language."
                     kind="negative"
                     onUse={(suggestion) =>
-                      setForm((current) => ({
-                        ...current,
-                        negativePrompt: suggestion,
-                      }))
+                      setForm((current) =>
+                        markAcceptedClipsStale(
+                          { ...current, negativePrompt: suggestion },
+                          "The shared negative prompt changed after this clip was accepted. Render this scene again before assembly.",
+                        ),
+                      )
                     }
                   />
                 </div>
@@ -978,10 +1424,12 @@ export default function LongFormStoryboardStudio() {
                   value={form.negativePrompt}
                   placeholder="Describe unwanted styles, artefacts or continuity problems…"
                   onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      negativePrompt: event.target.value,
-                    }))
+                    setForm((current) =>
+                      markAcceptedClipsStale(
+                        { ...current, negativePrompt: event.target.value },
+                        "The shared negative prompt changed after this clip was accepted. Render this scene again before assembly.",
+                      ),
+                    )
                   }
                 />
               </div>
@@ -989,6 +1437,39 @@ export default function LongFormStoryboardStudio() {
           </details>
         </div>
         <aside className="lf-preview-col">
+          <section
+            className="lf-panel lf-assembly"
+            aria-label="Accepted scene assembly"
+          >
+            <span className="lf-label">Finishing</span>
+            <h2>Assemble accepted clips</h2>
+            <p>
+              Render and accept one clip per scene, then join only those clips.
+              Assembly applies trims and transitions without rerunning LTX.
+            </p>
+            <strong>
+              {
+                form.scenes.filter(
+                  (scene) =>
+                    scene.acceptedVideoGenerationId && !scene.staleReason,
+                ).length
+              }
+              /{form.scenes.length} clips ready
+            </strong>
+            <button
+              type="button"
+              className="lf-primary"
+              disabled={!allScenesAccepted || assembly.isPending || isRendering}
+              onClick={() => assembly.mutate()}
+            >
+              {assembly.isPending ? "Assembling…" : "Assemble accepted clips"}
+            </button>
+            {assembly.error && (
+              <p className="lf-error" role="alert">
+                {assembly.error.message}
+              </p>
+            )}
+          </section>
           <Preview
             generation={currentGeneration}
             loading={isRendering}
@@ -998,7 +1479,7 @@ export default function LongFormStoryboardStudio() {
             generateLabel={
               mutation.isPending
                 ? "◌ Rendering storyboard..."
-                : "ϟ Generate Storyboard Film"
+                : "Generate complete film in one run"
             }
             onGenerate={() => mutation.mutate()}
             cancelling={cancellation.isPending}
@@ -1062,7 +1543,7 @@ function Range({
   );
 }
 
-function LongFormReferencePanel({
+function _LongFormReferencePanel({
   references,
   onChange,
 }: {
@@ -1207,6 +1688,10 @@ function SceneCard({
   onGenerateFrame,
   onRegeneratePrompt,
   promptBusy,
+  renderState,
+  onRender,
+  globalSeed,
+  seedPolicy,
 }: {
   scene: StoryboardScenePayload;
   index: number;
@@ -1218,6 +1703,10 @@ function SceneCard({
   onGenerateFrame: (edge: "start" | "end") => void;
   onRegeneratePrompt: () => void;
   promptBusy: boolean;
+  renderState: SceneRenderState;
+  onRender: () => void;
+  globalSeed: number;
+  seedPolicy: LongFormGenerationPayload["seedPolicy"];
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const selectedTransition =
@@ -1238,7 +1727,14 @@ function SceneCard({
           <input
             aria-label={`Scene ${index + 1} title`}
             value={scene.title}
-            onChange={(event) => onChange({ title: event.target.value })}
+            onChange={(event) =>
+              onChange({
+                title: event.target.value,
+                staleReason: scene.acceptedVideoGenerationId
+                  ? "The scene title changed after its accepted clip was rendered. Render this scene again before assembly."
+                  : scene.staleReason,
+              })
+            }
           />
         </span>
         <button
@@ -1309,17 +1805,43 @@ function SceneCard({
               prompt: event.target.value,
               promptOrigin: "user",
               staleReason:
-                scene.startFrame || scene.endFrame
+                scene.startFrame ||
+                scene.endFrame ||
+                scene.acceptedVideoGenerationId
                   ? "This direction changed after its frame anchors were created. Review or regenerate them before rendering."
                   : scene.staleReason,
             })
           }
         />
-        {scene.narrativePurpose && (
-          <p className="lf-narrative-purpose">
-            Purpose: {scene.narrativePurpose}
-          </p>
-        )}
+        <div className="lf-scene-copy-grid">
+          <label>
+            <span>Narrative purpose</span>
+            <textarea
+              aria-label={`Scene ${index + 1} narrative purpose`}
+              value={scene.narrativePurpose ?? ""}
+              placeholder="What changes in the story during this scene?"
+              onChange={(event) =>
+                onChange({ narrativePurpose: event.target.value })
+              }
+            />
+          </label>
+          <label>
+            <span>Continuity handoff summary</span>
+            <textarea
+              aria-label={`Scene ${index + 1} continuity summary`}
+              value={scene.summary ?? ""}
+              placeholder="Briefly describe the ending state that the next scene inherits."
+              onChange={(event) =>
+                onChange({
+                  summary: event.target.value,
+                  staleReason: scene.acceptedVideoGenerationId
+                    ? "The continuity handoff changed after this clip was rendered. Render this scene again before assembly."
+                    : scene.staleReason,
+                })
+              }
+            />
+          </label>
+        </div>
       </div>
       <div className="lf-scene-fields">
         <NumberField
@@ -1330,7 +1852,17 @@ function SceneCard({
           max={8}
           step={1}
           onChange={(value) =>
-            onChange({ duration: value, trimStart: 0, trimEnd: value })
+            onChange({
+              duration: value,
+              trimStart: Math.min(scene.trimStart, Math.max(0, value - 0.25)),
+              trimEnd: Math.min(
+                value,
+                Math.max(scene.trimStart + 0.25, scene.trimEnd),
+              ),
+              staleReason: scene.acceptedVideoGenerationId
+                ? "The scene duration changed after its accepted clip was rendered. Render this scene again before assembly."
+                : scene.staleReason,
+            })
           }
         />
         {index === 0 ? (
@@ -1356,6 +1888,90 @@ function SceneCard({
           </Field>
         )}
       </div>
+      <details className="lf-scene-advanced">
+        <summary>Scene timing, continuity and seed</summary>
+        <div className="lf-scene-fields">
+          <NumberField
+            label="Trim in"
+            help="Skip unwanted material at the beginning when assembling accepted clips."
+            value={scene.trimStart}
+            min={0}
+            max={Math.max(0, scene.trimEnd - 0.25)}
+            step={0.25}
+            onChange={(trimStart) => onChange({ trimStart })}
+          />
+          <NumberField
+            label="Trim out"
+            help="Choose the final used moment without regenerating the clip."
+            value={scene.trimEnd}
+            min={Math.min(scene.duration, scene.trimStart + 0.25)}
+            max={scene.duration}
+            step={0.25}
+            onChange={(trimEnd) => onChange({ trimEnd })}
+          />
+        </div>
+        <label className="lf-toggle">
+          <input
+            type="checkbox"
+            checked={index > 0 && scene.carryPreviousFrame}
+            disabled={index === 0}
+            onChange={(event) =>
+              onChange({ carryPreviousFrame: event.target.checked })
+            }
+          />
+          <span />
+          {index === 0
+            ? "Opening scene has no previous frame"
+            : "Use the previous clip’s real last frame during a complete-film render"}
+        </label>
+        <div className="lf-seed-controls">
+          <label className="lf-toggle">
+            <input
+              type="checkbox"
+              checked={scene.seedOverrideEnabled === true}
+              disabled={seedPolicy !== "scene_overrides"}
+              onChange={(event) =>
+                onChange({ seedOverrideEnabled: event.target.checked })
+              }
+            />
+            <span /> Use a different seed for this scene
+          </label>
+          <NumberField
+            label="Effective scene seed"
+            value={scene.seedOverrideEnabled ? scene.seed : globalSeed}
+            min={0}
+            max={999999999}
+            step={1}
+            onChange={(seed) => onChange({ seed, seedOverrideEnabled: true })}
+          />
+        </div>
+        <details className="lf-continuity-details">
+          <summary>Override continuity for this scene only</summary>
+          <div className="lf-continuity-grid">
+            {continuityFields.map(([key, label]) => (
+              <label key={key}>
+                <span>{label}</span>
+                <textarea
+                  aria-label={`Scene ${index + 1} ${label} override`}
+                  value={scene.continuityOverrides?.[key] ?? ""}
+                  placeholder="Leave blank to inherit the film bible."
+                  onChange={(event) =>
+                    onChange({
+                      continuityOverrides: {
+                        ...(scene.continuityOverrides ?? {}),
+                        [key]: event.target.value,
+                      },
+                      staleReason: scene.acceptedVideoGenerationId
+                        ? "A continuity override changed after this clip was rendered. Render this scene again before assembly."
+                        : scene.staleReason,
+                    })
+                  }
+                />
+              </label>
+            ))}
+          </div>
+        </details>
+      </details>
       <div className="lf-frames">
         <FrameControl
           edge="start"
@@ -1368,6 +1984,7 @@ function SceneCard({
           onFile={(startFrame) =>
             onChange({
               startFrame,
+              startFrameGenerationId: undefined,
               staleReason:
                 "The opening frame changed after the previous storyboard render. Generate the film again to use it.",
             })
@@ -1385,6 +2002,7 @@ function SceneCard({
           onFile={(endFrame) =>
             onChange({
               endFrame,
+              endFrameGenerationId: undefined,
               staleReason:
                 "The closing frame changed after the previous storyboard render. Generate the film again to use it.",
             })
@@ -1392,15 +2010,62 @@ function SceneCard({
           onGenerate={() => onGenerateFrame("end")}
         />
       </div>
-      {scene.continuityNotes && (
-        <p className="lf-continuity-note">
-          Continuity: {scene.continuityNotes}
-        </p>
-      )}
+      <label className="lf-continuity-note">
+        <span>Continuity notes</span>
+        <textarea
+          aria-label={`Scene ${index + 1} continuity notes`}
+          value={scene.continuityNotes ?? ""}
+          placeholder="Record details the next shot should preserve."
+          onChange={(event) =>
+            onChange({ continuityNotes: event.target.value })
+          }
+        />
+      </label>
       {scene.staleReason && (
         <p className="lf-stale-note" role="status">
           {scene.staleReason}
         </p>
+      )}
+      <div className="lf-scene-render">
+        <div>
+          <strong>
+            {scene.acceptedVideoGenerationId
+              ? scene.staleReason
+                ? "Accepted clip needs review"
+                : "Accepted clip ready"
+              : "No accepted clip yet"}
+          </strong>
+          <small>
+            Rendering this scene keeps the previous successful clip available
+            until its replacement completes.
+          </small>
+        </div>
+        <button
+          type="button"
+          className="lf-primary"
+          disabled={
+            renderState.status === "queued" ||
+            renderState.status === "generating" ||
+            !scene.prompt.trim()
+          }
+          onClick={onRender}
+        >
+          {renderState.status === "queued"
+            ? "Queued…"
+            : renderState.status === "generating"
+              ? "Rendering scene…"
+              : scene.acceptedVideoGenerationId
+                ? "Render replacement clip"
+                : "Render this scene"}
+        </button>
+      </div>
+      {renderState.status === "failed" && (
+        <p className="lf-error" role="alert">
+          {renderState.error} The previous accepted clip is unchanged.
+        </p>
+      )}
+      {scene.acceptedVideoGenerationId && (
+        <SceneAcceptedVideo generationId={scene.acceptedVideoGenerationId} />
       )}
       {pickerOpen && (
         <TransitionPicker
@@ -1472,6 +2137,29 @@ function FrameControl({
         </p>
       )}
     </section>
+  );
+}
+
+function SceneAcceptedVideo({ generationId }: { generationId: string }) {
+  const generation = useQuery({
+    queryKey: ["accepted-scene", generationId],
+    queryFn: () => getGeneration(generationId),
+  });
+  if (generation.isLoading)
+    return <div className="lf-scene-video">Loading accepted clip…</div>;
+  if (
+    generation.data?.status !== "completed" ||
+    !generation.data.output?.downloadUrl
+  )
+    return (
+      <p className="lf-error">
+        The accepted clip is not currently available. Render this scene again.
+      </p>
+    );
+  return (
+    <div className="lf-scene-video">
+      <AuthenticatedVideo downloadUrl={generation.data.output.downloadUrl} />
+    </div>
   );
 }
 

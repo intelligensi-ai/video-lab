@@ -84,19 +84,19 @@ describe("api integration", () => {
       true,
     );
   });
-  it("rejects storyboard payloads above the six-scene GPU limit", async () => {
+  it("rejects storyboard payloads above the 24-scene runtime limit", async () => {
     const response = await request(app)
       .post("/v1/generations")
       .set({ authorization: "Bearer scene-limit-user" })
       .set("Idempotency-Key", "scene-limit-123")
       .send({
-        prompt: "A coherent cinematic storyboard across seven scenes",
+        prompt: "A coherent cinematic storyboard across twenty-five scenes",
         settings: {
           aspectRatio: "16:9",
-          durationSeconds: 35,
+          durationSeconds: 100,
           quality: "draft",
           runtime: "longform-ltx-storyboard-studio",
-          storyboard: Array.from({ length: 7 }, (_, index) => ({
+          storyboard: Array.from({ length: 25 }, (_, index) => ({
             id: `scene-${index + 1}`,
           })),
         },

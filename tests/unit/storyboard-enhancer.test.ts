@@ -92,4 +92,32 @@ describe("storyboard enhancer contract", () => {
       "storyboard_enhancer_unavailable",
     );
   });
+
+  it("uses the authenticated versioned runtime API for LongForm enhancement", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        expect(String(url)).toBe(
+          "https://api.intelligensi.ai/v1/runtimes/longform-ltx-storyboard-studio/storyboards/enhance",
+        );
+        expect(init?.headers).toMatchObject({
+          "content-type": "application/json",
+          "X-Intelligensi-API-Key": "server-only-key",
+        });
+        expect(
+          (init?.headers as Record<string, string>).authorization,
+        ).toBeUndefined();
+        return Response.json(mockStoryboardEnhancement(request));
+      }),
+    );
+    const client = new DeployStudioStoryboardEnhancerClient({
+      baseUrl: "https://api.intelligensi.ai",
+      token: "server-only-key",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+
+    await expect(client.enhance(request)).resolves.toMatchObject({
+      shots: [{ shotNumber: 1 }, { shotNumber: 2 }],
+    });
+  });
 });

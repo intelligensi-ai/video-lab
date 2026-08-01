@@ -15,7 +15,7 @@ test("storyboard exposes editable Gemma and frame controls", async ({
   const brief = page.getByLabel("Overall artistic goal");
   await brief.fill("A musician follows a blue light through a rain-dark city.");
   await expect(
-    page.getByRole("button", { name: /Enhance and plan 1 shot/ }),
+    page.getByRole("button", { name: /Enhance and plan 2 shots/ }),
   ).toBeEnabled();
   await expect(
     page.getByText(/Suggestions come from the local Gemma enhancer/),
@@ -28,9 +28,17 @@ test("storyboard exposes editable Gemma and frame controls", async ({
   ).toBeVisible();
   await page.getByRole("button", { name: /Add scene/ }).click();
   await expect(
-    page.getByRole("button", { name: /Enhance and plan 2 shots/ }),
+    page.getByRole("button", { name: /Enhance and plan 3 shots/ }),
   ).toBeVisible();
-  await expect(page.getByText("2/6")).toBeVisible();
+  await expect(page.getByText("3/24")).toBeVisible();
+  await expect(page.getByLabel("Open storyboard project")).toBeVisible();
+  await expect(page.getByLabel("Project title")).toBeEditable();
+  await expect(
+    page.getByText(/style image references are not offered/i),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Assemble accepted clips" }),
+  ).toBeDisabled();
 });
 
 test("mobile storyboard has no page-level horizontal overflow", async ({

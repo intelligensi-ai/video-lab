@@ -10,7 +10,7 @@ import {
   useLocation,
   useNavigate,
   useParams,
-} from "react-router-dom";
+} from "react-router";
 import {
   QueryClient,
   QueryClientProvider,
@@ -840,7 +840,7 @@ function Landing() {
           <article>
             <b>01</b>
             <h3>Direct the story</h3>
-            <p>Plan up to 6 scenes around one clear artistic goal.</p>
+            <p>Plan up to 24 scenes around one clear artistic goal.</p>
           </article>
           <article>
             <b>02</b>

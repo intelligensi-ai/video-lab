@@ -20,6 +20,8 @@ service cloud.firestore {
     match /generations/{id} { allow read, write: if false; }
     match /assets/{id} { allow read, write: if false; }
     match /storyboardDrafts/{uid} { allow read, write: if false; }
+    match /storyboardProjects/{id} { allow read, write: if false; }
+    match /projectDeletionQueue/{id} { allow read, write: if false; }
     match /runtimeState/{id} { allow read, write: if false; }
     match /runtimeDiscovery/{id} { allow read, write: if false; }
     match /queue/{id} { allow read, write: if false; }

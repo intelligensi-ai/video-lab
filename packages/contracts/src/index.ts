@@ -1,5 +1,5 @@
 export * from "./generated.js";
-export const MAX_STORYBOARD_SCENES = 6;
+export const MAX_STORYBOARD_SCENES = 24;
 export const generationStatuses = [
   "queued",
   "preparing",
@@ -66,6 +66,23 @@ export interface RuntimeStatus {
   activeGenerationId?: string;
   queueDepth: number;
   updatedAt: string;
+  capabilities?: {
+    maxScenes: number;
+    maxSceneDurationSeconds: number;
+    workflowModes: Array<"text" | "start" | "start_end">;
+    operationScopes: Array<
+      "project" | "scene" | "start_frame" | "end_frame" | "assembly"
+    >;
+    postProcess: Array<"none" | "interpolate" | "upscale" | "both">;
+    startFrame: boolean;
+    endFrame: boolean;
+    generatedOpeningFrame: boolean;
+    previousFrameContinuity: boolean;
+    sceneAssembly: boolean;
+    audioPreservation: boolean;
+    styleReference: boolean;
+    subjectReference: boolean;
+  };
   discovery?: {
     source: "deploy-studio" | "environment" | "legacy" | "none";
     state: "connected" | "waiting" | "stale" | "unavailable";
@@ -73,6 +90,18 @@ export interface RuntimeStatus {
     lastPublishedAt?: string;
     message?: string;
   };
+}
+
+export interface StoryboardProjectSummary {
+  id: string;
+  title: string;
+  sceneCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StoryboardProject extends StoryboardProjectSummary {
+  form: Record<string, unknown>;
 }
 
 export interface StoryboardContinuityBible {

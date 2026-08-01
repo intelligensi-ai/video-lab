@@ -125,7 +125,10 @@ export function validateStoryboardEnhancement(
 export interface DeployStudioStoryboardEnhancerConfig {
   baseUrl: string;
   token: string;
+  runtimeId?: string;
   path?: string;
+  authHeaderName?: string;
+  authScheme?: string;
   timeoutMs?: number;
 }
 
@@ -142,15 +145,36 @@ export class DeployStudioStoryboardEnhancerClient {
       throw new Error("Deploy Studio enhancer origin is invalid");
     }
     this.origin = url.origin;
+    if (
+      config.runtimeId &&
+      !/^[a-z0-9][a-z0-9-]{0,127}$/.test(config.runtimeId)
+    ) {
+      throw new Error("Deploy Studio runtime id is invalid");
+    }
   }
 
   async enhance(
     request: StoryboardEnhancementRequest,
   ): Promise<StoryboardEnhancementResponse> {
-    const path = this.config.path ?? "/api/storyboards/enhance";
+    const path =
+      this.config.path ??
+      (this.config.runtimeId
+        ? `/v1/runtimes/${encodeURIComponent(this.config.runtimeId)}/storyboards/enhance`
+        : "/api/storyboards/enhance");
     if (!path.startsWith("/") || path.startsWith("//")) {
       throw new Error("Deploy Studio enhancer path is invalid");
     }
+    const headerName =
+      this.config.authHeaderName ??
+      (this.config.runtimeId
+        ? "X-Intelligensi-API-Key"
+        : "authorization");
+    const authScheme =
+      this.config.authScheme ?? (this.config.runtimeId ? "none" : "Bearer");
+    const authentication =
+      authScheme.toLowerCase() === "none"
+        ? this.config.token
+        : `${authScheme} ${this.config.token}`;
     let response: Response;
     try {
       response = await fetch(new URL(path, `${this.origin}/`), {
@@ -158,7 +182,7 @@ export class DeployStudioStoryboardEnhancerClient {
         redirect: "error",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${this.config.token}`,
+          [headerName]: authentication,
         },
         body: JSON.stringify(request),
         signal: AbortSignal.timeout(this.config.timeoutMs ?? 100_000),

@@ -13,6 +13,8 @@ import type {
   Generation,
   Me,
   RuntimeStatus,
+  StoryboardProject,
+  StoryboardProjectSummary,
   StoryboardContinuityBible,
   StoryboardEnhancementRequest,
 } from "@video-lab/contracts";
@@ -28,6 +30,7 @@ import {
   DeployStudioStoryboardEnhancerClient,
   mockStoryboardEnhancement,
   SulphurLtxRuntimeAdapter,
+  type RuntimeGenerationInput,
 } from "@video-lab/runtime-adapter";
 import { log, nowIso, problem } from "@video-lab/shared";
 import { getFirestore } from "firebase-admin/firestore";
@@ -60,6 +63,14 @@ type StoredAsset = {
   uploadedAt?: string;
   bytes?: Uint8Array;
 };
+type StoredStoryboardProject = {
+  id: string;
+  uid: string;
+  title: string;
+  form: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
 const users = new Map<string, Me>();
 const wallets = new Map<string, CreditWallet>();
 const gens = new Map<string, StoredGeneration>();
@@ -73,6 +84,7 @@ const storyboardDrafts = new Map<
   string,
   { form: Record<string, unknown>; updatedAt: string }
 >();
+const storyboardProjects = new Map<string, StoredStoryboardProject>();
 const assets = new Map<string, StoredAsset>();
 let runtimeState: RuntimeStatus = {
   provider: process.env.VIDEO_RUNTIME_PROVIDER ?? "mock",
@@ -287,18 +299,61 @@ async function hydrateAssetReferences(
 }
 async function runtimeGeneration(
   g: StoredGeneration,
-): Promise<StoredGeneration> {
+): Promise<RuntimeGenerationInput> {
+  const hydrated = (await hydrateAssetReferences(
+    g.settings,
+    g.uid,
+  )) as Generation["settings"];
+  const settings = { ...hydrated } as Generation["settings"] & {
+    acceptedSceneGenerationIds?: unknown;
+    assemblyJobIds?: string[];
+  };
+  if (settings.operationScope === "assembly") {
+    const acceptedIds = settings.acceptedSceneGenerationIds;
+    const storyboard = Array.isArray(settings.storyboard)
+      ? settings.storyboard
+      : [];
+    if (
+      !Array.isArray(acceptedIds) ||
+      acceptedIds.length !== storyboard.length
+    ) {
+      throw new Error("invalid_assembly_sources");
+    }
+    const runtimeJobIds: string[] = [];
+    for (let index = 0; index < acceptedIds.length; index += 1) {
+      const generationId = String(acceptedIds[index] ?? "");
+      const accepted = await findGeneration(generationId);
+      const expectedSceneId = String(
+        (storyboard[index] as { id?: unknown } | undefined)?.id ?? "",
+      );
+      if (
+        !accepted ||
+        accepted.uid !== g.uid ||
+        accepted.status !== "completed" ||
+        accepted.settings.operationScope !== "scene" ||
+        accepted.settings.operationSceneId !== expectedSceneId ||
+        accepted.settings.projectId !== settings.projectId ||
+        !accepted.runtimeJobId
+      ) {
+        throw new Error("invalid_assembly_sources");
+      }
+      runtimeJobIds.push(accepted.runtimeJobId);
+    }
+    settings.assemblyJobIds = runtimeJobIds;
+    delete settings.acceptedSceneGenerationIds;
+  }
   return {
-    ...g,
-    settings: (await hydrateAssetReferences(
-      g.settings,
-      g.uid,
-    )) as Generation["settings"],
+    prompt: g.prompt,
+    settings,
+    inputAssetUrls: [],
+    idempotencyKey: `video-lab:${g.id}`,
   };
 }
 const localAuth =
   process.env.NODE_ENV === "test" ||
   (process.env.NODE_ENV !== "production" && !process.env.K_SERVICE);
+const usesIntelligensiRuntimeApi =
+  process.env.VIDEO_RUNTIME_PROVIDER === "intelligensi-api";
 function normalizeRuntimeBaseUrl(value: unknown) {
   const origin = normalizeRuntimeOrigin(value, {
     production: process.env.NODE_ENV === "production",
@@ -314,7 +369,9 @@ let runtimeDiscovery: RuntimeDiscovery = {
   source: runtimeBaseUrl ? "environment" : "none",
   state: runtimeBaseUrl ? "waiting" : "unavailable",
   message: runtimeBaseUrl
-    ? "Configured from the server environment"
+    ? usesIntelligensiRuntimeApi
+      ? "Configured through the stable Deploy Studio runtime API"
+      : "Configured from the server environment"
     : "Waiting for Deploy Studio",
 };
 let runtimeDiscoveryCheckedAt = 0;
@@ -358,15 +415,20 @@ function createRuntimeAdapter(baseUrl: string) {
   return new SulphurLtxRuntimeAdapter({
     baseUrl,
     token: process.env.VIDEO_RUNTIME_API_TOKEN,
-    healthPath: process.env.VIDEO_RUNTIME_HEALTH_PATH ?? "/health",
+    runtimeId:
+      process.env.VIDEO_RUNTIME_ID ?? "longform-ltx-storyboard-studio",
+    healthPath: usesIntelligensiRuntimeApi
+      ? process.env.VIDEO_RUNTIME_HEALTH_PATH
+      : process.env.VIDEO_RUNTIME_HEALTH_PATH ?? "/health",
     submitPath: process.env.VIDEO_RUNTIME_SUBMIT_PATH,
     statusPath: process.env.VIDEO_RUNTIME_STATUS_PATH,
     cancelPath: process.env.VIDEO_RUNTIME_CANCEL_PATH,
     outputPath: process.env.VIDEO_RUNTIME_OUTPUT_PATH,
     authHeaderName: process.env.VIDEO_RUNTIME_AUTH_HEADER,
     authScheme: process.env.VIDEO_RUNTIME_AUTH_SCHEME,
-    payloadMode:
-      process.env.VIDEO_RUNTIME_PAYLOAD_MODE === "sulphur"
+    payloadMode: usesIntelligensiRuntimeApi
+      ? "intelligensi-api"
+      : process.env.VIDEO_RUNTIME_PAYLOAD_MODE === "sulphur"
         ? "sulphur"
         : "deploy-studio",
     timeoutMs: Number(process.env.VIDEO_RUNTIME_TIMEOUT_MS ?? 120000),
@@ -399,7 +461,9 @@ function useRuntimeEndpoint(
   if (runtimeState.provider === "mock")
     runtimeState = {
       ...runtimeState,
-      provider: "sulphur-ltx",
+      provider: usesIntelligensiRuntimeApi
+        ? "intelligensi-api"
+        : "sulphur-ltx",
       updatedAt: nowIso(),
     };
 }
@@ -415,6 +479,15 @@ function clearRuntimeEndpoint(discovery: RuntimeDiscovery) {
     };
 }
 async function loadRuntimeDiscovery(force = false) {
+  if (usesIntelligensiRuntimeApi && runtimeBaseUrl) {
+    runtimeDiscoveryCheckedAt = Date.now();
+    runtimeDiscovery = {
+      source: "deploy-studio",
+      state: "connected",
+      message: "Connected through the stable Deploy Studio runtime API",
+    };
+    return;
+  }
   if (localAuth) return;
   const now = Date.now();
   if (!force && now - runtimeDiscoveryCheckedAt < runtimeDiscoveryRefreshMs)
@@ -609,6 +682,7 @@ async function refreshRuntimeHealth() {
       status: health.ok ? "healthy" : "unavailable",
       acceptingSubmissions: health.ok,
       lastHeartbeatAt: health.ok ? nowIso() : runtimeState.lastHeartbeatAt,
+      capabilities: health.capabilities ?? runtimeState.capabilities,
       updatedAt: nowIso(),
     };
   } catch (e) {
@@ -1144,6 +1218,8 @@ const draftKeys = new Set([
   "postProcess",
   "outputFormat",
   "globalVisualAnchorEnabled",
+  "globalSeed",
+  "seedPolicy",
   "continuityBible",
   "scenes",
 ]);
@@ -1158,6 +1234,12 @@ const draftSceneKeys = new Set([
   "transition",
   "transitionDuration",
   "carryPreviousFrame",
+  "summary",
+  "seedOverrideEnabled",
+  "continuityOverrides",
+  "startFrameGenerationId",
+  "endFrameGenerationId",
+  "acceptedVideoGenerationId",
   "firstFramePrompt",
   "lastFramePrompt",
   "narrativePurpose",
@@ -1228,7 +1310,7 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
   });
   const encoded = JSON.stringify(draft);
   if (
-    Buffer.byteLength(encoded, "utf8") > 256_000 ||
+    Buffer.byteLength(encoded, "utf8") > 512_000 ||
     /data:[^;]+;base64,/i.test(encoded)
   ) {
     throw problem(
@@ -1268,20 +1350,157 @@ async function writeStoryboardDraft(
   return draft;
 }
 
-async function enhanceStoryboard(request: StoryboardEnhancementRequest) {
-  const baseUrl = normalizeRuntimeOrigin(
-    process.env.VIDEO_DEPLOY_STUDIO_BASE_URL,
-    {
-      production: process.env.NODE_ENV === "production",
-      allowPrivate: localAuth,
-    },
+function storyboardProjectKey(uid: string, id: string) {
+  return `${uid}:${id}`;
+}
+
+function storyboardProjectTitle(value: unknown) {
+  const title = typeof value === "string" ? value.trim() : "";
+  if (!title || title.length > 120)
+    throw problem(
+      400,
+      "invalid_project_title",
+      "Project title must be 1-120 characters",
+    );
+  return title;
+}
+
+function publicStoryboardProject(
+  project: StoredStoryboardProject,
+): StoryboardProject {
+  return {
+    id: project.id,
+    title: project.title,
+    sceneCount: Array.isArray(project.form.scenes)
+      ? project.form.scenes.length
+      : 0,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+    form: project.form,
+  };
+}
+
+function publicStoryboardProjectSummary(
+  project: StoredStoryboardProject,
+): StoryboardProjectSummary {
+  const { form: _form, ...summary } = publicStoryboardProject(project);
+  return summary;
+}
+
+async function findStoryboardProject(uid: string, id: string) {
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) return undefined;
+  const key = storyboardProjectKey(uid, id);
+  const cached = storyboardProjects.get(key);
+  if (cached || localAuth) return cached;
+  adminApp();
+  const snapshot = await getFirestore()
+    .collection("storyboardProjects")
+    .doc(id)
+    .get();
+  if (!snapshot.exists) return undefined;
+  const project = snapshot.data() as StoredStoryboardProject;
+  if (project.uid !== uid) return undefined;
+  storyboardProjects.set(key, project);
+  return project;
+}
+
+async function listStoryboardProjects(uid: string) {
+  let projects: StoredStoryboardProject[];
+  if (localAuth) {
+    projects = [...storyboardProjects.values()].filter(
+      (project) => project.uid === uid,
+    );
+  } else {
+    adminApp();
+    const snapshot = await getFirestore()
+      .collection("storyboardProjects")
+      .where("uid", "==", uid)
+      .limit(100)
+      .get();
+    projects = snapshot.docs.map(
+      (document) => document.data() as StoredStoryboardProject,
+    );
+    projects.forEach((project) =>
+      storyboardProjects.set(storyboardProjectKey(uid, project.id), project),
+    );
+  }
+  return projects
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .map(publicStoryboardProjectSummary);
+}
+
+async function persistStoryboardProject(project: StoredStoryboardProject) {
+  storyboardProjects.set(
+    storyboardProjectKey(project.uid, project.id),
+    project,
   );
-  const token = process.env.VIDEO_DEPLOY_STUDIO_API_TOKEN?.trim();
+  if (!localAuth) {
+    adminApp();
+    await getFirestore()
+      .collection("storyboardProjects")
+      .doc(project.id)
+      .set(project, { merge: false });
+  }
+  return publicStoryboardProject(project);
+}
+
+async function deleteStoryboardProject(uid: string, id: string) {
+  const project = await findStoryboardProject(uid, id);
+  if (!project) throw problem(404, "project_not_found", "Project not found");
+  storyboardProjects.delete(storyboardProjectKey(uid, id));
+  if (localAuth) {
+    for (const [generationId, generation] of gens.entries()) {
+      if (
+        generation.uid === uid &&
+        String(generation.settings.projectId ?? "") === id
+      )
+        gens.delete(generationId);
+    }
+    return;
+  }
+  adminApp();
+  const firestore = getFirestore();
+  const batch = firestore.batch();
+  batch.delete(firestore.collection("storyboardProjects").doc(id));
+  batch.set(firestore.collection("projectDeletionQueue").doc(id), {
+    uid,
+    projectId: id,
+    status: "queued",
+    createdAt: nowIso(),
+  });
+  await batch.commit();
+}
+
+async function enhanceStoryboard(request: StoryboardEnhancementRequest) {
+  const useStableApi = usesIntelligensiRuntimeApi;
+  const baseUrl = useStableApi
+    ? normalizeRuntimeBaseUrl(process.env.VIDEO_RUNTIME_BASE_URL)
+    : normalizeRuntimeOrigin(process.env.VIDEO_DEPLOY_STUDIO_BASE_URL, {
+        production: process.env.NODE_ENV === "production",
+        allowPrivate: localAuth,
+      });
+  const token = (
+    useStableApi
+      ? process.env.VIDEO_RUNTIME_API_TOKEN
+      : process.env.VIDEO_DEPLOY_STUDIO_API_TOKEN
+  )?.trim();
   if (baseUrl && token) {
     return new DeployStudioStoryboardEnhancerClient({
       baseUrl,
       token,
-      path: process.env.VIDEO_DEPLOY_STUDIO_STORYBOARD_ENHANCE_PATH,
+      runtimeId: useStableApi
+        ? process.env.VIDEO_RUNTIME_ID ??
+          "longform-ltx-storyboard-studio"
+        : undefined,
+      path: useStableApi
+        ? process.env.VIDEO_RUNTIME_STORYBOARD_ENHANCE_PATH
+        : process.env.VIDEO_DEPLOY_STUDIO_STORYBOARD_ENHANCE_PATH,
+      authHeaderName: useStableApi
+        ? process.env.VIDEO_RUNTIME_AUTH_HEADER
+        : undefined,
+      authScheme: useStableApi
+        ? process.env.VIDEO_RUNTIME_AUTH_SCHEME
+        : undefined,
       timeoutMs: Number(
         process.env.VIDEO_STORYBOARD_ENHANCER_TIMEOUT_MS ?? 100_000,
       ),
@@ -1337,6 +1556,72 @@ app.get("/v1/me", auth, (req, res) =>
 app.get("/v1/credits", auth, (req, res) =>
   res.json(wallets.get(res.locals.principal.uid)),
 );
+app.get("/v1/storyboards/projects", auth, async (_req, res, next) => {
+  try {
+    res.json({
+      items: await listStoryboardProjects(res.locals.principal.uid),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+app.post("/v1/storyboards/projects", auth, async (req, res, next) => {
+  try {
+    const createdAt = nowIso();
+    const project: StoredStoryboardProject = {
+      id: nanoid(),
+      uid: res.locals.principal.uid,
+      title: storyboardProjectTitle(req.body?.title),
+      form: sanitizeStoryboardDraft(req.body?.form),
+      createdAt,
+      updatedAt: createdAt,
+    };
+    res.status(201).json(await persistStoryboardProject(project));
+  } catch (error) {
+    next(error);
+  }
+});
+app.get("/v1/storyboards/projects/:id", auth, async (req, res, next) => {
+  try {
+    const project = await findStoryboardProject(
+      res.locals.principal.uid,
+      String(req.params.id ?? ""),
+    );
+    if (!project) throw problem(404, "project_not_found", "Project not found");
+    res.json(publicStoryboardProject(project));
+  } catch (error) {
+    next(error);
+  }
+});
+app.put("/v1/storyboards/projects/:id", auth, async (req, res, next) => {
+  try {
+    const uid = res.locals.principal.uid;
+    const id = String(req.params.id ?? "");
+    const existing = await findStoryboardProject(uid, id);
+    if (!existing) throw problem(404, "project_not_found", "Project not found");
+    res.json(
+      await persistStoryboardProject({
+        ...existing,
+        title: storyboardProjectTitle(req.body?.title),
+        form: sanitizeStoryboardDraft(req.body?.form),
+        updatedAt: nowIso(),
+      }),
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+app.delete("/v1/storyboards/projects/:id", auth, async (req, res, next) => {
+  try {
+    await deleteStoryboardProject(
+      res.locals.principal.uid,
+      String(req.params.id ?? ""),
+    );
+    res.status(202).json({ status: "deletion_scheduled" });
+  } catch (error) {
+    next(error);
+  }
+});
 app.get("/v1/storyboards/draft", auth, async (_req, res, next) => {
   try {
     const draft = await readStoryboardDraft(res.locals.principal.uid);
@@ -1629,16 +1914,6 @@ app.post(
         );
       }
       validateAssetReferences(settings, p.uid);
-      const storyboard = (settings as { storyboard?: unknown })?.storyboard;
-      if (
-        Array.isArray(storyboard) &&
-        storyboard.length > MAX_STORYBOARD_SCENES
-      )
-        throw problem(
-          400,
-          "scene_limit_exceeded",
-          `Storyboard supports up to ${MAX_STORYBOARD_SCENES} scenes per generation`,
-        );
       const operationScope = (settings as { operationScope?: unknown })
         .operationScope;
       if (
@@ -1653,6 +1928,88 @@ app.post(
           "Unsupported storyboard operation",
         );
       }
+      const storyboard = (settings as { storyboard?: unknown })?.storyboard;
+      if (
+        Array.isArray(storyboard) &&
+        storyboard.length > MAX_STORYBOARD_SCENES
+      )
+        throw problem(
+          400,
+          "scene_limit_exceeded",
+          `Storyboard supports up to ${MAX_STORYBOARD_SCENES} scenes per generation`,
+        );
+      if (Array.isArray(storyboard)) {
+        if (storyboard.length < 1)
+          throw problem(
+            400,
+            "invalid_storyboard",
+            "Storyboard requires at least one scene",
+          );
+        const sceneIds = new Set<string>();
+        storyboard.forEach((entry, index) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry))
+            throw problem(
+              400,
+              "invalid_storyboard",
+              `Scene ${index + 1} is invalid`,
+            );
+          const scene = entry as Record<string, unknown>;
+          const sceneId = String(scene.id ?? "");
+          if (!/^[A-Za-z0-9_-]{1,200}$/.test(sceneId) || sceneIds.has(sceneId))
+            throw problem(
+              400,
+              "invalid_storyboard",
+              "Scene identifiers must be unique and valid",
+            );
+          sceneIds.add(sceneId);
+          const duration = Number(scene.duration);
+          const durationRequired = ["project", "scene", "assembly"].includes(
+            String(operationScope),
+          );
+          const durationProvided =
+            scene.duration !== undefined && scene.duration !== null;
+          if (
+            (durationRequired && !Number.isFinite(duration)) ||
+            (durationProvided &&
+              (!Number.isFinite(duration) || duration < 1 || duration > 8))
+          )
+            throw problem(
+              400,
+              "invalid_scene_duration",
+              "Scene duration must be 1-8 seconds",
+            );
+          if (Number.isFinite(duration)) {
+            const trimStart = Number(scene.trimStart ?? 0);
+            const trimEnd = Number(scene.trimEnd ?? duration);
+            if (
+              !Number.isFinite(trimStart) ||
+              !Number.isFinite(trimEnd) ||
+              trimStart < 0 ||
+              trimEnd > duration ||
+              trimEnd - trimStart < 0.25
+            )
+              throw problem(
+                400,
+                "invalid_scene_trim",
+                "Scene trim must preserve at least 0.25 seconds",
+              );
+          }
+        });
+      }
+      const projectId = String(
+        (settings as { projectId?: unknown }).projectId ?? "",
+      );
+      if (projectId) {
+        const project = await findStoryboardProject(p.uid, projectId);
+        if (!project)
+          throw problem(404, "project_not_found", "Project not found");
+      }
+      if (Object.prototype.hasOwnProperty.call(settings, "assemblyJobIds"))
+        throw problem(
+          400,
+          "invalid_assembly_sources",
+          "Private runtime job identifiers cannot be supplied by clients",
+        );
       if (operationScope === "start_frame" || operationScope === "end_frame") {
         if (!Array.isArray(storyboard) || storyboard.length !== 1) {
           throw problem(
@@ -1684,6 +2041,62 @@ app.post(
             "invalid_frame_prompt",
             "Frame prompt must be 8-6000 characters",
           );
+        }
+      }
+      if (operationScope === "scene") {
+        const operationSceneId = String(
+          (settings as { operationSceneId?: unknown }).operationSceneId ?? "",
+        );
+        if (
+          !Array.isArray(storyboard) ||
+          !storyboard.some(
+            (entry) =>
+              entry &&
+              typeof entry === "object" &&
+              !Array.isArray(entry) &&
+              String((entry as { id?: unknown }).id ?? "") === operationSceneId,
+          )
+        )
+          throw problem(
+            400,
+            "invalid_scene_job",
+            "Scene generation requires a selected storyboard scene",
+          );
+      }
+      if (operationScope === "assembly") {
+        const acceptedIds = (
+          settings as { acceptedSceneGenerationIds?: unknown }
+        ).acceptedSceneGenerationIds;
+        if (
+          !Array.isArray(storyboard) ||
+          !Array.isArray(acceptedIds) ||
+          acceptedIds.length !== storyboard.length
+        )
+          throw problem(
+            400,
+            "invalid_assembly_sources",
+            "Assembly requires one accepted clip for every scene",
+          );
+        for (let index = 0; index < acceptedIds.length; index += 1) {
+          const accepted = await findGeneration(
+            String(acceptedIds[index] ?? ""),
+          );
+          const expectedSceneId = String(
+            (storyboard[index] as { id?: unknown } | undefined)?.id ?? "",
+          );
+          if (
+            !accepted ||
+            accepted.uid !== p.uid ||
+            accepted.status !== "completed" ||
+            accepted.settings.operationScope !== "scene" ||
+            accepted.settings.operationSceneId !== expectedSceneId ||
+            accepted.settings.projectId !== projectId
+          )
+            throw problem(
+              400,
+              "invalid_assembly_sources",
+              "An accepted scene clip is missing, stale or not owned by you",
+            );
         }
       }
       const globalQueueLimit = Math.max(

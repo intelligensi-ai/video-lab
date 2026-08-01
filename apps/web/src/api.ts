@@ -2,6 +2,8 @@ import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
 import type {
   Generation,
   RuntimeStatus,
+  StoryboardProject,
+  StoryboardProjectSummary,
   StoryboardContinuityBible,
   StoryboardEnhancementRequest,
   StoryboardEnhancementResponse,
@@ -222,6 +224,9 @@ export interface StoryboardScenePayload {
   trimStart: number;
   trimEnd: number;
   seed: number;
+  seedOverrideEnabled?: boolean;
+  summary?: string;
+  continuityOverrides?: Partial<StoryboardContinuityBible>;
   transition: StoryboardTransition;
   transitionDuration: number;
   startFrame?: File;
@@ -233,6 +238,9 @@ export interface StoryboardScenePayload {
   continuityNotes?: string;
   promptOrigin?: "user" | "agent";
   staleReason?: string;
+  startFrameGenerationId?: string;
+  endFrameGenerationId?: string;
+  acceptedVideoGenerationId?: string;
 }
 
 export interface LongFormGenerationPayload {
@@ -248,15 +256,17 @@ export interface LongFormGenerationPayload {
   enhancePrompt: boolean;
   postProcess: string;
   outputFormat: string;
+  globalSeed: number;
+  seedPolicy: "global_locked" | "scene_overrides";
   globalVisualAnchorEnabled: boolean;
   globalVisualAnchor?: File;
-  references: SulphurReferenceInput[];
   scenes: StoryboardScenePayload[];
   continuityBible: StoryboardContinuityBible;
 }
 
 export async function generateLongFormVideo(
   payload: LongFormGenerationPayload,
+  projectId: string,
 ) {
   if (payload.scenes.length > MAX_STORYBOARD_SCENES) {
     throw new Error(
@@ -271,11 +281,6 @@ export async function generateLongFormVideo(
         storeUserAsset(scene.endFrame, `${scene.id}:endFrame`),
       ]),
     ]);
-  await Promise.all(
-    payload.references.map((reference) =>
-      storeUserAsset(reference.file, reference.role),
-    ),
-  );
   const globalVisualAnchorBase64 =
     payload.globalVisualAnchorEnabled && !globalVisualAnchorAssetId
       ? await fileToDataUrl(payload.globalVisualAnchor)
@@ -292,14 +297,14 @@ export async function generateLongFormVideo(
         : await fileToDataUrl(scene.endFrame);
       return {
         ...scene,
-        trimStart: 0,
-        trimEnd: scene.duration,
         startFrame: undefined,
         endFrame: undefined,
         startFrameBase64,
         endFrameBase64,
         startFrameAssetId,
         endFrameAssetId,
+        seed: scene.seedOverrideEnabled ? scene.seed : payload.globalSeed,
+        seedOverride: scene.seedOverrideEnabled === true,
       };
     }),
   );
@@ -324,6 +329,8 @@ export async function generateLongFormVideo(
         durationSeconds,
         quality: payload.postProcess === "none" ? "draft" : "high",
         overallGoal: payload.overallGoal,
+        projectId,
+        operationScope: "project",
         filmBible: payload.continuityBible,
         negativePrompt: payload.negativePrompt,
         resolution: payload.resolution,
@@ -335,6 +342,8 @@ export async function generateLongFormVideo(
         enhancePrompt: payload.enhancePrompt,
         postProcess: payload.postProcess,
         outputFormat: payload.outputFormat,
+        seedMode: payload.seedPolicy,
+        baseSeed: payload.globalSeed,
         globalVisualAnchorEnabled: payload.globalVisualAnchorEnabled,
         globalVisualAnchorBase64,
         globalVisualAnchorAssetId,
@@ -402,6 +411,7 @@ export async function generateStoryboardFrame(
   payload: LongFormGenerationPayload,
   scene: StoryboardScenePayload,
   edge: "start" | "end",
+  projectId: string,
 ) {
   const framePrompt =
     (edge === "start"
@@ -417,6 +427,9 @@ export async function generateStoryboardFrame(
       trimStart: 0,
       trimEnd: scene.duration,
       seed: scene.seed,
+      seedOverride: scene.seedOverrideEnabled === true,
+      summary: scene.summary,
+      continuityOverrides: scene.continuityOverrides,
       transition: scene.transition,
       transitionDuration: scene.transitionDuration,
       carryPreviousFrame: scene.carryPreviousFrame,
@@ -436,7 +449,7 @@ export async function generateStoryboardFrame(
             : "16:9",
         durationSeconds: scene.duration,
         quality: "draft",
-        projectId: `video-lab-${scene.id}`,
+        projectId,
         operationScope: edge === "start" ? "start_frame" : "end_frame",
         operationSceneId: scene.id,
         framePrompt,
@@ -444,8 +457,119 @@ export async function generateStoryboardFrame(
         filmBible: payload.continuityBible,
         resolution: payload.resolution,
         imageSteps: payload.imageSteps,
-        baseSeed: scene.seed,
+        seedMode: payload.seedPolicy,
+        baseSeed: payload.globalSeed,
         storyboard,
+      },
+      inputAssets: [],
+    }),
+  });
+}
+
+export async function generateStoryboardScene(
+  payload: LongFormGenerationPayload,
+  scene: StoryboardScenePayload,
+  projectId: string,
+) {
+  const [startFrameAssetId, endFrameAssetId] = await Promise.all([
+    storeUserAsset(scene.startFrame, `${scene.id}:startFrame`),
+    storeUserAsset(scene.endFrame, `${scene.id}:endFrame`),
+  ]);
+  const storyboard = [
+    {
+      ...scene,
+      startFrame: undefined,
+      endFrame: undefined,
+      startFrameAssetId,
+      endFrameAssetId,
+      seed: scene.seedOverrideEnabled ? scene.seed : payload.globalSeed,
+      seedOverride: scene.seedOverrideEnabled === true,
+      summary: scene.summary,
+      continuityOverrides: scene.continuityOverrides,
+    },
+  ];
+  return api<Generation>("/v1/generations", {
+    method: "POST",
+    headers: { "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify({
+      prompt: scene.prompt,
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        aspectRatio: payload.resolution.includes("x1280")
+          ? "9:16"
+          : payload.resolution.includes("1080x1080")
+            ? "1:1"
+            : "16:9",
+        durationSeconds: scene.duration,
+        quality: payload.postProcess === "none" ? "draft" : "high",
+        projectId,
+        operationScope: "scene",
+        operationSceneId: scene.id,
+        overallGoal: payload.overallGoal,
+        filmBible: payload.continuityBible,
+        negativePrompt: payload.negativePrompt,
+        resolution: payload.resolution,
+        fps: payload.fps,
+        imageSteps: payload.imageSteps,
+        guidanceScale: payload.guidanceScale,
+        startFrameStrength: payload.startFrameStrength,
+        endFrameStrength: payload.endFrameStrength,
+        enhancePrompt: payload.enhancePrompt,
+        postProcess: "none",
+        outputFormat: payload.outputFormat,
+        seedMode: payload.seedPolicy,
+        baseSeed: payload.globalSeed,
+        storyboard,
+      },
+      inputAssets: [],
+    }),
+  });
+}
+
+export async function assembleStoryboardFilm(
+  payload: LongFormGenerationPayload,
+  projectId: string,
+) {
+  const acceptedSceneGenerationIds = payload.scenes.map(
+    (scene) => scene.acceptedVideoGenerationId,
+  );
+  if (acceptedSceneGenerationIds.some((id) => !id))
+    throw new Error(
+      "Render and accept one clip for every scene before assembly.",
+    );
+  return api<Generation>("/v1/generations", {
+    method: "POST",
+    headers: { "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify({
+      prompt: payload.overallGoal,
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        aspectRatio: payload.resolution.includes("x1280")
+          ? "9:16"
+          : payload.resolution.includes("1080x1080")
+            ? "1:1"
+            : "16:9",
+        durationSeconds: payload.scenes.reduce(
+          (total, scene) => total + (scene.trimEnd - scene.trimStart),
+          0,
+        ),
+        quality: payload.postProcess === "none" ? "draft" : "high",
+        projectId,
+        operationScope: "assembly",
+        overallGoal: payload.overallGoal,
+        resolution: payload.resolution,
+        fps: payload.fps,
+        outputFormat: payload.outputFormat,
+        acceptedSceneGenerationIds,
+        storyboard: payload.scenes.map((scene) => ({
+          ...scene,
+          startFrame: undefined,
+          endFrame: undefined,
+          seed: scene.seedOverrideEnabled ? scene.seed : payload.globalSeed,
+          seedOverride: scene.seedOverrideEnabled === true,
+          summary: scene.summary,
+          continuityOverrides: scene.continuityOverrides,
+        })),
       },
       inputAssets: [],
     }),
@@ -464,6 +588,42 @@ export async function waitForGeneration(id: string, timeoutMs = 20 * 60_000) {
     "Generation is still running. You can safely return to it from your project history.",
   );
 }
+
+export const listStoryboardProjects = () =>
+  api<{ items: StoryboardProjectSummary[] }>("/v1/storyboards/projects");
+
+export const getStoryboardProject = (projectId: string) =>
+  api<StoryboardProject>(
+    `/v1/storyboards/projects/${encodeURIComponent(projectId)}`,
+  );
+
+export const createStoryboardProject = (
+  title: string,
+  form: Record<string, unknown>,
+) =>
+  api<StoryboardProject>("/v1/storyboards/projects", {
+    method: "POST",
+    body: JSON.stringify({ title, form }),
+  });
+
+export const updateStoryboardProject = (
+  projectId: string,
+  title: string,
+  form: Record<string, unknown>,
+) =>
+  api<StoryboardProject>(
+    `/v1/storyboards/projects/${encodeURIComponent(projectId)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ title, form }),
+    },
+  );
+
+export const deleteStoryboardProject = (projectId: string) =>
+  api<{ status: "deletion_scheduled" }>(
+    `/v1/storyboards/projects/${encodeURIComponent(projectId)}`,
+    { method: "DELETE" },
+  );
 
 export const getStoryboardDraft = () =>
   api<{

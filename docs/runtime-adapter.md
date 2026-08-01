@@ -5,16 +5,48 @@ operations. `MockVideoRuntimeAdapter` supports local deterministic completion
 and failure markers.
 
 `SulphurLtxRuntimeAdapter` reads endpoint, auth, path, payload, and timeout
-configuration from environment variables. Provider-specific payload mapping
-stays inside `packages/runtime-adapter` and never reaches browser contracts.
+configuration from environment variables. In production it operates in
+`intelligensi-api` mode against Deploy Studio's versioned contract. The API key
+and gateway origin remain server-only. Provider-specific payload mapping stays
+inside `packages/runtime-adapter` and never reaches browser contracts.
 
-## Automatic Deploy Studio handover
+## Stable Deploy Studio API
 
-Production runtime discovery uses the private Firestore document
-`runtimeDiscovery/current`. Deploy Studio publishes the active runtime origin,
-instance identity, heartbeat, and a short renewable lease. The Video Lab API
-polls this document, rejects expired or malformed leases, health-checks the
-runtime, and switches adapters when Deploy Studio publishes a replacement.
+The authoritative contract is
+`Deploy Studio/docs/intelligensi-runtime-api.openapi.yaml`. Configure Video Lab
+with:
+
+```text
+VIDEO_RUNTIME_PROVIDER=intelligensi-api
+VIDEO_RUNTIME_BASE_URL=https://api.intelligensi.ai
+VIDEO_RUNTIME_ID=longform-ltx-storyboard-studio
+VIDEO_RUNTIME_API_TOKEN=<server-held Intelligensi API key>
+VIDEO_RUNTIME_PAYLOAD_MODE=intelligensi-api
+VIDEO_RUNTIME_AUTH_HEADER=X-Intelligensi-API-Key
+VIDEO_RUNTIME_AUTH_SCHEME=none
+```
+
+The matching Deploy Studio secret is `VIDEO_LAB_RUNTIME_API_KEY`. This is a
+dedicated Video Lab service credential and must not be the Lambda Cloud
+`LAMBDA_API_KEY` used for instance provisioning.
+
+Video Lab calls only `/v1/runtimes/{runtimeId}/...`. Deploy Studio resolves and
+validates the renewable runtime lease, authenticates the server caller,
+normalizes worker-native jobs into the OpenAPI `Job` schema, and proxies media.
+The browser sees only Video Lab's same-origin `/api/v1/...` routes.
+
+Structured LongForm enhancement uses the same gateway and API key at
+`/v1/runtimes/{runtimeId}/storyboards/enhance`. Exact shot cardinality and the
+strict response schema are validated again in Video Lab. No paid LLM fallback
+is used.
+
+## Migration fallback
+
+The older direct-worker handover uses the private Firestore document
+`runtimeDiscovery/current`. It remains temporarily available for deployments
+that have not adopted runtime API v1.1, but it is not the production target.
+Deploy Studio publishes the active runtime origin, heartbeat, and a short
+renewable lease; Video Lab rejects expired or malformed leases.
 
 The discovery document is denied to browser clients by Firestore rules. The
 public runtime-status response contains only safe connection state and lease
@@ -38,10 +70,8 @@ the configured runtime. Production runtime origins must be HTTPS, contain no pat
 credentials, query or fragment, avoid private/link-local hosts, and match
 `VIDEO_RUNTIME_ALLOWED_ORIGINS` when configured.
 
-Storyboard enhancement is a separate server-only call to Deploy Studio's local
-Gemma endpoint. Video Lab validates exact shot cardinality, order and the strict
-response schema before returning suggestions to the browser. No paid LLM fallback
-is used.
+The private `/api/storyboards/enhance` route is also retained only as a migration
+fallback. New deployments use the versioned runtime API route above.
 
 The implementation brief for the Deploy Studio repository is
 [`deploy-studio-runtime-handover-codex.md`](./deploy-studio-runtime-handover-codex.md).

@@ -2344,6 +2344,145 @@ body:has(.lf-page) {
     white-space: normal;
   }
 }
+
+/* LongForm feature-parity project, scene-version and assembly controls. */
+.lf-projects,
+.lf-assembly {
+  display: grid;
+  gap: 0.8rem;
+}
+.lf-project-actions,
+.lf-project-fields,
+.lf-scene-copy-grid,
+.lf-seed-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+.lf-project-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.lf-project-fields label,
+.lf-scene-copy-grid label,
+.lf-continuity-note {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+  color: #59625e;
+  font-size: 0.62rem;
+  font-weight: 850;
+}
+.lf-project-fields input,
+.lf-project-fields select,
+.lf-scene-copy-grid textarea,
+.lf-continuity-note textarea {
+  width: 100%;
+  min-width: 0;
+}
+.lf-scene-copy-grid {
+  margin-top: 0.7rem;
+}
+.lf-scene-copy-grid textarea,
+.lf-continuity-note textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+.lf-capability-note {
+  margin: 0.8rem 0 0;
+  border-left: 3px solid #0aa89c;
+  border-radius: 0.65rem;
+  background: #e9f6f3;
+  padding: 0.7rem 0.8rem;
+  color: #3f5c57;
+  font-size: 0.66rem;
+  line-height: 1.55;
+}
+.lf-scene-advanced {
+  margin-top: 0.8rem;
+  border: 1px solid #1112;
+  border-radius: 0.9rem;
+  background: #faf9f6;
+  padding: 0.1rem 0.8rem 0.8rem;
+}
+.lf-scene-advanced > summary {
+  padding: 0.75rem 0;
+  color: #087f76;
+  font-size: 0.65rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+.lf-scene-advanced .lf-toggle {
+  margin-top: 0.65rem;
+}
+.lf-seed-controls {
+  align-items: end;
+  margin-top: 0.7rem;
+}
+.lf-scene-render {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-top: 0.75rem;
+  border: 1px solid #0aa89c33;
+  border-radius: 0.9rem;
+  background: #edf8f6;
+  padding: 0.75rem;
+}
+.lf-scene-render > div {
+  display: grid;
+  gap: 0.2rem;
+}
+.lf-scene-render strong {
+  color: #075f58;
+  font-size: 0.72rem;
+}
+.lf-scene-render small {
+  max-width: 34rem;
+  color: #58706b;
+  font-size: 0.6rem;
+  line-height: 1.45;
+}
+.lf-scene-video {
+  margin-top: 0.7rem;
+  overflow: hidden;
+  border-radius: 0.9rem;
+  background: #050706;
+  color: #d9e6e2;
+  text-align: center;
+}
+.lf-scene-video video {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  background: #000;
+}
+.lf-assembly > strong {
+  color: #087f76;
+  font-size: 0.75rem;
+}
+.lf-assembly > button {
+  width: 100%;
+  min-height: 44px;
+}
+@media (max-width: 760px) {
+  .lf-project-actions,
+  .lf-scene-render {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .lf-project-actions button,
+  .lf-scene-render button {
+    width: 100%;
+  }
+  .lf-project-fields,
+  .lf-scene-copy-grid,
+  .lf-seed-controls {
+    grid-template-columns: 1fr;
+  }
+}
 html,
 :root {
   min-height: 100%;

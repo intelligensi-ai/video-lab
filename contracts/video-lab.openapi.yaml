@@ -115,6 +115,74 @@ paths:
               },
           }
         "503": { description: Local enhancer unavailable }
+  /v1/storyboards/projects:
+    get:
+      operationId: listStoryboardProjects
+      summary: List the caller's private storyboard projects
+      responses:
+        "200":
+          description: Owner-scoped project summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      { $ref: "#/components/schemas/StoryboardProjectSummary" }
+    post:
+      operationId: createStoryboardProject
+      summary: Create a private storyboard project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StoryboardProjectWrite" }
+      responses:
+        "201":
+          description: Created project
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoryboardProject" }
+  /v1/storyboards/projects/{projectId}:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getStoryboardProject
+      summary: Reopen an owner-scoped storyboard project
+      responses:
+        "200":
+          description: Private project
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoryboardProject" }
+        "404": { description: Project not found or not owned by caller }
+    put:
+      operationId: updateStoryboardProject
+      summary: Save an owner-scoped storyboard project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StoryboardProjectWrite" }
+      responses:
+        "200":
+          description: Saved project
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoryboardProject" }
+        "404": { description: Project not found or not owned by caller }
+    delete:
+      operationId: deleteStoryboardProject
+      summary: Delete the project and schedule its private assets for removal
+      responses:
+        "202": { description: Project deletion scheduled }
+        "404": { description: Project not found or not owned by caller }
   /v1/storyboards/draft:
     get:
       operationId: getStoryboardDraft
@@ -477,7 +545,21 @@ components:
               },
             operationSceneId: { type: string },
             framePrompt: { type: string, maxLength: 6000 },
-            storyboard: { type: array, maxItems: 6, items: { type: object } },
+            projectId:
+              {
+                type: string,
+                description: Opaque Video Lab project identifier,
+              },
+            seedMode: { type: string, enum: [global_locked, scene_overrides] },
+            baseSeed: { type: integer, minimum: 0, maximum: 999999999 },
+            acceptedSceneGenerationIds:
+              {
+                type: array,
+                maxItems: 24,
+                description: Owner-scoped Video Lab generation identifiers; runtime job identifiers are never accepted,
+                items: { type: string },
+              },
+            storyboard: { type: array, maxItems: 24, items: { type: object } },
           },
       }
     AssetPurpose: { type: string, enum: [start_frame, end_frame, reference] }
@@ -668,7 +750,7 @@ components:
         required: [shotNumber, title, prompt, durationSeconds, generationMode],
         properties:
           {
-            shotNumber: { type: integer, minimum: 1, maximum: 6 },
+            shotNumber: { type: integer, minimum: 1, maximum: 24 },
             title: { type: string },
             prompt: { type: string },
             durationSeconds: { type: integer, minimum: 1, maximum: 8 },
@@ -685,7 +767,7 @@ components:
         properties:
           {
             masterPrompt: { type: string, minLength: 3, maxLength: 12000 },
-            shotCount: { type: integer, minimum: 1, maximum: 6 },
+            shotCount: { type: integer, minimum: 1, maximum: 24 },
             generationMode:
               { type: string, enum: [text_to_video, image_to_video, mixed] },
             continuityBible:
@@ -694,13 +776,13 @@ components:
               {
                 type: array,
                 minItems: 1,
-                maxItems: 6,
+                maxItems: 24,
                 items:
                   {
                     $ref: "#/components/schemas/StoryboardEnhancementShotInput",
                   },
               },
-            targetShotNumber: { type: integer, minimum: 1, maximum: 6 },
+            targetShotNumber: { type: integer, minimum: 1, maximum: 24 },
           },
       }
     EnhancedStoryboardShot:
@@ -748,6 +830,79 @@ components:
             model: { type: string },
           },
       }
+    StoryboardProjectSummary:
+      type: object
+      additionalProperties: false
+      required: [id, title, sceneCount, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        sceneCount: { type: integer, minimum: 1, maximum: 24 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    StoryboardProject:
+      allOf:
+        - { $ref: "#/components/schemas/StoryboardProjectSummary" }
+        - type: object
+          required: [form]
+          properties:
+            form: { type: object, additionalProperties: true }
+    StoryboardProjectWrite:
+      type: object
+      additionalProperties: false
+      required: [title, form]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        form: { type: object, additionalProperties: true }
+    RuntimeCapabilities:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          maxScenes,
+          maxSceneDurationSeconds,
+          workflowModes,
+          operationScopes,
+          postProcess,
+          startFrame,
+          endFrame,
+          generatedOpeningFrame,
+          previousFrameContinuity,
+          sceneAssembly,
+          audioPreservation,
+          styleReference,
+          subjectReference,
+        ]
+      properties:
+        maxScenes: { type: integer, minimum: 1, maximum: 24 }
+        maxSceneDurationSeconds: { type: integer, minimum: 1, maximum: 8 }
+        workflowModes:
+          {
+            type: array,
+            items: { type: string, enum: [text, start, start_end] },
+          }
+        operationScopes:
+          {
+            type: array,
+            items:
+              {
+                type: string,
+                enum: [project, scene, start_frame, end_frame, assembly],
+              },
+          }
+        postProcess:
+          {
+            type: array,
+            items: { type: string, enum: [none, interpolate, upscale, both] },
+          }
+        startFrame: { type: boolean }
+        endFrame: { type: boolean }
+        generatedOpeningFrame: { type: boolean }
+        previousFrameContinuity: { type: boolean }
+        sceneAssembly: { type: boolean }
+        audioPreservation: { type: boolean }
+        styleReference: { type: boolean }
+        subjectReference: { type: boolean }
     RuntimeStatus:
       {
         type: object,
@@ -772,6 +927,7 @@ components:
             queueDepth: { type: integer },
             updatedAt: { type: string, format: date-time },
             discovery: { $ref: "#/components/schemas/RuntimeDiscovery" },
+            capabilities: { $ref: "#/components/schemas/RuntimeCapabilities" },
           },
       }
     AdminCreditAdjustment:

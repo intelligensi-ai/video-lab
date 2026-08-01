@@ -17,6 +17,8 @@ describe("security rules", () => {
     expect(storage).toContain("match /users/{uid}/uploads/{fileName}");
     expect(storage).toContain("allow read, write: if false");
     expect(firestore).toContain("match /storyboardDrafts/{uid}");
+    expect(firestore).toContain("match /storyboardProjects/{id}");
+    expect(firestore).toContain("match /projectDeletionQueue/{id}");
     expect(firestore).toContain(
       "match /systemMetrics/{id} { allow read, write: if false; }",
     );
