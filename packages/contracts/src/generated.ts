@@ -72,6 +72,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/storyboards/enhance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enhance a master prompt into an exact, structured shot sequence with local Gemma */
+        post: operations["enhanceStoryboard"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/storyboards/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the caller's private storyboard projects */
+        get: operations["listStoryboardProjects"];
+        put?: never;
+        /** Create a private storyboard project */
+        post: operations["createStoryboardProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/storyboards/projects/{projectId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        /** Reopen an owner-scoped storyboard project */
+        get: operations["getStoryboardProject"];
+        /** Save an owner-scoped storyboard project */
+        put: operations["updateStoryboardProject"];
+        post?: never;
+        /** Delete the project and schedule its private assets for removal */
+        delete: operations["deleteStoryboardProject"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/storyboards/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the caller's private storyboard draft */
+        get: operations["getStoryboardDraft"];
+        /** Save the caller's private text and settings without embedded media */
+        put: operations["saveStoryboardDraft"];
+        post?: never;
+        /** Delete the caller's private storyboard draft */
+        delete: operations["deleteStoryboardDraft"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/assets/upload-url": {
         parameters: {
             query?: never;
@@ -83,6 +158,23 @@ export interface paths {
         put?: never;
         /** Create an asset upload target */
         post: operations["createUploadUrl"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/{assetId}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Upload image bytes through the authenticated Video Lab origin */
+        put: operations["uploadAssetContent"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -298,6 +390,17 @@ export interface components {
             runtime?: string;
             resolution?: string;
             overallGoal?: string;
+            /** @enum {string} */
+            operationScope?: "project" | "scene" | "start_frame" | "end_frame" | "assembly";
+            operationSceneId?: string;
+            framePrompt?: string;
+            /** @description Opaque Video Lab project identifier */
+            projectId?: string;
+            /** @enum {string} */
+            seedMode?: "global_locked" | "scene_overrides";
+            baseSeed?: number;
+            /** @description Owner-scoped Video Lab generation identifiers; runtime job identifiers are never accepted */
+            acceptedSceneGenerationIds?: string[];
             storyboard?: Record<string, never>[];
         } & {
             [key: string]: unknown;
@@ -318,7 +421,6 @@ export interface components {
             method: "PUT";
             /** Format: date-time */
             expiresAt: string;
-            objectPath: string;
         };
         CreateGenerationRequest: {
             prompt: string;
@@ -379,12 +481,95 @@ export interface components {
             source: "deploy-studio" | "environment" | "legacy" | "none";
             /** @enum {string} */
             state: "connected" | "waiting" | "stale" | "unavailable";
-            instanceId?: string;
             /** Format: date-time */
             leaseExpiresAt?: string;
             /** Format: date-time */
             lastPublishedAt?: string;
             message?: string;
+        };
+        StoryboardContinuityBible: {
+            characters: string;
+            wardrobe: string;
+            props: string;
+            location: string;
+            sceneGeometry: string;
+            timeOfDay: string;
+            lighting: string;
+            palette: string;
+            lens: string;
+            cameraPosition: string;
+            cameraMovement: string;
+            visualStyle: string;
+            audio: string;
+        };
+        StoryboardEnhancementShotInput: {
+            shotNumber: number;
+            title: string;
+            prompt: string;
+            durationSeconds: number;
+            /** @enum {string} */
+            generationMode: "text_to_video" | "image_to_video" | "mixed";
+        };
+        StoryboardEnhancementRequest: {
+            masterPrompt: string;
+            shotCount: number;
+            /** @enum {string} */
+            generationMode: "text_to_video" | "image_to_video" | "mixed";
+            continuityBible: components["schemas"]["StoryboardContinuityBible"];
+            shots: components["schemas"]["StoryboardEnhancementShotInput"][];
+            targetShotNumber?: number;
+        };
+        EnhancedStoryboardShot: {
+            shotNumber: number;
+            title: string;
+            narrativePurpose: string;
+            prompt: string;
+            firstFramePrompt: string;
+            lastFramePrompt: string;
+            continuityNotes: string;
+        };
+        StoryboardEnhancementResponse: {
+            polishedMasterPrompt: string;
+            continuityBible: components["schemas"]["StoryboardContinuityBible"];
+            shots: components["schemas"]["EnhancedStoryboardShot"][];
+            /** @enum {string} */
+            provider: "ollama" | "mock";
+            model: string;
+        };
+        StoryboardProjectSummary: {
+            id: string;
+            title: string;
+            sceneCount: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        StoryboardProject: components["schemas"]["StoryboardProjectSummary"] & {
+            form: {
+                [key: string]: unknown;
+            };
+        };
+        StoryboardProjectWrite: {
+            title: string;
+            form: {
+                [key: string]: unknown;
+            };
+        };
+        RuntimeCapabilities: {
+            maxScenes: number;
+            maxSceneDurationSeconds: number;
+            workflowModes: ("text" | "start" | "start_end")[];
+            operationScopes: ("project" | "scene" | "start_frame" | "end_frame" | "assembly")[];
+            postProcess: ("none" | "interpolate" | "upscale" | "both")[];
+            startFrame: boolean;
+            endFrame: boolean;
+            generatedOpeningFrame: boolean;
+            previousFrameContinuity: boolean;
+            sceneAssembly: boolean;
+            audioPreservation: boolean;
+            styleReference: boolean;
+            subjectReference: boolean;
         };
         RuntimeStatus: {
             provider: string;
@@ -399,6 +584,7 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
             discovery?: components["schemas"]["RuntimeDiscovery"];
+            capabilities?: components["schemas"]["RuntimeCapabilities"];
         };
         AdminCreditAdjustment: {
             uid: string;
@@ -516,6 +702,232 @@ export interface operations {
             };
         };
     };
+    enhanceStoryboard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StoryboardEnhancementRequest"];
+            };
+        };
+        responses: {
+            /** @description Validated storyboard enhancement */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoryboardEnhancementResponse"];
+                };
+            };
+            /** @description Local enhancer unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listStoryboardProjects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner-scoped project summaries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["StoryboardProjectSummary"][];
+                    };
+                };
+            };
+        };
+    };
+    createStoryboardProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StoryboardProjectWrite"];
+            };
+        };
+        responses: {
+            /** @description Created project */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoryboardProject"];
+                };
+            };
+        };
+    };
+    getStoryboardProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private project */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoryboardProject"];
+                };
+            };
+            /** @description Project not found or not owned by caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateStoryboardProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StoryboardProjectWrite"];
+            };
+        };
+        responses: {
+            /** @description Saved project */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoryboardProject"];
+                };
+            };
+            /** @description Project not found or not owned by caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteStoryboardProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project deletion scheduled */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Project not found or not owned by caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getStoryboardDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private draft */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    saveStoryboardDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    form: Record<string, never>;
+                };
+            };
+        };
+        responses: {
+            /** @description Saved private draft */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteStoryboardDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     createUploadUrl: {
         parameters: {
             query?: never;
@@ -537,6 +949,32 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CreateUploadUrlResponse"];
                 };
+            };
+        };
+    };
+    uploadAssetContent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "image/jpeg": string;
+                "image/png": string;
+                "image/webp": string;
+            };
+        };
+        responses: {
+            /** @description Uploaded */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

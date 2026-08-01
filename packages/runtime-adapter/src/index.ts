@@ -1,5 +1,7 @@
 declare const process: { env: Record<string, string | undefined> };
 
+export * from "./storyboardEnhancer.js";
+
 export interface RuntimeVideoSettings {
   aspectRatio: "16:9" | "9:16" | "1:1";
   durationSeconds: number;
@@ -21,7 +23,15 @@ export interface RuntimeVideoSettings {
   postProcess?: string;
   seedMode?: string;
   baseSeed?: number;
+  assemblyJobIds?: string[];
   overallGoal?: string;
+  projectId?: string;
+  operationScope?:
+    "project" | "scene" | "start_frame" | "end_frame" | "assembly";
+  operationSceneId?: string;
+  framePrompt?: string;
+  operationFrameBase64?: string;
+  filmBible?: Record<string, string>;
   globalVisualAnchorBase64?: string;
   seedFrameBase64?: string;
   endFrameBase64?: string;
@@ -36,6 +46,9 @@ export interface RuntimeVideoSettings {
     trimStart: number;
     trimEnd: number;
     seed: number;
+    seedOverride?: boolean;
+    summary?: string;
+    continuityOverrides?: Record<string, string>;
     transition: string;
     transitionDuration: number;
     carryPreviousFrame: boolean;
@@ -50,12 +63,30 @@ export interface RuntimeHealth {
   message?: string;
   worker?: string;
   ready?: boolean;
+  capabilities?: {
+    maxScenes: number;
+    maxSceneDurationSeconds: number;
+    workflowModes: Array<"text" | "start" | "start_end">;
+    operationScopes: Array<
+      "project" | "scene" | "start_frame" | "end_frame" | "assembly"
+    >;
+    postProcess: Array<"none" | "interpolate" | "upscale" | "both">;
+    startFrame: boolean;
+    endFrame: boolean;
+    generatedOpeningFrame: boolean;
+    previousFrameContinuity: boolean;
+    sceneAssembly: boolean;
+    audioPreservation: boolean;
+    styleReference: boolean;
+    subjectReference: boolean;
+  };
 }
 
 export interface RuntimeGenerationInput {
   prompt: string;
   settings: RuntimeVideoSettings;
   inputAssetUrls?: string[];
+  idempotencyKey?: string;
 }
 
 export interface RuntimeSubmission {
@@ -81,7 +112,8 @@ export interface RuntimeCancelResult {
 
 export interface RuntimeOutput {
   bytes: Uint8Array;
-  contentType: "video/mp4";
+  contentType:
+    "video/mp4" | "video/webm" | "image/png" | "image/jpeg" | "image/webp";
   durationSeconds: number;
 }
 
@@ -93,7 +125,10 @@ export interface RuntimePromptCompletion {
 
 export interface VideoRuntimeAdapter {
   healthCheck(): Promise<RuntimeHealth>;
-  completePrompt(prompt: string, mode?: "expand"): Promise<RuntimePromptCompletion>;
+  completePrompt(
+    prompt: string,
+    mode?: "expand",
+  ): Promise<RuntimePromptCompletion>;
   submitGeneration(input: RuntimeGenerationInput): Promise<RuntimeSubmission>;
   getGenerationStatus(runtimeJobId: string): Promise<RuntimeGenerationStatus>;
   cancelGeneration(runtimeJobId: string): Promise<RuntimeCancelResult>;
@@ -103,7 +138,7 @@ export interface VideoRuntimeAdapter {
 export class MockVideoRuntimeAdapter implements VideoRuntimeAdapter {
   private jobs = new Map<
     string,
-    { created: number; fail?: boolean; cancelled?: boolean }
+    { created: number; fail?: boolean; cancelled?: boolean; frame?: boolean }
   >();
 
   async healthCheck(): Promise<RuntimeHealth> {
@@ -129,6 +164,9 @@ export class MockVideoRuntimeAdapter implements VideoRuntimeAdapter {
     this.jobs.set(id, {
       created: Date.now(),
       fail: input.prompt.includes("[[TIMEOUT]]"),
+      frame:
+        input.settings.operationScope === "start_frame" ||
+        input.settings.operationScope === "end_frame",
     });
     return { runtimeJobId: id };
   }
@@ -153,20 +191,29 @@ export class MockVideoRuntimeAdapter implements VideoRuntimeAdapter {
     return { cancelled: true };
   }
 
-  async fetchOutput(): Promise<RuntimeOutput> {
+  async fetchOutput(id: string): Promise<RuntimeOutput> {
+    const frame = this.jobs.get(id)?.frame === true;
     return {
-      bytes: new TextEncoder().encode("mock mp4 placeholder"),
-      contentType: "video/mp4",
+      bytes: frame
+        ? Uint8Array.from([
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0,
+            0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73,
+            68, 65, 84, 8, 215, 99, 248, 207, 192, 240, 31, 0, 5, 0, 1, 255,
+            137, 153, 61, 29, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+          ])
+        : new TextEncoder().encode("mock mp4 placeholder"),
+      contentType: frame ? "image/png" : "video/mp4",
       durationSeconds: 4,
     };
   }
 }
 
-type RuntimePayloadMode = "sulphur" | "deploy-studio";
+type RuntimePayloadMode = "sulphur" | "deploy-studio" | "intelligensi-api";
 
 export interface SulphurLtxRuntimeConfig {
   baseUrl?: string | undefined;
   token?: string | undefined;
+  runtimeId?: string | undefined;
   healthPath?: string | undefined;
   submitPath?: string | undefined;
   statusPath?: string | undefined;
@@ -196,13 +243,36 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
   }
 
   private path(template: string, runtimeJobId: string) {
-    return template.replaceAll("{jobId}", encodeURIComponent(runtimeJobId));
+    return template
+      .replaceAll("{runtimeId}", encodeURIComponent(this.runtimeId()))
+      .replaceAll("{jobId}", encodeURIComponent(runtimeJobId));
+  }
+
+  private runtimeId() {
+    const runtimeId =
+      this.cfg.runtimeId?.trim() || "longform-ltx-storyboard-studio";
+    if (!/^[a-z0-9][a-z0-9-]{0,127}$/.test(runtimeId)) {
+      throw new Error("Intelligensi runtime id is invalid");
+    }
+    return runtimeId;
+  }
+
+  private gatewayPath(suffix: string) {
+    return `/v1/runtimes/${encodeURIComponent(this.runtimeId())}${suffix}`;
   }
 
   private defaultPath(kind: "submit" | "status" | "cancel" | "output") {
+    if (this.cfg.payloadMode === "intelligensi-api") {
+      return {
+        submit: this.gatewayPath("/preview"),
+        status: this.gatewayPath("/jobs/{jobId}"),
+        cancel: this.gatewayPath("/jobs/{jobId}/cancel"),
+        output: this.gatewayPath("/jobs/{jobId}/output"),
+      }[kind];
+    }
     if (this.cfg.payloadMode === "deploy-studio") {
       return {
-        submit: "/preview",
+        submit: "/jobs",
         status: "/jobs/{jobId}",
         cancel: "/jobs/{jobId}/cancel",
         output: "/jobs/{jobId}/output",
@@ -223,8 +293,14 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     };
     if (!this.cfg.token) return headers;
 
-    const headerName = this.cfg.authHeaderName ?? "authorization";
-    const authScheme = this.cfg.authScheme ?? "Bearer";
+    const headerName =
+      this.cfg.authHeaderName ??
+      (this.cfg.payloadMode === "intelligensi-api"
+        ? "X-Intelligensi-API-Key"
+        : "authorization");
+    const authScheme =
+      this.cfg.authScheme ??
+      (this.cfg.payloadMode === "intelligensi-api" ? "none" : "Bearer");
     headers[headerName] =
       authScheme.toLowerCase() === "none"
         ? this.cfg.token
@@ -246,6 +322,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
         ...init,
         headers: { ...this.headers(), ...init.headers },
         signal: controller.signal,
+        redirect: "error",
       });
     } finally {
       clearTimeout(timeout);
@@ -253,7 +330,10 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
   }
 
   private payload(input: RuntimeGenerationInput) {
-    if (this.cfg.payloadMode === "deploy-studio") {
+    if (
+      this.cfg.payloadMode === "deploy-studio" ||
+      this.cfg.payloadMode === "intelligensi-api"
+    ) {
       const settings = input.settings;
       const resolution = {
         "16:9": "1280x720",
@@ -290,6 +370,12 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
             ];
 
         return {
+          project_id: settings.projectId,
+          operation_scope: settings.operationScope ?? "project",
+          operation_scene_id: settings.operationSceneId,
+          frame_prompt: settings.framePrompt,
+          operation_frame_base64: settings.operationFrameBase64,
+          film_bible: settings.filmBible,
           overall_goal: settings.overallGoal ?? input.prompt,
           prompt: input.prompt,
           negative_prompt: settings.negativePrompt,
@@ -305,6 +391,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
           output_format: settings.outputFormat ?? "mp4",
           seed_mode: settings.seedMode ?? "per_scene",
           base_seed: settings.baseSeed ?? settings.seed,
+          assembly_job_ids: settings.assemblyJobIds,
           global_visual_anchor_base64: settings.globalVisualAnchorBase64,
           storyboard: storyboard.map((scene) => ({
             id: scene.id,
@@ -314,6 +401,9 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
             trim_start: scene.trimStart,
             trim_end: scene.trimEnd,
             seed: scene.seed,
+            seed_override: scene.seedOverride === true,
+            summary: scene.summary,
+            continuity_overrides: scene.continuityOverrides,
             transition: scene.transition,
             transition_duration: scene.transitionDuration,
             carry_previous_frame: scene.carryPreviousFrame,
@@ -351,7 +441,10 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
 
   async healthCheck(): Promise<RuntimeHealth> {
     const res = await this.request(
-      this.cfg.healthPath ?? "/health",
+      this.cfg.healthPath ??
+        (this.cfg.payloadMode === "intelligensi-api"
+          ? this.gatewayPath("/health")
+          : "/health"),
       {},
       Math.min(this.cfg.timeoutMs ?? 120_000, 8_000),
     );
@@ -360,23 +453,105 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       ready?: boolean;
       worker?: string;
       error?: string | null;
+      capabilities?: {
+        workflow_modes?: unknown;
+        style_reference?: unknown;
+        subject_reference?: unknown;
+      };
+      advanced_video_controls?: {
+        start_frame_supported?: unknown;
+        end_frame_supported?: unknown;
+      };
+      storyboard?: {
+        max_scenes?: unknown;
+        continuity?: unknown;
+        post_process?: unknown;
+      };
+      runtimeId?: string;
+      status?: string;
+      features?: RuntimeHealth["capabilities"];
     } = {};
     try {
       body = (await res.clone().json()) as typeof body;
     } catch {
       // Some compatible runtimes expose an empty health response.
     }
-    this.detectedWorker = body.worker;
+    this.detectedWorker =
+      body.worker ??
+      (this.cfg.payloadMode === "intelligensi-api"
+        ? body.runtimeId ?? this.runtimeId()
+        : undefined);
     const ready = body.ready ?? body.ok ?? res.ok;
+    if (this.cfg.payloadMode === "intelligensi-api") {
+      const features = body.features;
+      return {
+        ok: res.ok && ready === true && body.status === "ready",
+        provider: body.runtimeId ?? this.runtimeId(),
+        worker: body.runtimeId ?? this.runtimeId(),
+        ready,
+        capabilities: features,
+        message:
+          res.ok && ready === true
+            ? "healthy"
+            : `${res.status} ${res.statusText}`,
+      };
+    }
+    const workflowModes: Array<"text" | "start" | "start_end"> = Array.isArray(
+      body.capabilities?.workflow_modes,
+    )
+      ? body.capabilities.workflow_modes.filter(
+          (value): value is "text" | "start" | "start_end" =>
+            ["text", "start", "start_end"].includes(String(value)),
+        )
+      : ["text", "start", "start_end"];
+    const postProcess: Array<"none" | "interpolate" | "upscale" | "both"> =
+      Array.isArray(body.storyboard?.post_process)
+        ? body.storyboard.post_process.filter(
+            (value): value is "none" | "interpolate" | "upscale" | "both" =>
+              ["none", "interpolate", "upscale", "both"].includes(
+                String(value),
+              ),
+          )
+        : ["none", "interpolate", "upscale", "both"];
     return {
       ok: res.ok && ready,
       provider: body.worker ?? "sulphur-ltx",
       worker: body.worker,
       ready,
+      capabilities: {
+        maxScenes: Math.min(
+          24,
+          Math.max(1, Number(body.storyboard?.max_scenes) || 24),
+        ),
+        maxSceneDurationSeconds: 8,
+        workflowModes,
+        operationScopes: [
+          "project",
+          "scene",
+          "start_frame",
+          "end_frame",
+          "assembly",
+        ],
+        postProcess,
+        startFrame:
+          body.advanced_video_controls?.start_frame_supported !== false,
+        endFrame: body.advanced_video_controls?.end_frame_supported !== false,
+        generatedOpeningFrame: true,
+        previousFrameContinuity:
+          body.storyboard?.continuity === "actual_previous_clip_last_frame",
+        sceneAssembly: true,
+        audioPreservation: true,
+        styleReference:
+          body.capabilities?.style_reference !==
+          "not_supported_by_this_runtime",
+        subjectReference:
+          body.capabilities?.subject_reference !==
+          "not_supported_by_this_runtime",
+      },
       message:
         res.ok && ready
           ? "healthy"
-          : body.error ?? `${res.status} ${res.statusText}`,
+          : (body.error ?? `${res.status} ${res.statusText}`),
     };
   }
 
@@ -385,7 +560,9 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     mode: "expand" = "expand",
   ): Promise<RuntimePromptCompletion> {
     const res = await this.request(
-      "/prompt/complete",
+      this.cfg.payloadMode === "intelligensi-api"
+        ? this.gatewayPath("/prompt/complete")
+        : "/prompt/complete",
       {
         method: "POST",
         body: JSON.stringify({ prompt, mode }),
@@ -394,24 +571,40 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     );
     if (!res.ok)
       throw new Error(`Sulphur prompt completion failed: ${await res.text()}`);
-    const result = (await res.json()) as Partial<RuntimePromptCompletion>;
-    const completedPrompt = result.completedPrompt?.trim();
+    const result = (await res.json()) as Partial<RuntimePromptCompletion> & {
+      completion?: string;
+      runtimeId?: string;
+    };
+    const completedPrompt = (
+      result.completedPrompt ?? result.completion
+    )?.trim();
     if (!completedPrompt)
       throw new Error("Sulphur prompt completion returned empty text");
     return {
       completedPrompt,
       mode: "expand",
-      provider: result.provider ?? "sulphur-gemma",
+      provider:
+        result.provider ??
+        result.runtimeId ??
+        (this.cfg.payloadMode === "intelligensi-api"
+          ? this.runtimeId()
+          : "sulphur-gemma"),
     };
   }
 
   async submitGeneration(
     input: RuntimeGenerationInput,
   ): Promise<RuntimeSubmission> {
-    const res = await this.request(this.cfg.submitPath ?? this.defaultPath("submit"), {
-      method: "POST",
-      body: JSON.stringify(this.payload(input)),
-    });
+    const res = await this.request(
+      this.cfg.submitPath ?? this.defaultPath("submit"),
+      {
+        method: "POST",
+        headers: input.idempotencyKey
+          ? { "Idempotency-Key": input.idempotencyKey }
+          : undefined,
+        body: JSON.stringify(this.payload(input)),
+      },
+    );
 
     if (!res.ok)
       throw new Error(`Sulphur submission failed: ${await res.text()}`);
@@ -441,7 +634,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       state?: string;
       progress?: number;
       message?: string;
-      error?: string;
+      error?: string | { title?: string; detail?: string; code?: string };
     };
     const rawState = json.status ?? json.state ?? "failed";
     const map: Record<string, RuntimeGenerationStatus["state"]> = {
@@ -462,10 +655,19 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       canceled: "cancelled",
     };
 
+    const rawProgress = Number(json.progress ?? 0);
+    const progress =
+      this.cfg.payloadMode === "intelligensi-api" && rawProgress <= 1
+        ? Math.round(rawProgress * 10_000) / 100
+        : rawProgress;
+    const errorMessage =
+      typeof json.error === "string"
+        ? json.error
+        : json.error?.detail ?? json.error?.title ?? json.error?.code;
     return {
       state: map[rawState.toLowerCase()] ?? "failed",
-      progress: json.progress ?? 0,
-      message: json.message ?? json.error,
+      progress,
+      message: json.message ?? errorMessage,
     };
   }
 
@@ -484,7 +686,10 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       runtimeJobId,
     );
     let res = await this.request(path, {
-      headers: { accept: "video/mp4, application/octet-stream" },
+      headers: {
+        accept:
+          "video/mp4, video/webm, image/png, image/jpeg, image/webp, application/octet-stream",
+      },
     });
     let durationSeconds = 0;
 
@@ -513,12 +718,19 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
         const outputUrl =
           status.output_url ?? status.download_url ?? status.artifact_url;
         if (outputUrl) {
-          res = await fetch(
-            /^https?:\/\//i.test(outputUrl)
-              ? outputUrl
-              : this.url(outputUrl),
-            { headers: this.headers() },
-          );
+          const target = /^https?:\/\//i.test(outputUrl)
+            ? new URL(outputUrl)
+            : new URL(outputUrl, `${this.cfg.baseUrl!.replace(/\/+$/, "")}/`);
+          const configuredOrigin = new URL(this.cfg.baseUrl!).origin;
+          if (target.origin !== configuredOrigin) {
+            throw new Error(
+              "Runtime returned an output URL outside its configured origin",
+            );
+          }
+          res = await fetch(target, {
+            headers: this.headers(),
+            redirect: "error",
+          });
         } else if (status.output) {
           throw new Error(
             `Runtime completed but exposes only a private output path (${status.output}); add GET /jobs/{jobId}/output to the Lambda runtime`,
@@ -530,11 +742,19 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     if (!res.ok)
       throw new Error(`Sulphur output fetch failed: ${await res.text()}`);
 
-    const contentType = res.headers.get("content-type") ?? "";
-    if (
-      !contentType.includes("video/") &&
-      !contentType.includes("application/octet-stream")
-    ) {
+    const contentType = (res.headers.get("content-type") ?? "")
+      .split(";", 1)[0]
+      .trim()
+      .toLowerCase();
+    const acceptedTypes = new Set([
+      "video/mp4",
+      "video/webm",
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "application/octet-stream",
+    ]);
+    if (!acceptedTypes.has(contentType)) {
       let detail = contentType || "unknown content type";
       try {
         const json = (await res.clone().json()) as { output?: string };
@@ -543,13 +763,16 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
         // Keep the content-type detail.
       }
       throw new Error(
-        `Sulphur output endpoint did not return video bytes: ${detail}`,
+        `Sulphur output endpoint returned an unsupported artifact: ${detail}`,
       );
     }
 
     return {
       bytes: new Uint8Array(await res.arrayBuffer()),
-      contentType: "video/mp4",
+      contentType:
+        contentType === "application/octet-stream"
+          ? "video/mp4"
+          : (contentType as RuntimeOutput["contentType"]),
       durationSeconds:
         Number(res.headers.get("x-video-duration-seconds") ?? 0) ||
         durationSeconds,
@@ -566,14 +789,21 @@ function numberFromEnv(value: string | undefined) {
 function payloadModeFromEnv(
   value: string | undefined,
 ): RuntimePayloadMode | undefined {
-  return value === "deploy-studio" || value === "sulphur" ? value : undefined;
+  return value === "deploy-studio" ||
+    value === "sulphur" ||
+    value === "intelligensi-api"
+    ? value
+    : undefined;
 }
 
 export function createRuntimeFromEnv(): VideoRuntimeAdapter {
-  return process.env.VIDEO_RUNTIME_PROVIDER === "sulphur-ltx"
+  return ["sulphur-ltx", "intelligensi-api"].includes(
+    process.env.VIDEO_RUNTIME_PROVIDER ?? "",
+  )
     ? new SulphurLtxRuntimeAdapter({
         baseUrl: process.env.VIDEO_RUNTIME_BASE_URL,
         token: process.env.VIDEO_RUNTIME_API_TOKEN,
+        runtimeId: process.env.VIDEO_RUNTIME_ID,
         healthPath: process.env.VIDEO_RUNTIME_HEALTH_PATH,
         submitPath: process.env.VIDEO_RUNTIME_SUBMIT_PATH,
         statusPath: process.env.VIDEO_RUNTIME_STATUS_PATH,
@@ -581,7 +811,10 @@ export function createRuntimeFromEnv(): VideoRuntimeAdapter {
         outputPath: process.env.VIDEO_RUNTIME_OUTPUT_PATH,
         authHeaderName: process.env.VIDEO_RUNTIME_AUTH_HEADER,
         authScheme: process.env.VIDEO_RUNTIME_AUTH_SCHEME,
-        payloadMode: payloadModeFromEnv(process.env.VIDEO_RUNTIME_PAYLOAD_MODE),
+        payloadMode:
+          process.env.VIDEO_RUNTIME_PROVIDER === "intelligensi-api"
+            ? "intelligensi-api"
+            : payloadModeFromEnv(process.env.VIDEO_RUNTIME_PAYLOAD_MODE),
         timeoutMs: numberFromEnv(process.env.VIDEO_RUNTIME_TIMEOUT_MS),
       })
     : new MockVideoRuntimeAdapter();

@@ -14,34 +14,250 @@ paths:
       operationId: getHealth
       summary: Check API health
       responses:
-        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}}
+        "200":
+          {
+            description: OK,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Health" } },
+              },
+          }
   /v1/me:
     get:
       operationId: getMe
       summary: Get the current user
       responses:
-        '200': {description: Me, content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
+        "200":
+          {
+            description: Me,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Me" } },
+              },
+          }
   /v1/credits:
     get:
       operationId: getCredits
       summary: Get the current credit balance
       responses:
-        '200': {description: Credits, content: {application/json: {schema: {$ref: '#/components/schemas/CreditWallet'}}}}
+        "200":
+          {
+            description: Credits,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/CreditWallet" } },
+              },
+          }
   /v1/prompts/complete:
     post:
       operationId: completePrompt
       summary: Develop a prompt with the connected Sulphur runtime
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PromptCompletionRequest'}}}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/PromptCompletionRequest" },
+                },
+            },
+        }
       responses:
-        '200': {description: Completed prompt, content: {application/json: {schema: {$ref: '#/components/schemas/PromptCompletionResponse'}}}}
-        '503': {description: Runtime unavailable}
+        "200":
+          {
+            description: Completed prompt,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "#/components/schemas/PromptCompletionResponse" },
+                  },
+              },
+          }
+        "503": { description: Runtime unavailable }
+  /v1/storyboards/enhance:
+    post:
+      operationId: enhanceStoryboard
+      summary: Enhance a master prompt into an exact, structured shot sequence with local Gemma
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      $ref: "#/components/schemas/StoryboardEnhancementRequest",
+                    },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Validated storyboard enhancement,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      {
+                        $ref: "#/components/schemas/StoryboardEnhancementResponse",
+                      },
+                  },
+              },
+          }
+        "503": { description: Local enhancer unavailable }
+  /v1/storyboards/projects:
+    get:
+      operationId: listStoryboardProjects
+      summary: List the caller's private storyboard projects
+      responses:
+        "200":
+          description: Owner-scoped project summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      { $ref: "#/components/schemas/StoryboardProjectSummary" }
+    post:
+      operationId: createStoryboardProject
+      summary: Create a private storyboard project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StoryboardProjectWrite" }
+      responses:
+        "201":
+          description: Created project
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoryboardProject" }
+  /v1/storyboards/projects/{projectId}:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getStoryboardProject
+      summary: Reopen an owner-scoped storyboard project
+      responses:
+        "200":
+          description: Private project
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoryboardProject" }
+        "404": { description: Project not found or not owned by caller }
+    put:
+      operationId: updateStoryboardProject
+      summary: Save an owner-scoped storyboard project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StoryboardProjectWrite" }
+      responses:
+        "200":
+          description: Saved project
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoryboardProject" }
+        "404": { description: Project not found or not owned by caller }
+    delete:
+      operationId: deleteStoryboardProject
+      summary: Delete the project and schedule its private assets for removal
+      responses:
+        "202": { description: Project deletion scheduled }
+        "404": { description: Project not found or not owned by caller }
+  /v1/storyboards/draft:
+    get:
+      operationId: getStoryboardDraft
+      summary: Read the caller's private storyboard draft
+      responses: { "200": { description: Private draft } }
+    put:
+      operationId: saveStoryboardDraft
+      summary: Save the caller's private text and settings without embedded media
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      required: [form],
+                      properties: { form: { type: object } },
+                    },
+                },
+            },
+        }
+      responses: { "200": { description: Saved private draft } }
+    delete:
+      operationId: deleteStoryboardDraft
+      summary: Delete the caller's private storyboard draft
+      responses: { "204": { description: Deleted } }
   /v1/assets/upload-url:
     post:
       operationId: createUploadUrl
       summary: Create an asset upload target
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateUploadUrlRequest'}}}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/CreateUploadUrlRequest" },
+                },
+            },
+        }
       responses:
-        '201': {description: Upload target, content: {application/json: {schema: {$ref: '#/components/schemas/CreateUploadUrlResponse'}}}}
+        "201":
+          {
+            description: Upload target,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "#/components/schemas/CreateUploadUrlResponse" },
+                  },
+              },
+          }
+  /v1/assets/{assetId}/content:
+    put:
+      operationId: uploadAssetContent
+      summary: Upload image bytes through the authenticated Video Lab origin
+      parameters:
+        [{ name: assetId, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              image/jpeg: { schema: { type: string, format: binary } },
+              image/png: { schema: { type: string, format: binary } },
+              image/webp: { schema: { type: string, format: binary } },
+            },
+        }
+      responses: { "204": { description: Uploaded } }
   /v1/generations:
     post:
       operationId: createGeneration
@@ -50,89 +266,693 @@ paths:
         - name: Idempotency-Key
           in: header
           required: true
-          schema: {type: string, minLength: 8, maxLength: 128}
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateGenerationRequest'}}}}
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/CreateGenerationRequest" },
+                },
+            },
+        }
       responses:
-        '201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Generation'}}}}
-        '200': {description: Idempotent replay, content: {application/json: {schema: {$ref: '#/components/schemas/Generation'}}}}
+        "201":
+          {
+            description: Created,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Generation" } },
+              },
+          }
+        "200":
+          {
+            description: Idempotent replay,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Generation" } },
+              },
+          }
   /v1/generations/{generationId}:
     get:
       operationId: getGeneration
       summary: Get a video generation
-      parameters: [{$ref: '#/components/parameters/generationId'}]
+      parameters: [{ $ref: "#/components/parameters/generationId" }]
       responses:
-        '200': {description: Generation, content: {application/json: {schema: {$ref: '#/components/schemas/Generation'}}}}
+        "200":
+          {
+            description: Generation,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Generation" } },
+              },
+          }
   /v1/generations/{generationId}/cancel:
     post:
       operationId: cancelGeneration
       summary: Cancel a video generation
-      parameters: [{$ref: '#/components/parameters/generationId'}]
+      parameters: [{ $ref: "#/components/parameters/generationId" }]
       responses:
-        '200': {description: Cancelled, content: {application/json: {schema: {$ref: '#/components/schemas/Generation'}}}}
+        "200":
+          {
+            description: Cancelled,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Generation" } },
+              },
+          }
   /v1/gallery:
     get:
       operationId: listGallery
       summary: List gallery generations
       parameters:
-        - {name: cursor, in: query, schema: {type: string}}
-        - {name: status, in: query, schema: {$ref: '#/components/schemas/GenerationStatus'}}
-        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 50, default: 20}}
+        - { name: cursor, in: query, schema: { type: string } }
+        - {
+            name: status,
+            in: query,
+            schema: { $ref: "#/components/schemas/GenerationStatus" },
+          }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 50, default: 20 },
+          }
       responses:
-        '200': {description: Gallery, content: {application/json: {schema: {$ref: '#/components/schemas/GalleryPage'}}}}
+        "200":
+          {
+            description: Gallery,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/GalleryPage" } },
+              },
+          }
   /v1/runtime/status:
     get:
       operationId: getRuntimeStatus
       summary: Get runtime status
       responses:
-        '200': {description: Runtime, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeStatus'}}}}
+        "200":
+          {
+            description: Runtime,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/RuntimeStatus" } },
+              },
+          }
   /v1/admin/runtime/pause:
     post:
       operationId: pauseRuntime
       summary: Pause the runtime
-      responses: {'200': {description: Runtime, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeStatus'}}}}}
+      responses:
+        {
+          "200":
+            {
+              description: Runtime,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/RuntimeStatus" } },
+                },
+            },
+        }
   /v1/admin/runtime/discover:
     post:
       operationId: discoverRuntime
       summary: Force a refresh of the private Deploy Studio runtime lease
       responses:
-        '200': {description: Runtime discovery refreshed, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeStatus'}}}}
+        "200":
+          {
+            description: Runtime discovery refreshed,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/RuntimeStatus" } },
+              },
+          }
   /v1/admin/runtime/resume:
     post:
       operationId: resumeRuntime
       summary: Resume the runtime
-      responses: {'200': {description: Runtime, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeStatus'}}}}}
+      responses:
+        {
+          "200":
+            {
+              description: Runtime,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/RuntimeStatus" } },
+                },
+            },
+        }
   /v1/admin/runtime/stop:
     post:
       operationId: stopRuntime
       summary: Stop the runtime
-      responses: {'200': {description: Runtime, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeStatus'}}}}}
+      responses:
+        {
+          "200":
+            {
+              description: Runtime,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/RuntimeStatus" } },
+                },
+            },
+        }
   /v1/admin/credits/adjust:
     post:
       operationId: adjustCredits
       summary: Adjust a user credit balance
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AdminCreditAdjustment'}}}}
-      responses: {'200': {description: Credits, content: {application/json: {schema: {$ref: '#/components/schemas/CreditWallet'}}}}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/AdminCreditAdjustment" },
+                },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: Credits,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/CreditWallet" } },
+                },
+            },
+        }
 components:
   securitySchemes:
-    bearerAuth: {type: http, scheme: bearer, bearerFormat: Firebase ID token}
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: Firebase ID token }
   parameters:
-    generationId: {name: generationId, in: path, required: true, schema: {type: string}}
+    generationId:
+      { name: generationId, in: path, required: true, schema: { type: string } }
   schemas:
-    Health: {type: object, required: [ok, service, version], properties: {ok: {type: boolean}, service: {type: string}, version: {type: string}}}
-    RuntimeHealth: {type: object, required: [ok, provider], properties: {ok: {type: boolean}, provider: {type: string}, worker: {type: string}, ready: {type: boolean}, message: {type: string}}}
-    PromptCompletionRequest: {type: object, required: [prompt, mode], properties: {prompt: {type: string, minLength: 3, maxLength: 2400}, mode: {type: string, enum: [expand]}}}
-    PromptCompletionResponse: {type: object, required: [completedPrompt, mode, provider], properties: {completedPrompt: {type: string}, mode: {type: string, enum: [expand]}, provider: {type: string}}}
-    GenerationStatus: {type: string, enum: [queued, preparing, generating, uploading, completed, failed, cancelled]}
-    VideoSettings: {type: object, additionalProperties: true, required: [aspectRatio, durationSeconds, quality], properties: {aspectRatio: {type: string, enum: ['16:9','9:16','1:1']}, durationSeconds: {type: number, minimum: 0.1, maximum: 192}, quality: {type: string, enum: [draft, standard, high]}, seed: {type: integer, minimum: 0}, runtime: {type: string}, resolution: {type: string}, overallGoal: {type: string}, storyboard: {type: array, maxItems: 24, items: {type: object}}}}
-    AssetPurpose: {type: string, enum: [start_frame, end_frame, reference]}
-    CreateUploadUrlRequest: {type: object, required: [fileName, contentType, sizeBytes, purpose], properties: {fileName: {type: string, maxLength: 160}, contentType: {type: string, enum: [image/jpeg,image/png,image/webp]}, sizeBytes: {type: integer, minimum: 1, maximum: 10485760}, purpose: {$ref: '#/components/schemas/AssetPurpose'}}}
-    CreateUploadUrlResponse: {type: object, required: [assetId, uploadUrl, method, expiresAt, objectPath], properties: {assetId: {type: string}, uploadUrl: {type: string}, method: {type: string, enum: [PUT]}, expiresAt: {type: string, format: date-time}, objectPath: {type: string}}}
-    CreateGenerationRequest: {type: object, required: [prompt, settings], properties: {prompt: {type: string, minLength: 8, maxLength: 1200}, settings: {$ref: '#/components/schemas/VideoSettings'}, inputAssets: {type: array, maxItems: 3, items: {type: object, required: [assetId, purpose], properties: {assetId: {type: string}, purpose: {$ref: '#/components/schemas/AssetPurpose'}}}}}}
-    Generation: {type: object, required: [id, prompt, settings, status, creditCost, createdAt, updatedAt], properties: {id: {type: string}, prompt: {type: string}, settings: {$ref: '#/components/schemas/VideoSettings'}, inputAssets: {type: array, items: {type: object}}, status: {$ref: '#/components/schemas/GenerationStatus'}, queuePosition: {type: integer}, progress: {type: number, minimum: 0, maximum: 100}, runtimeMessage: {type: string}, creditCost: {type: integer}, output: {type: object, properties: {downloadUrl: {type: string}, thumbnailUrl: {type: string}, durationSeconds: {type: integer}}}, safeErrorMessage: {type: string}, createdAt: {type: string, format: date-time}, updatedAt: {type: string, format: date-time}}}
-    GalleryPage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Generation'}}, nextCursor: {type: string}}}
-    Me: {type: object, required: [uid, email, status, roles, termsVersion], properties: {uid: {type: string}, email: {type: string}, displayName: {type: string}, photoURL: {type: string}, status: {type: string, enum: [active, suspended]}, roles: {type: array, items: {type: string}}, termsVersion: {type: string}, trialGrantedAt: {type: string, format: date-time}}}
-    CreditWallet: {type: object, required: [uid, available, reserved, spent, updatedAt, version], properties: {uid: {type: string}, available: {type: integer}, reserved: {type: integer}, spent: {type: integer}, updatedAt: {type: string, format: date-time}, version: {type: integer}}}
-    RuntimeDiscovery: {type: object, required: [source, state], properties: {source: {type: string, enum: [deploy-studio, environment, legacy, none]}, state: {type: string, enum: [connected, waiting, stale, unavailable]}, instanceId: {type: string}, leaseExpiresAt: {type: string, format: date-time}, lastPublishedAt: {type: string, format: date-time}, message: {type: string}}}
-    RuntimeStatus: {type: object, required: [provider, status, acceptingSubmissions, killSwitch, queueDepth, updatedAt], properties: {provider: {type: string}, status: {type: string, enum: [healthy, degraded, unavailable, paused]}, acceptingSubmissions: {type: boolean}, killSwitch: {type: boolean}, lastHeartbeatAt: {type: string, format: date-time}, activeGenerationId: {type: string}, queueDepth: {type: integer}, updatedAt: {type: string, format: date-time}, discovery: {$ref: '#/components/schemas/RuntimeDiscovery'}}}
-    AdminCreditAdjustment: {type: object, required: [uid, amount, reason], properties: {uid: {type: string}, amount: {type: integer}, reason: {type: string, minLength: 3}}}
-    Problem: {type: object, required: [type, title, status, detail, code, traceId], properties: {type: {type: string}, title: {type: string}, status: {type: integer}, detail: {type: string}, code: {type: string}, traceId: {type: string}, fieldErrors: {type: array, items: {type: object}}}}
+    Health:
+      {
+        type: object,
+        required: [ok, service, version],
+        properties:
+          {
+            ok: { type: boolean },
+            service: { type: string },
+            version: { type: string },
+          },
+      }
+    RuntimeHealth:
+      {
+        type: object,
+        required: [ok, provider],
+        properties:
+          {
+            ok: { type: boolean },
+            provider: { type: string },
+            worker: { type: string },
+            ready: { type: boolean },
+            message: { type: string },
+          },
+      }
+    PromptCompletionRequest:
+      {
+        type: object,
+        required: [prompt, mode],
+        properties:
+          {
+            prompt: { type: string, minLength: 3, maxLength: 2400 },
+            mode: { type: string, enum: [expand] },
+          },
+      }
+    PromptCompletionResponse:
+      {
+        type: object,
+        required: [completedPrompt, mode, provider],
+        properties:
+          {
+            completedPrompt: { type: string },
+            mode: { type: string, enum: [expand] },
+            provider: { type: string },
+          },
+      }
+    GenerationStatus:
+      {
+        type: string,
+        enum:
+          [
+            queued,
+            preparing,
+            generating,
+            uploading,
+            completed,
+            failed,
+            cancelled,
+          ],
+      }
+    VideoSettings:
+      {
+        type: object,
+        additionalProperties: true,
+        required: [aspectRatio, durationSeconds, quality],
+        properties:
+          {
+            aspectRatio: { type: string, enum: ["16:9", "9:16", "1:1"] },
+            durationSeconds: { type: number, minimum: 0.1, maximum: 192 },
+            quality: { type: string, enum: [draft, standard, high] },
+            seed: { type: integer, minimum: 0 },
+            runtime: { type: string },
+            resolution: { type: string },
+            overallGoal: { type: string },
+            operationScope:
+              {
+                type: string,
+                enum: [project, scene, start_frame, end_frame, assembly],
+              },
+            operationSceneId: { type: string },
+            framePrompt: { type: string, maxLength: 6000 },
+            projectId:
+              {
+                type: string,
+                description: Opaque Video Lab project identifier,
+              },
+            seedMode: { type: string, enum: [global_locked, scene_overrides] },
+            baseSeed: { type: integer, minimum: 0, maximum: 999999999 },
+            acceptedSceneGenerationIds:
+              {
+                type: array,
+                maxItems: 24,
+                description: Owner-scoped Video Lab generation identifiers; runtime job identifiers are never accepted,
+                items: { type: string },
+              },
+            storyboard: { type: array, maxItems: 24, items: { type: object } },
+          },
+      }
+    AssetPurpose: { type: string, enum: [start_frame, end_frame, reference] }
+    CreateUploadUrlRequest:
+      {
+        type: object,
+        required: [fileName, contentType, sizeBytes, purpose],
+        properties:
+          {
+            fileName: { type: string, maxLength: 160 },
+            contentType:
+              { type: string, enum: [image/jpeg, image/png, image/webp] },
+            sizeBytes: { type: integer, minimum: 1, maximum: 10485760 },
+            purpose: { $ref: "#/components/schemas/AssetPurpose" },
+          },
+      }
+    CreateUploadUrlResponse:
+      {
+        type: object,
+        required: [assetId, uploadUrl, method, expiresAt],
+        properties:
+          {
+            assetId: { type: string },
+            uploadUrl: { type: string },
+            method: { type: string, enum: [PUT] },
+            expiresAt: { type: string, format: date-time },
+          },
+      }
+    CreateGenerationRequest:
+      {
+        type: object,
+        required: [prompt, settings],
+        properties:
+          {
+            prompt: { type: string, minLength: 8, maxLength: 12000 },
+            settings: { $ref: "#/components/schemas/VideoSettings" },
+            inputAssets:
+              {
+                type: array,
+                maxItems: 3,
+                items:
+                  {
+                    type: object,
+                    required: [assetId, purpose],
+                    properties:
+                      {
+                        assetId: { type: string },
+                        purpose: { $ref: "#/components/schemas/AssetPurpose" },
+                      },
+                  },
+              },
+          },
+      }
+    Generation:
+      {
+        type: object,
+        required:
+          [id, prompt, settings, status, creditCost, createdAt, updatedAt],
+        properties:
+          {
+            id: { type: string },
+            prompt: { type: string },
+            settings: { $ref: "#/components/schemas/VideoSettings" },
+            inputAssets: { type: array, items: { type: object } },
+            status: { $ref: "#/components/schemas/GenerationStatus" },
+            queuePosition: { type: integer },
+            progress: { type: number, minimum: 0, maximum: 100 },
+            runtimeMessage: { type: string },
+            creditCost: { type: integer },
+            output:
+              {
+                type: object,
+                properties:
+                  {
+                    downloadUrl: { type: string },
+                    thumbnailUrl: { type: string },
+                    durationSeconds: { type: integer },
+                  },
+              },
+            safeErrorMessage: { type: string },
+            createdAt: { type: string, format: date-time },
+            updatedAt: { type: string, format: date-time },
+          },
+      }
+    GalleryPage:
+      {
+        type: object,
+        required: [items],
+        properties:
+          {
+            items:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/Generation" },
+              },
+            nextCursor: { type: string },
+          },
+      }
+    Me:
+      {
+        type: object,
+        required: [uid, email, status, roles, termsVersion],
+        properties:
+          {
+            uid: { type: string },
+            email: { type: string },
+            displayName: { type: string },
+            photoURL: { type: string },
+            status: { type: string, enum: [active, suspended] },
+            roles: { type: array, items: { type: string } },
+            termsVersion: { type: string },
+            trialGrantedAt: { type: string, format: date-time },
+          },
+      }
+    CreditWallet:
+      {
+        type: object,
+        required: [uid, available, reserved, spent, updatedAt, version],
+        properties:
+          {
+            uid: { type: string },
+            available: { type: integer },
+            reserved: { type: integer },
+            spent: { type: integer },
+            updatedAt: { type: string, format: date-time },
+            version: { type: integer },
+          },
+      }
+    RuntimeDiscovery:
+      {
+        type: object,
+        required: [source, state],
+        properties:
+          {
+            source:
+              {
+                type: string,
+                enum: [deploy-studio, environment, legacy, none],
+              },
+            state:
+              { type: string, enum: [connected, waiting, stale, unavailable] },
+            leaseExpiresAt: { type: string, format: date-time },
+            lastPublishedAt: { type: string, format: date-time },
+            message: { type: string },
+          },
+      }
+    StoryboardContinuityBible:
+      {
+        type: object,
+        additionalProperties: false,
+        required:
+          [
+            characters,
+            wardrobe,
+            props,
+            location,
+            sceneGeometry,
+            timeOfDay,
+            lighting,
+            palette,
+            lens,
+            cameraPosition,
+            cameraMovement,
+            visualStyle,
+            audio,
+          ],
+        properties:
+          {
+            characters: { type: string },
+            wardrobe: { type: string },
+            props: { type: string },
+            location: { type: string },
+            sceneGeometry: { type: string },
+            timeOfDay: { type: string },
+            lighting: { type: string },
+            palette: { type: string },
+            lens: { type: string },
+            cameraPosition: { type: string },
+            cameraMovement: { type: string },
+            visualStyle: { type: string },
+            audio: { type: string },
+          },
+      }
+    StoryboardEnhancementShotInput:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [shotNumber, title, prompt, durationSeconds, generationMode],
+        properties:
+          {
+            shotNumber: { type: integer, minimum: 1, maximum: 24 },
+            title: { type: string },
+            prompt: { type: string },
+            durationSeconds: { type: integer, minimum: 1, maximum: 8 },
+            generationMode:
+              { type: string, enum: [text_to_video, image_to_video, mixed] },
+          },
+      }
+    StoryboardEnhancementRequest:
+      {
+        type: object,
+        additionalProperties: false,
+        required:
+          [masterPrompt, shotCount, generationMode, continuityBible, shots],
+        properties:
+          {
+            masterPrompt: { type: string, minLength: 3, maxLength: 12000 },
+            shotCount: { type: integer, minimum: 1, maximum: 24 },
+            generationMode:
+              { type: string, enum: [text_to_video, image_to_video, mixed] },
+            continuityBible:
+              { $ref: "#/components/schemas/StoryboardContinuityBible" },
+            shots:
+              {
+                type: array,
+                minItems: 1,
+                maxItems: 24,
+                items:
+                  {
+                    $ref: "#/components/schemas/StoryboardEnhancementShotInput",
+                  },
+              },
+            targetShotNumber: { type: integer, minimum: 1, maximum: 24 },
+          },
+      }
+    EnhancedStoryboardShot:
+      {
+        type: object,
+        additionalProperties: false,
+        required:
+          [
+            shotNumber,
+            title,
+            narrativePurpose,
+            prompt,
+            firstFramePrompt,
+            lastFramePrompt,
+            continuityNotes,
+          ],
+        properties:
+          {
+            shotNumber: { type: integer },
+            title: { type: string },
+            narrativePurpose: { type: string },
+            prompt: { type: string },
+            firstFramePrompt: { type: string },
+            lastFramePrompt: { type: string },
+            continuityNotes: { type: string },
+          },
+      }
+    StoryboardEnhancementResponse:
+      {
+        type: object,
+        additionalProperties: false,
+        required:
+          [polishedMasterPrompt, continuityBible, shots, provider, model],
+        properties:
+          {
+            polishedMasterPrompt: { type: string },
+            continuityBible:
+              { $ref: "#/components/schemas/StoryboardContinuityBible" },
+            shots:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/EnhancedStoryboardShot" },
+              },
+            provider: { type: string, enum: [ollama, mock] },
+            model: { type: string },
+          },
+      }
+    StoryboardProjectSummary:
+      type: object
+      additionalProperties: false
+      required: [id, title, sceneCount, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        sceneCount: { type: integer, minimum: 1, maximum: 24 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    StoryboardProject:
+      allOf:
+        - { $ref: "#/components/schemas/StoryboardProjectSummary" }
+        - type: object
+          required: [form]
+          properties:
+            form: { type: object, additionalProperties: true }
+    StoryboardProjectWrite:
+      type: object
+      additionalProperties: false
+      required: [title, form]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        form: { type: object, additionalProperties: true }
+    RuntimeCapabilities:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          maxScenes,
+          maxSceneDurationSeconds,
+          workflowModes,
+          operationScopes,
+          postProcess,
+          startFrame,
+          endFrame,
+          generatedOpeningFrame,
+          previousFrameContinuity,
+          sceneAssembly,
+          audioPreservation,
+          styleReference,
+          subjectReference,
+        ]
+      properties:
+        maxScenes: { type: integer, minimum: 1, maximum: 24 }
+        maxSceneDurationSeconds: { type: integer, minimum: 1, maximum: 8 }
+        workflowModes:
+          {
+            type: array,
+            items: { type: string, enum: [text, start, start_end] },
+          }
+        operationScopes:
+          {
+            type: array,
+            items:
+              {
+                type: string,
+                enum: [project, scene, start_frame, end_frame, assembly],
+              },
+          }
+        postProcess:
+          {
+            type: array,
+            items: { type: string, enum: [none, interpolate, upscale, both] },
+          }
+        startFrame: { type: boolean }
+        endFrame: { type: boolean }
+        generatedOpeningFrame: { type: boolean }
+        previousFrameContinuity: { type: boolean }
+        sceneAssembly: { type: boolean }
+        audioPreservation: { type: boolean }
+        styleReference: { type: boolean }
+        subjectReference: { type: boolean }
+    RuntimeStatus:
+      {
+        type: object,
+        required:
+          [
+            provider,
+            status,
+            acceptingSubmissions,
+            killSwitch,
+            queueDepth,
+            updatedAt,
+          ],
+        properties:
+          {
+            provider: { type: string },
+            status:
+              { type: string, enum: [healthy, degraded, unavailable, paused] },
+            acceptingSubmissions: { type: boolean },
+            killSwitch: { type: boolean },
+            lastHeartbeatAt: { type: string, format: date-time },
+            activeGenerationId: { type: string },
+            queueDepth: { type: integer },
+            updatedAt: { type: string, format: date-time },
+            discovery: { $ref: "#/components/schemas/RuntimeDiscovery" },
+            capabilities: { $ref: "#/components/schemas/RuntimeCapabilities" },
+          },
+      }
+    AdminCreditAdjustment:
+      {
+        type: object,
+        required: [uid, amount, reason],
+        properties:
+          {
+            uid: { type: string },
+            amount: { type: integer },
+            reason: { type: string, minLength: 3 },
+          },
+      }
+    Problem:
+      {
+        type: object,
+        required: [type, title, status, detail, code, traceId],
+        properties:
+          {
+            type: { type: string },
+            title: { type: string },
+            status: { type: integer },
+            detail: { type: string },
+            code: { type: string },
+            traceId: { type: string },
+            fieldErrors: { type: array, items: { type: object } },
+          },
+      }

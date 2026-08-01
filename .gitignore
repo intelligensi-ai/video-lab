@@ -11,4 +11,16 @@ coverage
 tests/**/*.js
 Users/
 firebase-debug.log
-/*.mp4
+*.log
+*.mp4
+*.webm
+*.mov
+*.mkv
+*.avi
+*.safetensors
+*.ckpt
+*.gguf
+models/
+outputs/
+uploads/
+runtime-data/

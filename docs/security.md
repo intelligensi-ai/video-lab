@@ -1,2 +1,7 @@
 # Security
-The browser never talks to the GPU runtime and never supplies credit cost or UID. API auth verifies bearer identity in production via Firebase middleware and enforces admin server-side. Firestore rules prevent direct credit, runtime, queue, and audit writes. Storage rules scope uploads and outputs to `users/{uid}` and enforce image content types/sizes for uploads. Secrets are environment-only.
+
+The browser never talks to the GPU runtime and never supplies identity, credit cost, entitlement or an upstream URL. Production verifies Firebase bearer identity, enforces admin roles server-side and authorises every draft, asset, generation, job and download against the caller.
+
+Runtime and Gemma endpoints/tokens are server-only. Origins must be HTTPS, origin-only and allow-listed in production; redirects and cross-origin artifact URLs are rejected. Firestore and Storage rules deny direct client access to API-managed operational data. Uploads and outputs cross the same-origin API after type, size and ownership validation.
+
+Responses use safe problem classifications and correlation IDs. Prompts, credentials and raw upstream errors are not logged. See `public-runtime-readiness.md` for the threat model and outstanding deployment controls.

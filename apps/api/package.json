@@ -1,1 +1,31 @@
-{"name":"@video-lab/api","version":"0.1.0","type":"module","main":"dist/index.js","types":"dist/index.d.ts","scripts":{"build":"tsc -p tsconfig.json","dev":"tsx watch src/server.ts"},"dependencies":{"@video-lab/contracts":"workspace:*","@video-lab/domain":"workspace:*","@video-lab/runtime-adapter":"workspace:*","@video-lab/shared":"workspace:*","ajv":"latest","ajv-formats":"latest","cors":"latest","express":"latest","firebase-admin":"latest","firebase-functions":"latest","nanoid":"latest","swagger-ui-express":"latest","yaml":"latest"},"devDependencies":{"@types/cors":"latest","@types/express":"latest","@types/swagger-ui-express":"latest"}}
+{
+  "name": "@video-lab/api",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/server.ts"
+  },
+  "dependencies": {
+    "@video-lab/contracts": "workspace:*",
+    "@video-lab/domain": "workspace:*",
+    "@video-lab/runtime-adapter": "workspace:*",
+    "@video-lab/shared": "workspace:*",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "cors": "2.8.6",
+    "express": "5.2.1",
+    "firebase-admin": "13.10.0",
+    "firebase-functions": "7.2.5",
+    "nanoid": "6.0.0",
+    "swagger-ui-express": "5.0.1",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/cors": "2.8.19",
+    "@types/express": "5.0.6",
+    "@types/swagger-ui-express": "4.1.8"
+  }
+}

@@ -1,1 +1,23 @@
-{"name":"@video-lab/web","version":"0.1.0","type":"module","scripts":{"dev":"vite --host 0.0.0.0","build":"tsc -p tsconfig.json && vite build","preview":"vite preview"},"dependencies":{"@tanstack/react-query":"latest","@video-lab/contracts":"workspace:*","firebase":"latest","react":"latest","react-dom":"latest","react-hook-form":"latest","react-router-dom":"latest","zod":"latest","vite":"latest","@vitejs/plugin-react":"latest"},"devDependencies":{}}
+{
+  "name": "@video-lab/web",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "5.101.2",
+    "@video-lab/contracts": "workspace:*",
+    "firebase": "12.16.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-hook-form": "7.81.0",
+    "react-router": "8.3.0",
+    "zod": "4.4.3",
+    "vite": "6.4.3",
+    "@vitejs/plugin-react": "4.3.4"
+  },
+  "devDependencies": {}
+}
