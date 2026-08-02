@@ -413,26 +413,34 @@ function adminApp() {
       storageBucket: firebaseStorageBucket(),
     });
 }
-function createRuntimeAdapter(baseUrl: string) {
+function createRuntimeAdapter(
+  baseUrl: string,
+  mode: "configured" | "direct-worker" = "configured",
+) {
+  const directWorker = mode === "direct-worker";
   return new SulphurLtxRuntimeAdapter({
     baseUrl,
     token: process.env.VIDEO_RUNTIME_API_TOKEN,
     runtimeId:
       process.env.VIDEO_RUNTIME_ID ?? "longform-ltx-storyboard-studio",
-    healthPath: usesIntelligensiRuntimeApi
-      ? process.env.VIDEO_RUNTIME_HEALTH_PATH
-      : process.env.VIDEO_RUNTIME_HEALTH_PATH ?? "/health",
+    healthPath: directWorker
+      ? "/health"
+      : usesIntelligensiRuntimeApi
+        ? process.env.VIDEO_RUNTIME_HEALTH_PATH
+        : process.env.VIDEO_RUNTIME_HEALTH_PATH ?? "/health",
     submitPath: process.env.VIDEO_RUNTIME_SUBMIT_PATH,
     statusPath: process.env.VIDEO_RUNTIME_STATUS_PATH,
     cancelPath: process.env.VIDEO_RUNTIME_CANCEL_PATH,
     outputPath: process.env.VIDEO_RUNTIME_OUTPUT_PATH,
     authHeaderName: process.env.VIDEO_RUNTIME_AUTH_HEADER,
     authScheme: process.env.VIDEO_RUNTIME_AUTH_SCHEME,
-    payloadMode: usesIntelligensiRuntimeApi
-      ? "intelligensi-api"
-      : process.env.VIDEO_RUNTIME_PAYLOAD_MODE === "sulphur"
-        ? "sulphur"
-        : "deploy-studio",
+    payloadMode: directWorker
+      ? "deploy-studio"
+      : usesIntelligensiRuntimeApi
+        ? "intelligensi-api"
+        : process.env.VIDEO_RUNTIME_PAYLOAD_MODE === "sulphur"
+          ? "sulphur"
+          : "deploy-studio",
     timeoutMs: Number(process.env.VIDEO_RUNTIME_TIMEOUT_MS ?? 120000),
   });
 }
@@ -441,7 +449,10 @@ async function connectRuntimeEndpoint(
   source: RuntimeDiscovery["source"],
   message: string,
 ) {
-  const adapter = createRuntimeAdapter(baseUrl);
+  const adapter = createRuntimeAdapter(
+    baseUrl,
+    source === "environment" ? "direct-worker" : "configured",
+  );
   let health: Awaited<ReturnType<SulphurLtxRuntimeAdapter["healthCheck"]>>;
   try {
     health = await adapter.healthCheck();
@@ -496,10 +507,11 @@ function discoveryDate(value: unknown) {
 function useRuntimeEndpoint(
   baseUrl: string,
   source: RuntimeDiscovery["source"],
+  mode: "configured" | "direct-worker" = "configured",
 ) {
   if (runtimeBaseUrl !== baseUrl) {
     runtimeBaseUrl = baseUrl;
-    runtime = createRuntimeAdapter(baseUrl);
+    runtime = createRuntimeAdapter(baseUrl, mode);
     log("runtime_endpoint_discovered", { source });
   }
   if (runtimeState.provider === "mock")
@@ -525,6 +537,24 @@ function clearRuntimeEndpoint(discovery: RuntimeDiscovery) {
 async function loadRuntimeDiscovery(force = false) {
   if (usesIntelligensiRuntimeApi && runtimeBaseUrl) {
     runtimeDiscoveryCheckedAt = Date.now();
+    if (manualRuntimeBaseUrl) {
+      useRuntimeEndpoint(manualRuntimeBaseUrl, "environment", "direct-worker");
+      runtimeDiscovery = {
+        source: "environment",
+        state: "connected",
+        baseUrl: manualRuntimeBaseUrl,
+        message:
+          "Manual admin runtime connection is active until Deploy Studio publishes a healthy handover",
+      };
+      if (runtimeState.status !== "paused" && !runtimeState.killSwitch)
+        runtimeState = {
+          ...runtimeState,
+          status: "healthy",
+          acceptingSubmissions: true,
+          updatedAt: nowIso(),
+        };
+      return;
+    }
     const discovered =
       runtime instanceof SulphurLtxRuntimeAdapter
         ? await runtime.discoverReadyRuntime("storyboard-enhance")
@@ -581,7 +611,7 @@ async function loadRuntimeDiscovery(force = false) {
       };
       if (status !== "ready") {
         if (manualRuntimeBaseUrl) {
-          useRuntimeEndpoint(manualRuntimeBaseUrl, "environment");
+          useRuntimeEndpoint(manualRuntimeBaseUrl, "environment", "direct-worker");
           runtimeDiscovery = {
             source: "environment",
             state: "connected",
@@ -600,7 +630,7 @@ async function loadRuntimeDiscovery(force = false) {
       }
       if (!baseUrl) {
         if (manualRuntimeBaseUrl) {
-          useRuntimeEndpoint(manualRuntimeBaseUrl, "environment");
+          useRuntimeEndpoint(manualRuntimeBaseUrl, "environment", "direct-worker");
           runtimeDiscovery = {
             source: "environment",
             state: "connected",
@@ -732,7 +762,7 @@ async function ensureRuntimeConfiguration() {
         runtimeState = { ...runtimeState, killSwitch: false };
       }
       if (manualRuntimeBaseUrl && runtimeState.status !== "paused") {
-        useRuntimeEndpoint(manualRuntimeBaseUrl, "environment");
+        useRuntimeEndpoint(manualRuntimeBaseUrl, "environment", "direct-worker");
         runtimeDiscovery = {
           source: "environment",
           state: "connected",
