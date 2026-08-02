@@ -611,14 +611,6 @@ export default function LongFormStoryboardStudio() {
       setProjectBusy(false);
     }
   };
-  const totalSeconds = useMemo(
-    () => form.scenes.reduce((sum, scene) => sum + scene.duration, 0),
-    [form.scenes],
-  );
-  const plannedTotalFrames = useMemo(
-    () => Math.max(0, Math.round(totalSeconds * form.fps)),
-    [form.fps, totalSeconds],
-  );
   const updateScene = (index: number, patch: Partial<StoryboardScenePayload>) =>
     setForm((current) => ({
       ...current,
@@ -1473,7 +1465,6 @@ export default function LongFormStoryboardStudio() {
           <Preview
             generation={currentGeneration}
             loading={isRendering}
-            plannedTotalFrames={plannedTotalFrames}
             submissionError={mutation.error?.message}
             canGenerate={!invalid && !mutation.isPending}
             generateLabel={
@@ -2420,7 +2411,6 @@ function formatElapsed(createdAt?: string, now = Date.now()) {
 function Preview({
   generation,
   loading,
-  plannedTotalFrames,
   submissionError,
   canGenerate,
   generateLabel,
@@ -2431,7 +2421,6 @@ function Preview({
 }: {
   generation?: Generation;
   loading: boolean;
-  plannedTotalFrames: number;
   submissionError?: string;
   canGenerate: boolean;
   generateLabel: string;
@@ -2448,22 +2437,23 @@ function Preview({
     return () => window.clearInterval(timer);
   }, [loading]);
   const progress = clampProgress(generation?.progress, generation?.status);
-  const durationSeconds = Number(
-    generation?.settings.durationSeconds ??
-      generation?.output?.durationSeconds ??
-      0,
-  );
-  const fps = Number(
-    generation?.settings.fps ?? generation?.settings.frameRate ?? 24,
-  );
-  const generationTotalFrames = Math.max(0, Math.round(durationSeconds * fps));
-  const totalFrames = loading ? plannedTotalFrames : generationTotalFrames;
-  const renderedFrames = totalFrames
-    ? Math.min(totalFrames, Math.round((progress / 100) * totalFrames))
-    : 0;
   const statusLabel = generation?.status
     ? generation.status.replace("_", " ")
     : "Ready";
+  const progressLabel =
+    generation?.status === "completed"
+      ? "Render complete"
+      : generation?.status === "queued"
+        ? "Waiting for worker"
+        : generation?.status === "preparing"
+          ? "Preparing render"
+          : generation?.status === "generating"
+            ? "Rendering with runtime"
+            : generation?.status === "uploading"
+              ? "Finalising output"
+              : loading
+                ? "Rendering with runtime"
+                : "Ready";
   const queueLabel = generation?.queuePosition
     ? `Queue position ${generation.queuePosition}`
     : "Waiting for worker";
@@ -2523,19 +2513,11 @@ function Preview({
         {loading && (
           <div
             className="lf-rendering"
-            data-help="Live render feedback. The frame counter is estimated from total storyboard seconds, frame rate and generation progress."
+            data-help="Live render feedback from the runtime."
           >
             <div>
-              <strong>
-                {progress ? `${progress}% rendered` : "Starting render"}
-              </strong>
+              <strong>{progressLabel}</strong>
               <small>{activityLabel}</small>
-              {totalFrames > 0 && (
-                <b>
-                  Frame {renderedFrames.toLocaleString()} /{" "}
-                  {totalFrames.toLocaleString()}
-                </b>
-              )}
             </div>
           </div>
         )}
@@ -2601,12 +2583,8 @@ function Preview({
       </p>
       <div className="lf-stats">
         <span data-help="Shows whether the selected film is waiting, rendering or complete.">
-          <b>⌁ Progress</b>
-          {generation ? `${progress}% ${statusLabel}` : "—"}
-        </span>
-        <span data-help="Estimated frames rendered from the current runtime progress.">
-          <b>▥ Frames</b>
-          {totalFrames ? `${renderedFrames}/${totalFrames}` : "—"}
+          <b>⌁ Status</b>
+          {generation ? statusLabel : "—"}
         </span>
         <span data-help="Time since this generation was submitted.">
           <b>◷ Elapsed</b>
@@ -2615,8 +2593,8 @@ function Preview({
       </div>
       <div
         className="lf-progress"
-        data-help="Visual progress bar for the selected render."
-        aria-label={`${progress}% render progress`}
+        data-help="Approximate runtime progress indicator."
+        aria-label={`${progress}% approximate render progress`}
       >
         <span style={{ width: `${progress}%` }} />
       </div>
