@@ -78,6 +78,7 @@ describe("Deploy Studio runtime API compatibility", () => {
       name: "X-Intelligensi-API-Key",
     });
     for (const endpoint of [
+      "/v1/runtimes",
       "/v1/runtimes/{runtimeId}",
       "/v1/runtimes/{runtimeId}/health",
       "/v1/runtimes/{runtimeId}/preview",

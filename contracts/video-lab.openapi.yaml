@@ -628,6 +628,18 @@ components:
             queuePosition: { type: integer },
             progress: { type: number, minimum: 0, maximum: 100 },
             runtimeMessage: { type: string },
+            runtimeProgress:
+              {
+                type: object,
+                properties:
+                  {
+                    framesRendered: { type: integer, minimum: 0 },
+                    totalFrames: { type: integer, minimum: 0 },
+                    currentScene: { type: integer, minimum: 0 },
+                    totalScenes: { type: integer, minimum: 0 },
+                    stage: { type: string },
+                  },
+              },
             creditCost: { type: integer },
             output:
               {

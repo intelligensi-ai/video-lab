@@ -26,6 +26,13 @@ export interface Generation {
   queuePosition?: number;
   progress?: number;
   runtimeMessage?: string;
+  runtimeProgress?: {
+    framesRendered?: number;
+    totalFrames?: number;
+    currentScene?: number;
+    totalScenes?: number;
+    stage?: string;
+  };
   creditCost: number;
   output?: {
     downloadUrl?: string;

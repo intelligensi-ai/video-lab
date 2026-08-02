@@ -83,8 +83,20 @@ describe("SulphurLtxRuntimeAdapter", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
-        calls.push({ url, init });
-        if (url.endsWith("/health")) {
+        const requestUrl = String(url);
+        calls.push({ url: requestUrl, init });
+        if (requestUrl.includes("/v1/runtimes?")) {
+          return Response.json({
+            runtimes: [
+              {
+                runtimeId: "longform-ltx-storyboard-studio",
+                status: "ready",
+                ready: true,
+              },
+            ],
+          });
+        }
+        if (requestUrl.endsWith("/health")) {
           return Response.json({
             ok: true,
             ready: true,
@@ -390,8 +402,20 @@ describe("SulphurLtxRuntimeAdapter", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
-        calls.push({ url, init });
-        if (url.endsWith("/health")) {
+        const requestUrl = String(url);
+        calls.push({ url: requestUrl, init });
+        if (requestUrl.includes("/v1/runtimes?")) {
+          return Response.json({
+            runtimes: [
+              {
+                runtimeId: "longform-ltx-storyboard-studio",
+                status: "ready",
+                ready: true,
+              },
+            ],
+          });
+        }
+        if (requestUrl.endsWith("/health")) {
           return Response.json({
             runtimeId: "longform-ltx-storyboard-studio",
             status: "ready",
@@ -420,7 +444,7 @@ describe("SulphurLtxRuntimeAdapter", () => {
             },
           });
         }
-        if (url.endsWith("/prompt/complete")) {
+        if (requestUrl.endsWith("/prompt/complete")) {
           return Response.json({
             runtimeId: "longform-ltx-storyboard-studio",
             mode: "expand",
@@ -428,7 +452,7 @@ describe("SulphurLtxRuntimeAdapter", () => {
             model: "gemma-local",
           });
         }
-        if (url.endsWith("/preview")) {
+        if (requestUrl.endsWith("/preview")) {
           return Response.json(
             {
               id: "gateway-job",
@@ -451,6 +475,11 @@ describe("SulphurLtxRuntimeAdapter", () => {
           runtimeId: "longform-ltx-storyboard-studio",
           status: "running",
           progress: 0.55,
+          framesRendered: 81,
+          totalFrames: 192,
+          currentScene: 2,
+          totalScenes: 4,
+          stage: "generating_scene",
           createdAt: "2026-08-01T12:00:00.000Z",
           links: {
             self: "/v1/runtimes/longform-ltx-storyboard-studio/jobs/gateway-job",
@@ -468,6 +497,7 @@ describe("SulphurLtxRuntimeAdapter", () => {
       payloadMode: "intelligensi-api",
     });
 
+    const discovered = await adapter.discoverReadyRuntime();
     const health = await adapter.healthCheck();
     const completion = await adapter.completePrompt("A simple idea");
     const submission = await adapter.submitGeneration({
@@ -481,6 +511,11 @@ describe("SulphurLtxRuntimeAdapter", () => {
     });
     const status = await adapter.getGenerationStatus(submission.runtimeJobId);
 
+    expect(discovered).toMatchObject({
+      runtimeId: "longform-ltx-storyboard-studio",
+      status: "ready",
+      ready: true,
+    });
     expect(health).toMatchObject({
       ok: true,
       provider: "longform-ltx-storyboard-studio",
@@ -490,8 +525,17 @@ describe("SulphurLtxRuntimeAdapter", () => {
       completedPrompt: "A richer cinematic prompt.",
       provider: "longform-ltx-storyboard-studio",
     });
-    expect(status).toMatchObject({ state: "generating", progress: 55 });
+    expect(status).toMatchObject({
+      state: "generating",
+      progress: 55,
+      framesRendered: 81,
+      totalFrames: 192,
+      currentScene: 2,
+      totalScenes: 4,
+      stage: "generating_scene",
+    });
     expect(calls.map((call) => call.url)).toEqual([
+      "https://api.intelligensi.ai/v1/runtimes?capability=storyboard-enhance&ready=true",
       "https://api.intelligensi.ai/v1/runtimes/longform-ltx-storyboard-studio/health",
       "https://api.intelligensi.ai/v1/runtimes/longform-ltx-storyboard-studio/prompt/complete",
       "https://api.intelligensi.ai/v1/runtimes/longform-ltx-storyboard-studio/preview",

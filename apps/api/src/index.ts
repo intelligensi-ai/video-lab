@@ -525,10 +525,31 @@ function clearRuntimeEndpoint(discovery: RuntimeDiscovery) {
 async function loadRuntimeDiscovery(force = false) {
   if (usesIntelligensiRuntimeApi && runtimeBaseUrl) {
     runtimeDiscoveryCheckedAt = Date.now();
+    const discovered =
+      runtime instanceof SulphurLtxRuntimeAdapter
+        ? await runtime.discoverReadyRuntime("storyboard-enhance")
+        : undefined;
+    if (!discovered) {
+      runtimeDiscovery = {
+        source: "deploy-studio",
+        state: "waiting",
+        message:
+          "Waiting for Deploy Studio to report a ready LongForm runtime through the gateway",
+      };
+      if (runtimeState.status !== "paused" && !runtimeState.killSwitch)
+        runtimeState = {
+          ...runtimeState,
+          status: "unavailable",
+          acceptingSubmissions: false,
+          updatedAt: nowIso(),
+        };
+      return;
+    }
+    useRuntimeEndpoint(runtimeBaseUrl, "deploy-studio");
     runtimeDiscovery = {
       source: "deploy-studio",
       state: "connected",
-      message: "Connected through the stable Deploy Studio runtime API",
+      message: `Connected through Deploy Studio runtime API (${discovered.runtimeId})`,
     };
     return;
   }
@@ -756,7 +777,8 @@ async function refreshRuntimeHealth() {
     !runtimeBaseUrl ||
     runtimeState.provider === "mock" ||
     runtimeState.killSwitch ||
-    runtimeState.status === "paused"
+    runtimeState.status === "paused" ||
+    (usesIntelligensiRuntimeApi && runtimeDiscovery.state !== "connected")
   )
     return;
   try {
@@ -791,6 +813,18 @@ function publicRuntimeStatus(): RuntimeStatus {
       : runtimeState.queueDepth,
     discovery: runtimeDiscovery,
   };
+}
+function publicRuntimeProgress(st: Awaited<ReturnType<typeof runtime.getGenerationStatus>>) {
+  const runtimeProgress = {
+    ...(typeof st.framesRendered === "number"
+      ? { framesRendered: st.framesRendered }
+      : {}),
+    ...(typeof st.totalFrames === "number" ? { totalFrames: st.totalFrames } : {}),
+    ...(typeof st.currentScene === "number" ? { currentScene: st.currentScene } : {}),
+    ...(typeof st.totalScenes === "number" ? { totalScenes: st.totalScenes } : {}),
+    ...(typeof st.stage === "string" ? { stage: st.stage } : {}),
+  };
+  return Object.keys(runtimeProgress).length ? runtimeProgress : undefined;
 }
 async function persistGeneration(g: StoredGeneration) {
   if (localAuth) return;
@@ -2552,6 +2586,7 @@ async function processQueueItem(workerId = "local-worker") {
         status: st.state,
         progress: Math.max(0, Math.min(100, st.progress)),
         runtimeMessage: st.message,
+        runtimeProgress: publicRuntimeProgress(st),
         updatedAt: nowIso(),
         runtimeJobId: sub.runtimeJobId,
       };
@@ -2600,6 +2635,7 @@ async function processQueueItem(workerId = "local-worker") {
         status: "completed",
         progress: 100,
         runtimeMessage: undefined,
+        runtimeProgress: undefined,
         output: {
           downloadUrl: `/api/v1/generations/${g.id}/download`,
           durationSeconds: out.durationSeconds,

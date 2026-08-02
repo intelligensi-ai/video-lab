@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
 import type {
@@ -39,6 +39,7 @@ import {
   loadStoryboardSession,
   saveStoryboardSession,
 } from "./storyboardSession.js";
+import { runtimeProgressCounter } from "./runtimeProgress.js";
 
 type LongFormReference = {
   label: string;
@@ -611,6 +612,10 @@ export default function LongFormStoryboardStudio() {
       setProjectBusy(false);
     }
   };
+  const totalSeconds = useMemo(
+    () => form.scenes.reduce((sum, scene) => sum + scene.duration, 0),
+    [form.scenes],
+  );
   const updateScene = (index: number, patch: Partial<StoryboardScenePayload>) =>
     setForm((current) => ({
       ...current,
@@ -2462,6 +2467,7 @@ function Preview({
     (generation?.status === "queued"
       ? queueLabel
       : `${statusLabel} with runtime`);
+  const runtimeCounter = runtimeProgressCounter(generation);
 
   return (
     <section className="lf-preview lf-panel">
@@ -2518,6 +2524,7 @@ function Preview({
             <div>
               <strong>{progressLabel}</strong>
               <small>{activityLabel}</small>
+              {runtimeCounter && <b>{runtimeCounter}</b>}
             </div>
           </div>
         )}
@@ -2585,6 +2592,10 @@ function Preview({
         <span data-help="Shows whether the selected film is waiting, rendering or complete.">
           <b>⌁ Status</b>
           {generation ? statusLabel : "—"}
+        </span>
+        <span data-help="Real frame or scene progress reported by the runtime when available.">
+          <b>▥ Runtime</b>
+          {runtimeCounter ?? "—"}
         </span>
         <span data-help="Time since this generation was submitted.">
           <b>◷ Elapsed</b>

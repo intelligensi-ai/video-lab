@@ -2,6 +2,13 @@ declare const process: { env: Record<string, string | undefined> };
 
 export * from "./storyboardEnhancer.js";
 
+function optionalPositiveInteger<K extends string>(key: K, value: unknown) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0
+    ? ({ [key]: number } as Record<K, number>)
+    : {};
+}
+
 export interface RuntimeVideoSettings {
   aspectRatio: "16:9" | "9:16" | "1:1";
   durationSeconds: number;
@@ -104,6 +111,11 @@ export interface RuntimeGenerationStatus {
     | "cancelled";
   progress: number;
   message?: string | undefined;
+  framesRendered?: number;
+  totalFrames?: number;
+  currentScene?: number;
+  totalScenes?: number;
+  stage?: string;
 }
 
 export interface RuntimeCancelResult {
@@ -121,6 +133,12 @@ export interface RuntimePromptCompletion {
   completedPrompt: string;
   mode: "expand";
   provider: string;
+}
+
+export interface RuntimeGatewayRuntime {
+  runtimeId: string;
+  status?: string;
+  ready?: boolean;
 }
 
 export interface VideoRuntimeAdapter {
@@ -592,6 +610,29 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     };
   }
 
+  async discoverReadyRuntime(
+    capability = "storyboard-enhance",
+  ): Promise<RuntimeGatewayRuntime | undefined> {
+    if (this.cfg.payloadMode !== "intelligensi-api") return undefined;
+    const path = `/v1/runtimes?capability=${encodeURIComponent(capability)}&ready=true`;
+    const res = await this.request(path, {}, Math.min(this.cfg.timeoutMs ?? 120_000, 8_000));
+    if (!res.ok)
+      throw new Error(`Deploy Studio runtime discovery failed: ${await res.text()}`);
+    const json = (await res.json()) as {
+      runtimes?: Array<{ runtimeId?: string; id?: string; status?: string; ready?: boolean }>;
+      items?: Array<{ runtimeId?: string; id?: string; status?: string; ready?: boolean }>;
+    } | Array<{ runtimeId?: string; id?: string; status?: string; ready?: boolean }>;
+    const runtimes = Array.isArray(json) ? json : (json.runtimes ?? json.items ?? []);
+    const expectedRuntimeId = this.runtimeId();
+    const match = runtimes.find((runtime) => (runtime.runtimeId ?? runtime.id) === expectedRuntimeId);
+    if (!match) return undefined;
+    return {
+      runtimeId: match.runtimeId ?? match.id ?? expectedRuntimeId,
+      status: match.status,
+      ready: match.ready,
+    };
+  }
+
   async submitGeneration(
     input: RuntimeGenerationInput,
   ): Promise<RuntimeSubmission> {
@@ -634,6 +675,11 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       state?: string;
       progress?: number;
       message?: string;
+      framesRendered?: number;
+      totalFrames?: number;
+      currentScene?: number;
+      totalScenes?: number;
+      stage?: string;
       error?: string | { title?: string; detail?: string; code?: string };
     };
     const rawState = json.status ?? json.state ?? "failed";
@@ -668,6 +714,13 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       state: map[rawState.toLowerCase()] ?? "failed",
       progress,
       message: json.message ?? errorMessage,
+      ...optionalPositiveInteger("framesRendered", json.framesRendered),
+      ...optionalPositiveInteger("totalFrames", json.totalFrames),
+      ...optionalPositiveInteger("currentScene", json.currentScene),
+      ...optionalPositiveInteger("totalScenes", json.totalScenes),
+      ...(typeof json.stage === "string" && json.stage.trim()
+        ? { stage: json.stage.trim() }
+        : {}),
     };
   }
 

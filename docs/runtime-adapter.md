@@ -35,10 +35,24 @@ validates the renewable runtime lease, authenticates the server caller,
 normalizes worker-native jobs into the OpenAPI `Job` schema, and proxies media.
 The browser sees only Video Lab's same-origin `/api/v1/...` routes.
 
+Before marking the runtime connected, Video Lab asks the gateway for a ready
+LongForm runtime with:
+
+```text
+GET /v1/runtimes?capability=storyboard-enhance&ready=true
+```
+
+The runtime id must match `VIDEO_RUNTIME_ID`.
+
 Structured LongForm enhancement uses the same gateway and API key at
 `/v1/runtimes/{runtimeId}/storyboards/enhance`. Exact shot cardinality and the
 strict response schema are validated again in Video Lab. No paid LLM fallback
 is used.
+
+Job polling remains backward compatible with the original `status`, `progress`
+and `message` fields. Runtime API v1.1 may also return `state`, `stage`,
+`framesRendered`, `totalFrames`, `currentScene` and `totalScenes`; Video Lab
+persists and displays these counters only when Deploy Studio returns them.
 
 ## Migration fallback
 
