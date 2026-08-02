@@ -86,6 +86,7 @@ export interface RuntimeStatus {
   discovery?: {
     source: "deploy-studio" | "environment" | "legacy" | "none";
     state: "connected" | "waiting" | "stale" | "unavailable";
+    baseUrl?: string;
     leaseExpiresAt?: string;
     lastPublishedAt?: string;
     message?: string;

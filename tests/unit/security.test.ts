@@ -34,6 +34,27 @@ describe("runtime origin security", () => {
     ).toBe("https://runtime.example");
   });
 
+  it("allows public HTTP runtime origins only when explicitly opted in", () => {
+    expect(
+      normalizeRuntimeOrigin("209.20.158.174", {
+        production: true,
+        allowHttpInProduction: true,
+      }),
+    ).toBe("http://209.20.158.174");
+    expect(
+      normalizeRuntimeOrigin("http://209.20.158.174:7860", {
+        production: true,
+        allowHttpInProduction: true,
+      }),
+    ).toBe("http://209.20.158.174:7860");
+    expect(
+      normalizeRuntimeOrigin("http://10.0.0.8", {
+        production: true,
+        allowHttpInProduction: true,
+      }),
+    ).toBeUndefined();
+  });
+
   it("enforces an explicit origin allow-list when configured", () => {
     expect(
       runtimeOriginAllowed("https://runtime.example", {

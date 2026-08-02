@@ -59,11 +59,18 @@ export function isPrivateRuntimeHostname(hostname: string): boolean {
 
 export function normalizeRuntimeOrigin(
   value: unknown,
-  options: { production?: boolean; allowPrivate?: boolean } = {},
+  options: {
+    production?: boolean;
+    allowPrivate?: boolean;
+    allowHttpInProduction?: boolean;
+  } = {},
 ): string | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
   try {
-    const url = new URL(value.trim());
+    const trimmed = value.trim();
+    const url = new URL(
+      /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`,
+    );
     if (!["http:", "https:"].includes(url.protocol)) return undefined;
     if (
       url.username ||
@@ -74,7 +81,12 @@ export function normalizeRuntimeOrigin(
     ) {
       return undefined;
     }
-    if (options.production && url.protocol !== "https:") return undefined;
+    if (
+      options.production &&
+      url.protocol !== "https:" &&
+      !options.allowHttpInProduction
+    )
+      return undefined;
     if (!options.allowPrivate && isPrivateRuntimeHostname(url.hostname))
       return undefined;
     return url.origin;
@@ -92,6 +104,7 @@ export function runtimeOriginAllowed(
     .map((entry) =>
       normalizeRuntimeOrigin(entry, {
         production: env.NODE_ENV === "production",
+        allowHttpInProduction: true,
       }),
     )
     .filter((entry): entry is string => Boolean(entry));

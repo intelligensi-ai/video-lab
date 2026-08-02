@@ -1494,7 +1494,6 @@ function Account() {
   );
 }
 function Admin() {
-  const isLocalDevelopment = import.meta.env.DEV;
   const [manualRuntimeOrigin, setManualRuntimeOrigin] = useState(
     "http://209.20.158.84:7860",
   );
@@ -1519,6 +1518,14 @@ function Admin() {
     onSuccess: () => r.refetch(),
   });
   const discovery = r.data?.discovery;
+  useEffect(() => {
+    if (
+      !connectManual.isPending &&
+      discovery?.source === "environment" &&
+      discovery.baseUrl
+    )
+      setManualRuntimeOrigin(discovery.baseUrl);
+  }, [connectManual.isPending, discovery?.baseUrl, discovery?.source]);
   const connected =
     r.data?.status === "healthy" && discovery?.state === "connected";
   return (
@@ -1621,20 +1628,18 @@ function Admin() {
               : "Manual runtime connection failed"}
           </p>
         )}
-        {isLocalDevelopment && (
-          <>
-            <button onClick={() => call("/v1/admin/runtime/pause")}>
-              Pause submissions
-            </button>
-            <button onClick={() => call("/v1/admin/runtime/resume")}>
-              Resume
-            </button>
-            <button onClick={() => call("/v1/admin/runtime/stop")}>
-              Kill switch
-            </button>
-            <p>Pause and kill-switch controls remain administrator-only.</p>
-          </>
-        )}
+        <div className="runtime-admin-controls">
+          <button onClick={() => call("/v1/admin/runtime/pause")}>
+            Pause submissions
+          </button>
+          <button onClick={() => call("/v1/admin/runtime/resume")}>
+            Resume
+          </button>
+          <button onClick={() => call("/v1/admin/runtime/stop")}>
+            Kill switch
+          </button>
+        </div>
+        <p>Pause and kill-switch controls remain administrator-only.</p>
       </section>
     </main>
   );

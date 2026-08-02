@@ -5306,6 +5306,11 @@ body:not(:has(.home)) h1.editorial-page-title {
 .runtime-manual-connect button {
   min-height: 44px;
 }
+.runtime-admin-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
 @media (max-width: 820px) {
   .runtime-discovery-panel > header {
     display: grid;

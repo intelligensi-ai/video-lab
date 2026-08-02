@@ -358,6 +358,7 @@ function normalizeRuntimeBaseUrl(value: unknown) {
   const origin = normalizeRuntimeOrigin(value, {
     production: process.env.NODE_ENV === "production",
     allowPrivate: localAuth,
+    allowHttpInProduction: true,
   });
   return origin && runtimeOriginAllowed(origin) ? origin : undefined;
 }
@@ -380,6 +381,7 @@ const runtimeDiscoveryRefreshMs = Math.max(
   2_000,
   Number(process.env.VIDEO_RUNTIME_DISCOVERY_REFRESH_MS ?? 10_000),
 );
+let manualRuntimeBaseUrl: string | undefined;
 export function creditLimitsEnabled(_env: NodeJS.ProcessEnv = process.env) {
   return false;
 }
@@ -464,7 +466,7 @@ async function connectRuntimeEndpoint(
     );
   runtimeBaseUrl = baseUrl;
   runtime = adapter;
-  runtimeDiscovery = { source, state: "connected", message };
+  runtimeDiscovery = { source, state: "connected", baseUrl, message };
   runtimeState = {
     ...runtimeState,
     provider: health.provider,
@@ -557,6 +559,17 @@ async function loadRuntimeDiscovery(force = false) {
         leaseExpiresAt: leaseExpiresAt?.toISOString(),
       };
       if (status !== "ready") {
+        if (manualRuntimeBaseUrl) {
+          useRuntimeEndpoint(manualRuntimeBaseUrl, "environment");
+          runtimeDiscovery = {
+            source: "environment",
+            state: "connected",
+            baseUrl: manualRuntimeBaseUrl,
+            message:
+              "Manual admin runtime connection remains active while Deploy Studio reports an unhealthy handover",
+          };
+          return;
+        }
         clearRuntimeEndpoint({
           ...details,
           state: "waiting",
@@ -565,6 +578,17 @@ async function loadRuntimeDiscovery(force = false) {
         return;
       }
       if (!baseUrl) {
+        if (manualRuntimeBaseUrl) {
+          useRuntimeEndpoint(manualRuntimeBaseUrl, "environment");
+          runtimeDiscovery = {
+            source: "environment",
+            state: "connected",
+            baseUrl: manualRuntimeBaseUrl,
+            message:
+              "Manual admin runtime connection remains active while Deploy Studio handover is incomplete",
+          };
+          return;
+        }
         clearRuntimeEndpoint({
           ...details,
           state: "unavailable",
@@ -591,6 +615,7 @@ async function loadRuntimeDiscovery(force = false) {
         return;
       }
       useRuntimeEndpoint(baseUrl, "deploy-studio");
+      manualRuntimeBaseUrl = undefined;
       runtimeDiscovery = {
         ...details,
         state: "connected",
@@ -608,6 +633,7 @@ async function loadRuntimeDiscovery(force = false) {
       runtimeDiscovery = {
         source: "environment",
         state: "connected",
+        baseUrl: environmentUrl,
         message: "Using server environment fallback",
       };
       return;
@@ -623,6 +649,7 @@ async function loadRuntimeDiscovery(force = false) {
       runtimeDiscovery = {
         source: "legacy",
         state: "connected",
+        baseUrl: legacyUrl,
         message:
           "Using migration fallback until Deploy Studio publishes a lease",
       };
@@ -661,6 +688,11 @@ async function ensureRuntimeConfiguration() {
     runtimeControlCheckedAt = Date.now();
     if (control.exists) {
       const data = control.data() ?? {};
+      const controlManualBaseUrl = normalizeRuntimeBaseUrl(
+        data.manualRuntimeBaseUrl,
+      );
+      if (controlManualBaseUrl && controlManualBaseUrl !== manualRuntimeBaseUrl)
+        manualRuntimeBaseUrl = controlManualBaseUrl;
       if (data.killSwitch === true) {
         runtimeState = {
           ...runtimeState,
@@ -678,6 +710,16 @@ async function ensureRuntimeConfiguration() {
       } else {
         runtimeState = { ...runtimeState, killSwitch: false };
       }
+      if (manualRuntimeBaseUrl && runtimeState.status !== "paused") {
+        useRuntimeEndpoint(manualRuntimeBaseUrl, "environment");
+        runtimeDiscovery = {
+          source: "environment",
+          state: "connected",
+          baseUrl: manualRuntimeBaseUrl,
+          message:
+            "Manual admin runtime connection is active until Deploy Studio publishes a healthy handover",
+        };
+      }
     }
   }
   await loadRuntimeDiscovery();
@@ -689,6 +731,7 @@ async function persistRuntimeControl(principal: Principal, action: string) {
       status: runtimeState.status,
       acceptingSubmissions: runtimeState.acceptingSubmissions,
       killSwitch: runtimeState.killSwitch,
+      manualRuntimeBaseUrl: manualRuntimeBaseUrl ?? null,
       updatedAt: nowIso(),
       updatedBy: principal.uid,
     });
@@ -2369,7 +2412,11 @@ app.post("/v1/admin/runtime/connect", admin, async (req, res, next) => {
       "environment",
       "Manual admin connection is active until Deploy Studio publishes a healthy handover",
     );
-    await recordAdminAudit(res.locals.principal, "runtime_manual_connected");
+    manualRuntimeBaseUrl = baseUrl;
+    await persistRuntimeControl(
+      res.locals.principal,
+      "runtime_manual_connected",
+    );
     res.json(publicRuntimeStatus());
   } catch (e) {
     next(e);
@@ -2383,6 +2430,7 @@ app.post("/v1/admin/runtime/pause", admin, async (_req, res, next) => {
       status: "paused",
       updatedAt: nowIso(),
     };
+    manualRuntimeBaseUrl = undefined;
     await persistRuntimeControl(res.locals.principal, "runtime_pause");
     res.json(publicRuntimeStatus());
   } catch (error) {
@@ -2413,6 +2461,7 @@ app.post("/v1/admin/runtime/stop", admin, async (_req, res, next) => {
       status: "unavailable",
       updatedAt: nowIso(),
     };
+    manualRuntimeBaseUrl = undefined;
     await persistRuntimeControl(res.locals.principal, "runtime_stop");
     res.json(publicRuntimeStatus());
   } catch (error) {

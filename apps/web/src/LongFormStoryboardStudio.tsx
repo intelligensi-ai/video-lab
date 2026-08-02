@@ -2545,7 +2545,11 @@ function Preview({
             data-help="The generation request was rejected before a new render started. Finish or cancel the active render, then submit again."
           >
             <div>
-              <strong>Generation is already running</strong>
+              <strong>
+                {submissionError.toLowerCase().includes("paused")
+                  ? "Submissions are paused"
+                  : "Generation could not start"}
+              </strong>
               <small>{submissionError}</small>
             </div>
           </div>
