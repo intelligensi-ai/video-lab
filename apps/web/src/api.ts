@@ -26,6 +26,7 @@ export async function api<T>(path: string, init: RequestInit = {}) {
     const body = await r.json().catch(() => ({}));
     throw new Error(body.detail ?? body.title ?? r.statusText);
   }
+  if (r.status === 204) return undefined as T;
   return r.json() as Promise<T>;
 }
 
@@ -297,6 +298,9 @@ export async function generateLongFormVideo(
         : await fileToDataUrl(scene.endFrame);
       return {
         ...scene,
+        prompt:
+          scene.prompt.trim() ||
+          `Scene ${index + 1}: create a clear cinematic beat that advances this film overview: ${payload.overallGoal}`,
         startFrame: undefined,
         endFrame: undefined,
         startFrameBase64,
@@ -550,7 +554,7 @@ export async function assembleStoryboardFilm(
             ? "1:1"
             : "16:9",
         durationSeconds: payload.scenes.reduce(
-          (total, scene) => total + (scene.trimEnd - scene.trimStart),
+          (total, scene) => total + scene.duration,
           0,
         ),
         quality: payload.postProcess === "none" ? "draft" : "high",
@@ -565,6 +569,8 @@ export async function assembleStoryboardFilm(
           ...scene,
           startFrame: undefined,
           endFrame: undefined,
+          trimStart: 0,
+          trimEnd: scene.duration,
           seed: scene.seedOverrideEnabled ? scene.seed : payload.globalSeed,
           seedOverride: scene.seedOverrideEnabled === true,
           summary: scene.summary,

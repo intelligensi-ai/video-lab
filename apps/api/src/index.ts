@@ -339,6 +339,18 @@ async function runtimeGeneration(
       }
       runtimeJobIds.push(accepted.runtimeJobId);
     }
+    settings.storyboard = storyboard.map((scene) => {
+      const duration = Number((scene as { duration?: unknown }).duration);
+      return {
+        ...(scene as Record<string, unknown>),
+        trimStart: 0,
+        trimEnd: Number.isFinite(duration) ? duration : undefined,
+      };
+    });
+    settings.durationSeconds = storyboard.reduce((total, scene) => {
+      const duration = Number((scene as { duration?: unknown }).duration);
+      return total + (Number.isFinite(duration) ? duration : 0);
+    }, 0);
     settings.assemblyJobIds = runtimeJobIds;
     delete settings.acceptedSceneGenerationIds;
   }
@@ -354,6 +366,12 @@ const localAuth =
   (process.env.NODE_ENV !== "production" && !process.env.K_SERVICE);
 const usesIntelligensiRuntimeApi =
   process.env.VIDEO_RUNTIME_PROVIDER === "intelligensi-api";
+function videoLabRuntimeApiKey() {
+  return (
+    process.env.VIDEO_LAB_RUNTIME_API_KEY ??
+    process.env.VIDEO_RUNTIME_API_TOKEN
+  );
+}
 function normalizeRuntimeBaseUrl(value: unknown) {
   const origin = normalizeRuntimeOrigin(value, {
     production: process.env.NODE_ENV === "production",
@@ -420,7 +438,10 @@ function createRuntimeAdapter(
   const directWorker = mode === "direct-worker";
   return new SulphurLtxRuntimeAdapter({
     baseUrl,
-    token: process.env.VIDEO_RUNTIME_API_TOKEN,
+    token: directWorker
+      ? process.env.VIDEO_RUNTIME_DIRECT_WORKER_TOKEN ??
+        videoLabRuntimeApiKey()
+      : videoLabRuntimeApiKey(),
     runtimeId:
       process.env.VIDEO_RUNTIME_ID ?? "longform-ltx-storyboard-studio",
     healthPath: directWorker
@@ -432,8 +453,13 @@ function createRuntimeAdapter(
     statusPath: process.env.VIDEO_RUNTIME_STATUS_PATH,
     cancelPath: process.env.VIDEO_RUNTIME_CANCEL_PATH,
     outputPath: process.env.VIDEO_RUNTIME_OUTPUT_PATH,
-    authHeaderName: process.env.VIDEO_RUNTIME_AUTH_HEADER,
-    authScheme: process.env.VIDEO_RUNTIME_AUTH_SCHEME,
+    authHeaderName: directWorker
+      ? (process.env.VIDEO_RUNTIME_DIRECT_WORKER_AUTH_HEADER ??
+        "authorization")
+      : process.env.VIDEO_RUNTIME_AUTH_HEADER,
+    authScheme: directWorker
+      ? (process.env.VIDEO_RUNTIME_DIRECT_WORKER_AUTH_SCHEME ?? "Bearer")
+      : process.env.VIDEO_RUNTIME_AUTH_SCHEME,
     payloadMode: directWorker
       ? "deploy-studio"
       : usesIntelligensiRuntimeApi
@@ -475,6 +501,15 @@ async function connectRuntimeEndpoint(
       "runtime_health_failed",
       "Runtime health check did not report ready",
     );
+  if (source === "environment") {
+    const protectedAccess = await adapter.verifyProtectedAccess();
+    if (!protectedAccess.ok)
+      throw problem(
+        401,
+        "runtime_access_denied",
+        `Runtime health is ready, but protected job routes rejected Video Lab credentials (${protectedAccess.message ?? protectedAccess.status}). Configure VIDEO_RUNTIME_DIRECT_WORKER_TOKEN with the worker RUNTIME_ACCESS_TOKEN, or connect through Deploy Studio.`,
+      );
+  }
   runtimeBaseUrl = baseUrl;
   runtime = adapter;
   runtimeDiscovery = { source, state: "connected", baseUrl, message };
@@ -535,9 +570,11 @@ function clearRuntimeEndpoint(discovery: RuntimeDiscovery) {
     };
 }
 async function loadRuntimeDiscovery(force = false) {
+  const expectedRuntimeId =
+    process.env.VIDEO_RUNTIME_ID ?? "longform-ltx-storyboard-studio";
   if (usesIntelligensiRuntimeApi && runtimeBaseUrl) {
-    runtimeDiscoveryCheckedAt = Date.now();
     if (manualRuntimeBaseUrl) {
+      runtimeDiscoveryCheckedAt = Date.now();
       useRuntimeEndpoint(manualRuntimeBaseUrl, "environment", "direct-worker");
       runtimeDiscovery = {
         source: "environment",
@@ -555,33 +592,28 @@ async function loadRuntimeDiscovery(force = false) {
         };
       return;
     }
-    const discovered =
-      runtime instanceof SulphurLtxRuntimeAdapter
-        ? await runtime.discoverReadyRuntime("storyboard-enhance")
-        : undefined;
-    if (!discovered) {
+    let discovered:
+      | Awaited<ReturnType<SulphurLtxRuntimeAdapter["discoverReadyRuntime"]>>
+      | undefined;
+    if (runtime instanceof SulphurLtxRuntimeAdapter) {
+      try {
+        discovered = await runtime.discoverReadyRuntime("storyboard-enhance");
+      } catch (error) {
+        log("runtime_gateway_discovery_failed", {
+          errorCode: operationalErrorCode(error),
+        });
+      }
+    }
+    if (discovered) {
+      runtimeDiscoveryCheckedAt = Date.now();
+      useRuntimeEndpoint(runtimeBaseUrl, "deploy-studio");
       runtimeDiscovery = {
         source: "deploy-studio",
-        state: "waiting",
-        message:
-          "Waiting for Deploy Studio to report a ready LongForm runtime through the gateway",
+        state: "connected",
+        message: `Connected through Deploy Studio runtime API (${discovered.runtimeId})`,
       };
-      if (runtimeState.status !== "paused" && !runtimeState.killSwitch)
-        runtimeState = {
-          ...runtimeState,
-          status: "unavailable",
-          acceptingSubmissions: false,
-          updatedAt: nowIso(),
-        };
       return;
     }
-    useRuntimeEndpoint(runtimeBaseUrl, "deploy-studio");
-    runtimeDiscovery = {
-      source: "deploy-studio",
-      state: "connected",
-      message: `Connected through Deploy Studio runtime API (${discovered.runtimeId})`,
-    };
-    return;
   }
   if (localAuth) return;
   const now = Date.now();
@@ -591,14 +623,21 @@ async function loadRuntimeDiscovery(force = false) {
   runtimeDiscoveryPromise = (async () => {
     adminApp();
     const firestore = getFirestore();
-    const snapshot = await firestore
-      .collection(
-        process.env.VIDEO_RUNTIME_DISCOVERY_COLLECTION ?? "runtimeDiscovery",
-      )
-      .doc(process.env.VIDEO_RUNTIME_DISCOVERY_DOCUMENT ?? "current")
-      .get();
+    const discoveryCollection =
+      process.env.VIDEO_RUNTIME_DISCOVERY_COLLECTION ?? "runtimeDiscovery";
+    const configuredDiscoveryDocument =
+      process.env.VIDEO_RUNTIME_DISCOVERY_DOCUMENT ?? "current";
+    const discoveryDocumentIds = Array.from(
+      new Set([configuredDiscoveryDocument, expectedRuntimeId, "current"]),
+    );
+    const snapshots = await Promise.all(
+      discoveryDocumentIds.map((documentId) =>
+        firestore.collection(discoveryCollection).doc(documentId).get(),
+      ),
+    );
+    const snapshot = snapshots.find((item) => item.exists);
     runtimeDiscoveryCheckedAt = Date.now();
-    if (snapshot.exists) {
+    if (snapshot?.exists) {
       const data = snapshot.data() ?? {};
       const status = String(data.status ?? "").toLowerCase();
       const baseUrl = normalizeRuntimeBaseUrl(data.baseUrl);
@@ -813,6 +852,27 @@ async function refreshRuntimeHealth() {
     return;
   try {
     const health = await runtime.healthCheck();
+    const protectedAccess =
+      runtimeDiscovery.source === "environment" &&
+      runtime instanceof SulphurLtxRuntimeAdapter
+        ? await runtime.verifyProtectedAccess()
+        : undefined;
+    if (protectedAccess && !protectedAccess.ok) {
+      runtimeState = {
+        ...runtimeState,
+        provider: health.provider,
+        status: "unavailable",
+        acceptingSubmissions: false,
+        capabilities: health.capabilities ?? runtimeState.capabilities,
+        updatedAt: nowIso(),
+      };
+      runtimeDiscovery = {
+        ...runtimeDiscovery,
+        state: "unavailable",
+        message: `Manual runtime health is ready, but protected job routes rejected Video Lab credentials (${protectedAccess.message ?? protectedAccess.status}).`,
+      };
+      return;
+    }
     runtimeState = {
       ...runtimeState,
       provider: health.provider,
@@ -876,6 +936,34 @@ async function findGeneration(id: string) {
   return generation;
 }
 
+async function deleteStoredGeneration(g: StoredGeneration) {
+  gens.delete(g.id);
+  const queueIndex = queue.findIndex((item) => item.generationId === g.id);
+  if (queueIndex >= 0) queue.splice(queueIndex, 1);
+  for (const [key, generationId] of idempotency.entries()) {
+    if (generationId === g.id) idempotency.delete(key);
+  }
+  if (localAuth) return;
+  adminApp();
+  const firestore = getFirestore();
+  const writes: Promise<unknown>[] = [
+    firestore.collection("generations").doc(g.id).delete(),
+    firestore.collection(generationQueueCollection).doc(g.id).delete(),
+  ];
+  const activeRef = firestore.collection(generationActiveCollection).doc(g.uid);
+  const activeSnapshot = await activeRef.get();
+  if (activeSnapshot.data()?.generationId === g.id) writes.push(activeRef.delete());
+  if (g.outputObjectPath) {
+    writes.push(
+      getStorage()
+        .bucket()
+        .file(g.outputObjectPath)
+        .delete({ ignoreNotFound: true }),
+    );
+  }
+  await Promise.all(writes);
+}
+
 function idempotencyDocumentId(uid: string, key: string) {
   return createHash("sha256").update(`${uid}\0${key}`).digest("hex");
 }
@@ -899,6 +987,131 @@ async function findIdempotentGeneration(
 
 function activeGenerationStatus(status: Generation["status"]) {
   return ["queued", "preparing", "generating", "uploading"].includes(status);
+}
+
+function outputExtension(contentType: StoredGeneration["outputContentType"]) {
+  return contentType === "image/png"
+    ? "png"
+    : contentType === "image/jpeg"
+      ? "jpg"
+      : contentType === "image/webp"
+        ? "webp"
+        : contentType === "video/webm"
+          ? "webm"
+          : "mp4";
+}
+
+async function completeGenerationFromRuntime(
+  generation: StoredGeneration,
+  runtimeJobId: string,
+) {
+  const out = await runtime.fetchOutput(runtimeJobId);
+  if (creditLimitsEnabled())
+    wallets.set(
+      generation.uid,
+      chargeCredits(wallets.get(generation.uid)!, generation.creditCost),
+    );
+  const outputObjectPath = `users/${generation.uid}/outputs/${generation.id}.${outputExtension(out.contentType)}`;
+  if (!localAuth) {
+    adminApp();
+    await getStorage()
+      .bucket()
+      .file(outputObjectPath)
+      .save(Buffer.from(out.bytes), {
+        resumable: false,
+        contentType: out.contentType,
+        metadata: { cacheControl: "private,no-store" },
+      });
+  }
+  const completed: StoredGeneration = {
+    ...generation,
+    status: "completed",
+    progress: 100,
+    runtimeMessage: undefined,
+    runtimeProgress: undefined,
+    output: {
+      downloadUrl: `/api/v1/generations/${generation.id}/download`,
+      durationSeconds: out.durationSeconds,
+      contentType: out.contentType,
+      kind: out.contentType.startsWith("image/") ? "frame" : "video",
+    },
+    ...(localAuth ? { outputBytes: out.bytes } : {}),
+    outputObjectPath,
+    outputContentType: out.contentType,
+    updatedAt: nowIso(),
+  };
+  gens.set(generation.id, completed);
+  await persistGeneration(completed);
+  log("runtime_generation_completed", {
+    generationId: generation.id,
+    outputObjectPath,
+  });
+  return completed;
+}
+
+async function failGenerationFromRuntime(
+  generation: StoredGeneration,
+  safeErrorMessage: string,
+) {
+  const failed: StoredGeneration = {
+    ...generation,
+    status: "failed",
+    safeErrorMessage,
+    updatedAt: nowIso(),
+  };
+  gens.set(generation.id, failed);
+  await persistGeneration(failed);
+  return failed;
+}
+
+async function reconcileActiveGeneration(uid: string) {
+  const active = localAuth
+    ? [...gens.values()].find(
+        (generation) =>
+          generation.uid === uid && activeGenerationStatus(generation.status),
+      )
+    : await (async () => {
+        adminApp();
+        const activeSnapshot = await getFirestore()
+          .collection(generationActiveCollection)
+          .doc(uid)
+          .get();
+        const activeId = String(activeSnapshot.data()?.generationId ?? "");
+        return activeId ? findGeneration(activeId) : undefined;
+      })();
+  if (!active || !activeGenerationStatus(active.status) || !active.runtimeJobId)
+    return active;
+
+  try {
+    const runtimeStatus = await runtime.getGenerationStatus(active.runtimeJobId);
+    if (!["completed", "failed", "cancelled"].includes(runtimeStatus.state))
+      return active;
+    const terminal =
+      runtimeStatus.state === "completed"
+        ? await completeGenerationFromRuntime(active, active.runtimeJobId)
+        : await failGenerationFromRuntime(
+            active,
+            runtimeStatus.state === "cancelled"
+              ? "Cancelled by user"
+              : "Generation failed safely. Please retry when the runtime is available.",
+          );
+    const q = queue.find((item) => item.generationId === active.id) ?? {
+      generationId: active.id,
+      createdAt: active.createdAt,
+      status: "claimed" as const,
+      attempt: 0,
+    };
+    await finishQueueItem(q, active.uid);
+    await refreshQueueDepth();
+    return terminal;
+  } catch (error) {
+    log("active_generation_reconcile_failed", {
+      uid,
+      generationId: active.id,
+      errorCode: operationalErrorCode(error),
+    });
+    return active;
+  }
 }
 
 async function enqueueGeneration(
@@ -1630,7 +1843,7 @@ async function enhanceStoryboard(request: StoryboardEnhancementRequest) {
       });
   const token = (
     useStableApi
-      ? process.env.VIDEO_RUNTIME_API_TOKEN
+      ? videoLabRuntimeApiKey()
       : process.env.VIDEO_DEPLOY_STUDIO_API_TOKEN
   )?.trim();
   if (baseUrl && token) {
@@ -2014,6 +2227,7 @@ app.post(
         (!runtimeBaseUrl && runtimeState.provider !== "mock")
       )
         throw problem(503, "runtime_paused", "Submissions are paused");
+      await reconcileActiveGeneration(p.uid);
       if (localAuth) {
         const active = [...gens.values()].find(
           (g) => g.uid === p.uid && activeGenerationStatus(g.status),
@@ -2396,6 +2610,30 @@ app.post("/v1/generations/:id/cancel", auth, async (req, res, next) => {
     next(e);
   }
 });
+app.delete("/v1/generations/:id", auth, async (req, res, next) => {
+  try {
+    const id = String(req.params.id ?? "");
+    const g = await findGeneration(id);
+    if (!g || g.uid !== res.locals.principal.uid)
+      throw problem(404, "not_found", "Generation not found");
+    if (g.runtimeJobId && activeGenerationStatus(g.status)) {
+      try {
+        await runtime.cancelGeneration(g.runtimeJobId);
+      } catch (e) {
+        log("runtime_cancel_before_delete_failed", {
+          generationId: g.id,
+          errorCode: operationalErrorCode(e),
+        });
+      }
+    }
+    await deleteStoredGeneration(g);
+    await refreshQueueDepth();
+    log("generation_deleted", { uid: g.uid, generationId: g.id });
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
+});
 app.get("/v1/gallery", auth, async (req, res, next) => {
   try {
     const p = res.locals.principal as Principal;
@@ -2635,54 +2873,7 @@ async function processQueueItem(workerId = "local-worker") {
       gens.set(g.id, cancelled);
       await persistGeneration(cancelled);
     } else if (st.state === "completed") {
-      const out = await runtime.fetchOutput(sub.runtimeJobId);
-      if (creditLimitsEnabled())
-        wallets.set(g.uid, chargeCredits(wallets.get(g.uid)!, g.creditCost));
-      const extension =
-        out.contentType === "image/png"
-          ? "png"
-          : out.contentType === "image/jpeg"
-            ? "jpg"
-            : out.contentType === "image/webp"
-              ? "webp"
-              : out.contentType === "video/webm"
-                ? "webm"
-                : "mp4";
-      const outputObjectPath = `users/${g.uid}/outputs/${g.id}.${extension}`;
-      if (!localAuth) {
-        adminApp();
-        await getStorage()
-          .bucket()
-          .file(outputObjectPath)
-          .save(Buffer.from(out.bytes), {
-            resumable: false,
-            contentType: out.contentType,
-            metadata: { cacheControl: "private,no-store" },
-          });
-      }
-      const completed: StoredGeneration = {
-        ...gens.get(g.id)!,
-        status: "completed",
-        progress: 100,
-        runtimeMessage: undefined,
-        runtimeProgress: undefined,
-        output: {
-          downloadUrl: `/api/v1/generations/${g.id}/download`,
-          durationSeconds: out.durationSeconds,
-          contentType: out.contentType,
-          kind: out.contentType.startsWith("image/") ? "frame" : "video",
-        },
-        ...(localAuth ? { outputBytes: out.bytes } : {}),
-        outputObjectPath,
-        outputContentType: out.contentType,
-        updatedAt: nowIso(),
-      };
-      gens.set(g.id, completed);
-      await persistGeneration(completed);
-      log("runtime_generation_completed", {
-        generationId: g.id,
-        outputObjectPath,
-      });
+      await completeGenerationFromRuntime(gens.get(g.id)!, sub.runtimeJobId);
     } else throw new Error(st.message ?? st.state);
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);

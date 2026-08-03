@@ -273,6 +273,7 @@ export default function LongFormStoryboardStudio() {
   const [projectTitle, setProjectTitle] = useState("Untitled film");
   const [projectError, setProjectError] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [undoForm, setUndoForm] = useState<LongFormGenerationPayload>();
   const [frameStates, setFrameStates] = useState<Record<string, FrameState>>(
     {},
@@ -426,11 +427,8 @@ export default function LongFormStoryboardStudio() {
             scenes: saved.scenes?.length
               ? saved.scenes.slice(0, MAX_STORYBOARD_SCENES).map((scene) => ({
                   ...scene,
-                  trimStart: Math.max(0, scene.trimStart ?? 0),
-                  trimEnd: Math.min(
-                    scene.duration,
-                    scene.trimEnd ?? scene.duration,
-                  ),
+                  trimStart: 0,
+                  trimEnd: scene.duration,
                   summary: scene.summary ?? "",
                   continuityOverrides: scene.continuityOverrides ?? {},
                   seedOverrideEnabled: scene.seedOverrideEnabled === true,
@@ -775,8 +773,7 @@ export default function LongFormStoryboardStudio() {
     );
   const invalid =
     !form.overallGoal.trim() ||
-    !form.scenes.length ||
-    form.scenes.some((scene) => !scene.prompt.trim());
+    !form.scenes.length;
   const runtimeMaxScenes = Math.min(
     MAX_STORYBOARD_SCENES,
     runtime.data?.capabilities?.maxScenes ?? MAX_STORYBOARD_SCENES,
@@ -852,79 +849,10 @@ export default function LongFormStoryboardStudio() {
       </header>
       <div className="lf-layout">
         <div className="lf-controls">
-          <section
-            className="lf-panel lf-projects"
-            aria-label="Storyboard projects"
-          >
-            <div className="lf-section-head">
-              <div>
-                <span className="lf-label">Your projects</span>
-                <h2>Continue a film</h2>
-              </div>
-              <div className="lf-project-actions">
-                <button
-                  type="button"
-                  className="lf-outline"
-                  disabled={projectBusy}
-                  onClick={() => void createProject()}
-                >
-                  New project
-                </button>
-                <button
-                  type="button"
-                  className="lf-delete"
-                  disabled={projectBusy || projects.length <= 1}
-                  onClick={() => void removeProject()}
-                >
-                  Delete project
-                </button>
-              </div>
-            </div>
-            <div className="lf-project-fields">
-              <label>
-                <span>Open project</span>
-                <select
-                  aria-label="Open storyboard project"
-                  value={projectId}
-                  disabled={projectBusy}
-                  onChange={(event) => void openProject(event.target.value)}
-                >
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.title} · {project.sceneCount} scene
-                      {project.sceneCount === 1 ? "" : "s"}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Project title</span>
-                <input
-                  aria-label="Project title"
-                  value={projectTitle}
-                  maxLength={120}
-                  onChange={(event) => setProjectTitle(event.target.value)}
-                  onBlur={() =>
-                    setProjectTitle((title) => title.trim() || "Untitled film")
-                  }
-                  required
-                />
-              </label>
-            </div>
-            <p>
-              Projects, prompts, generated frame references and accepted clips
-              are private to your account and reopen across sessions.
-            </p>
-            {projectError && (
-              <p className="lf-error" role="alert">
-                {projectError}
-              </p>
-            )}
-          </section>
           <section className="lf-panel lf-goal">
             <span className="lf-label">Creative brief</span>
             <div className="prompt-field-heading">
-              <h2>What is the whole film about?</h2>
+              <h2>Overview</h2>
               <PromptSuggestion
                 value={form.overallGoal}
                 suggestion="An ancient epic follows a battle-worn voyager across a mythic sea as he struggles to return to his family, while those at home defend a fragile kingdom and their faith in his survival."
@@ -984,6 +912,13 @@ export default function LongFormStoryboardStudio() {
                   ? "Gemma is preparing the storyboard…"
                   : `Enhance and plan ${form.scenes.length} shot${form.scenes.length === 1 ? "" : "s"}`}
               </button>
+              <button
+                type="button"
+                className="lf-outline"
+                onClick={() => setProjectDialogOpen(true)}
+              >
+                New project
+              </button>
               {form.originalOverallGoal && (
                 <button
                   type="button"
@@ -1025,6 +960,52 @@ export default function LongFormStoryboardStudio() {
               </p>
             )}
           </section>
+          <section className="lf-scenes">
+            <div className="lf-section-head">
+              <div>
+                <span className="lf-label">Timeline</span>
+                <h2>Storyboard scenes</h2>
+              </div>
+              <button
+                type="button"
+                className="lf-primary lf-add"
+                data-help="Append a new editable scene card up to the active LongForm runtime limit."
+                disabled={form.scenes.length >= runtimeMaxScenes}
+                onClick={addScene}
+              >
+                ＋ Add scene
+              </button>
+            </div>
+            {form.scenes.map((scene, index) => (
+              <SceneCard
+                key={scene.id}
+                scene={scene}
+                index={index}
+                count={form.scenes.length}
+                onChange={(patch) => updateScene(index, patch)}
+                onMove={(direction) => moveScene(index, direction)}
+                onRemove={() => removeScene(index)}
+                frameState={{
+                  start: frameStates[`${scene.id}:start`] ?? { status: "idle" },
+                  end: frameStates[`${scene.id}:end`] ?? { status: "idle" },
+                }}
+                onGenerateFrame={(edge) => void regenerateFrame(index, edge)}
+                onRegeneratePrompt={() =>
+                  enhancement.mutate({
+                    apply: "shot",
+                    targetShotNumber: index + 1,
+                  })
+                }
+                promptBusy={enhancement.isPending}
+                renderState={sceneRenderStates[scene.id] ?? { status: "idle" }}
+                onRender={() => void renderScene(index)}
+                globalSeed={form.globalSeed}
+                seedPolicy={form.seedPolicy}
+              />
+            ))}
+          </section>
+        </div>
+        <aside className="lf-preview-col">
           <section className="lf-panel lf-storyboard-settings">
             <span className="lf-label">Setup</span>
             <h2>Storyboard settings</h2>
@@ -1147,49 +1128,38 @@ export default function LongFormStoryboardStudio() {
               </div>
             </div>
           </section>
-          <section className="lf-scenes">
-            <div className="lf-section-head">
-              <div>
-                <span className="lf-label">Timeline</span>
-                <h2>Storyboard scenes</h2>
-              </div>
-              <button
-                type="button"
-                className="lf-primary lf-add"
-                data-help="Append a new editable scene card up to the active LongForm runtime limit."
-                disabled={form.scenes.length >= runtimeMaxScenes}
-                onClick={addScene}
-              >
-                ＋ Add scene
-              </button>
-            </div>
-            {form.scenes.map((scene, index) => (
-              <SceneCard
-                key={scene.id}
-                scene={scene}
-                index={index}
-                count={form.scenes.length}
-                onChange={(patch) => updateScene(index, patch)}
-                onMove={(direction) => moveScene(index, direction)}
-                onRemove={() => removeScene(index)}
-                frameState={{
-                  start: frameStates[`${scene.id}:start`] ?? { status: "idle" },
-                  end: frameStates[`${scene.id}:end`] ?? { status: "idle" },
-                }}
-                onGenerateFrame={(edge) => void regenerateFrame(index, edge)}
-                onRegeneratePrompt={() =>
-                  enhancement.mutate({
-                    apply: "shot",
-                    targetShotNumber: index + 1,
-                  })
-                }
-                promptBusy={enhancement.isPending}
-                renderState={sceneRenderStates[scene.id] ?? { status: "idle" }}
-                onRender={() => void renderScene(index)}
-                globalSeed={form.globalSeed}
-                seedPolicy={form.seedPolicy}
-              />
-            ))}
+          <section
+            className="lf-panel lf-assembly"
+            aria-label="Accepted scene assembly"
+          >
+            <span className="lf-label">Finishing</span>
+            <h2>Assemble accepted clips</h2>
+            <p>
+              Render and accept one clip per scene, then join only those clips.
+              Assembly preserves the full accepted clips and transitions without rerunning LTX.
+            </p>
+            <strong>
+              {
+                form.scenes.filter(
+                  (scene) =>
+                    scene.acceptedVideoGenerationId && !scene.staleReason,
+                ).length
+              }
+              /{form.scenes.length} clips ready
+            </strong>
+            <button
+              type="button"
+              className="lf-primary"
+              disabled={!allScenesAccepted || assembly.isPending || isRendering}
+              onClick={() => assembly.mutate()}
+            >
+              {assembly.isPending ? "Assembling…" : "Assemble accepted clips"}
+            </button>
+            {assembly.error && (
+              <p className="lf-error" role="alert">
+                {assembly.error.message}
+              </p>
+            )}
           </section>
           <section className="lf-panel lf-bible lf-storyboard-setup">
             <span className="lf-label">Film Bible</span>
@@ -1432,41 +1402,6 @@ export default function LongFormStoryboardStudio() {
               </div>
             </div>
           </details>
-        </div>
-        <aside className="lf-preview-col">
-          <section
-            className="lf-panel lf-assembly"
-            aria-label="Accepted scene assembly"
-          >
-            <span className="lf-label">Finishing</span>
-            <h2>Assemble accepted clips</h2>
-            <p>
-              Render and accept one clip per scene, then join only those clips.
-              Assembly applies trims and transitions without rerunning LTX.
-            </p>
-            <strong>
-              {
-                form.scenes.filter(
-                  (scene) =>
-                    scene.acceptedVideoGenerationId && !scene.staleReason,
-                ).length
-              }
-              /{form.scenes.length} clips ready
-            </strong>
-            <button
-              type="button"
-              className="lf-primary"
-              disabled={!allScenesAccepted || assembly.isPending || isRendering}
-              onClick={() => assembly.mutate()}
-            >
-              {assembly.isPending ? "Assembling…" : "Assemble accepted clips"}
-            </button>
-            {assembly.error && (
-              <p className="lf-error" role="alert">
-                {assembly.error.message}
-              </p>
-            )}
-          </section>
           <Preview
             generation={currentGeneration}
             loading={isRendering}
@@ -1485,6 +1420,95 @@ export default function LongFormStoryboardStudio() {
           <History generations={history} onSelect={setSelected} />
         </aside>
       </div>
+      {projectDialogOpen && (
+        <div
+          className="lf-modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setProjectDialogOpen(false);
+          }}
+        >
+          <section
+            className="lf-panel lf-projects lf-project-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="project-modal-title"
+          >
+            <div className="lf-section-head">
+              <div>
+                <span className="lf-label">Your projects</span>
+                <h2 id="project-modal-title">New project</h2>
+              </div>
+              <button
+                type="button"
+                className="lf-delete"
+                aria-label="Close project dialog"
+                onClick={() => setProjectDialogOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="lf-project-actions">
+              <button
+                type="button"
+                className="lf-outline"
+                disabled={projectBusy}
+                onClick={() => void createProject()}
+              >
+                New project
+              </button>
+              <button
+                type="button"
+                className="lf-delete"
+                disabled={projectBusy || projects.length <= 1}
+                onClick={() => void removeProject()}
+              >
+                Delete project
+              </button>
+            </div>
+            <div className="lf-project-fields">
+              <label>
+                <span>Open project</span>
+                <select
+                  aria-label="Open storyboard project"
+                  value={projectId}
+                  disabled={projectBusy}
+                  onChange={(event) => void openProject(event.target.value)}
+                >
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.title} · {project.sceneCount} scene
+                      {project.sceneCount === 1 ? "" : "s"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Project title</span>
+                <input
+                  aria-label="Project title"
+                  value={projectTitle}
+                  maxLength={120}
+                  onChange={(event) => setProjectTitle(event.target.value)}
+                  onBlur={() =>
+                    setProjectTitle((title) => title.trim() || "Untitled film")
+                  }
+                  required
+                />
+              </label>
+            </div>
+            <p>
+              Projects, prompts, generated frame references and accepted clips
+              are private to your account and reopen across sessions.
+            </p>
+            {projectError && (
+              <p className="lf-error" role="alert">
+                {projectError}
+              </p>
+            )}
+          </section>
+        </div>
+      )}
     </main>
   );
 }
@@ -1705,6 +1729,7 @@ function SceneCard({
   seedPolicy: LongFormGenerationPayload["seedPolicy"];
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [expanded, setExpanded] = useState(index === 0);
   const selectedTransition =
     transitionOptions.find((option) => option.value === scene.transition) ??
     transitionOptions[0];
@@ -1713,9 +1738,17 @@ function SceneCard({
       ? "Wide street-level tracking shot. The founder notices a thin teal reflection moving through puddles. Keep the face and trench coat consistent; slow handheld pursuit; cool rain and warm shop windows."
       : "Begin from the previous final frame. The signal climbs a bridge rail as the camera arcs around the founder, revealing the skyline. Preserve direction of travel, identity, wet materials and the restrained teal-and-amber palette.";
   return (
-    <article className="lf-scene">
+    <article className={expanded ? "lf-scene" : "lf-scene collapsed"}>
       <header>
-        <span className="lf-scene-number">{index + 1}</span>
+        <button
+          type="button"
+          className="lf-scene-toggle"
+          aria-expanded={expanded}
+          aria-label={`${expanded ? "Collapse" : "Expand"} scene ${index + 1}`}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <span className="lf-scene-number">{index + 1}</span>
+        </button>
         <span
           className="lf-help-target lf-scene-title-help"
           data-help="A short editorial name used to identify this scene in the timeline."
@@ -1780,6 +1813,8 @@ function SceneCard({
           <span aria-hidden="true">🗑</span> Delete
         </button>
       </header>
+      {expanded ? (
+        <>
       <div
         className="prompt-field scene-prompt-field"
         data-help="Describe one story beat: subject action, camera movement, lighting change and the final frame that leads into the following scene."
@@ -1850,11 +1885,8 @@ function SceneCard({
           onChange={(value) =>
             onChange({
               duration: value,
-              trimStart: Math.min(scene.trimStart, Math.max(0, value - 0.25)),
-              trimEnd: Math.min(
-                value,
-                Math.max(scene.trimStart + 0.25, scene.trimEnd),
-              ),
+              trimStart: 0,
+              trimEnd: value,
               staleReason: scene.acceptedVideoGenerationId
                 ? "The scene duration changed after its accepted clip was rendered. Render this scene again before assembly."
                 : scene.staleReason,
@@ -1885,27 +1917,7 @@ function SceneCard({
         )}
       </div>
       <details className="lf-scene-advanced">
-        <summary>Scene timing, continuity and seed</summary>
-        <div className="lf-scene-fields">
-          <NumberField
-            label="Trim in"
-            help="Skip unwanted material at the beginning when assembling accepted clips."
-            value={scene.trimStart}
-            min={0}
-            max={Math.max(0, scene.trimEnd - 0.25)}
-            step={0.25}
-            onChange={(trimStart) => onChange({ trimStart })}
-          />
-          <NumberField
-            label="Trim out"
-            help="Choose the final used moment without regenerating the clip."
-            value={scene.trimEnd}
-            min={Math.min(scene.duration, scene.trimStart + 0.25)}
-            max={scene.duration}
-            step={0.25}
-            onChange={(trimEnd) => onChange({ trimEnd })}
-          />
-        </div>
+        <summary>Continuity and seed</summary>
         <label className="lf-toggle">
           <input
             type="checkbox"
@@ -1968,44 +1980,47 @@ function SceneCard({
           </div>
         </details>
       </details>
-      <div className="lf-frames">
-        <FrameControl
-          edge="start"
-          file={scene.startFrame}
-          prompt={scene.firstFramePrompt ?? ""}
-          state={frameState.start}
-          onPrompt={(firstFramePrompt) =>
-            onChange({ firstFramePrompt, promptOrigin: "user" })
-          }
-          onFile={(startFrame) =>
-            onChange({
-              startFrame,
-              startFrameGenerationId: undefined,
-              staleReason:
-                "The opening frame changed after the previous storyboard render. Generate the film again to use it.",
-            })
-          }
-          onGenerate={() => onGenerateFrame("start")}
-        />
-        <FrameControl
-          edge="end"
-          file={scene.endFrame}
-          prompt={scene.lastFramePrompt ?? ""}
-          state={frameState.end}
-          onPrompt={(lastFramePrompt) =>
-            onChange({ lastFramePrompt, promptOrigin: "user" })
-          }
-          onFile={(endFrame) =>
-            onChange({
-              endFrame,
-              endFrameGenerationId: undefined,
-              staleReason:
-                "The closing frame changed after the previous storyboard render. Generate the film again to use it.",
-            })
-          }
-          onGenerate={() => onGenerateFrame("end")}
-        />
-      </div>
+      <details className="lf-frame-details">
+        <summary>First frame / last frame</summary>
+        <div className="lf-frames">
+          <FrameControl
+            edge="start"
+            file={scene.startFrame}
+            prompt={scene.firstFramePrompt ?? ""}
+            state={frameState.start}
+            onPrompt={(firstFramePrompt) =>
+              onChange({ firstFramePrompt, promptOrigin: "user" })
+            }
+            onFile={(startFrame) =>
+              onChange({
+                startFrame,
+                startFrameGenerationId: undefined,
+                staleReason:
+                  "The opening frame changed after the previous storyboard render. Generate the film again to use it.",
+              })
+            }
+            onGenerate={() => onGenerateFrame("start")}
+          />
+          <FrameControl
+            edge="end"
+            file={scene.endFrame}
+            prompt={scene.lastFramePrompt ?? ""}
+            state={frameState.end}
+            onPrompt={(lastFramePrompt) =>
+              onChange({ lastFramePrompt, promptOrigin: "user" })
+            }
+            onFile={(endFrame) =>
+              onChange({
+                endFrame,
+                endFrameGenerationId: undefined,
+                staleReason:
+                  "The closing frame changed after the previous storyboard render. Generate the film again to use it.",
+              })
+            }
+            onGenerate={() => onGenerateFrame("end")}
+          />
+        </div>
+      </details>
       <label className="lf-continuity-note">
         <span>Continuity notes</span>
         <textarea
@@ -2069,6 +2084,16 @@ function SceneCard({
           onChange={onChange}
           onClose={() => setPickerOpen(false)}
         />
+      )}
+        </>
+      ) : (
+        <button
+          type="button"
+          className="lf-scene-collapsed-summary"
+          onClick={() => setExpanded(true)}
+        >
+          {scene.prompt.trim() || "Open this scene to add direction, timing and render controls."}
+        </button>
       )}
     </article>
   );
@@ -2449,7 +2474,7 @@ function Preview({
     generation?.status === "completed"
       ? "Render complete"
       : generation?.status === "queued"
-        ? "Waiting for worker"
+        ? "Assembling movie"
         : generation?.status === "preparing"
           ? "Preparing render"
           : generation?.status === "generating"
@@ -2459,9 +2484,10 @@ function Preview({
               : loading
                 ? "Rendering with runtime"
                 : "Ready";
-  const queueLabel = generation?.queuePosition
+  const queueLabel =
+    generation?.queuePosition && generation.queuePosition > 1
     ? `Queue position ${generation.queuePosition}`
-    : "Waiting for worker";
+    : "Setting up the render pipeline";
   const activityLabel =
     generation?.runtimeMessage ||
     (generation?.status === "queued"
@@ -2522,6 +2548,12 @@ function Preview({
             data-help="Live render feedback from the runtime."
           >
             <div>
+              <span className="lf-render-spinner" aria-hidden="true">
+                <img
+                  src="/intelligensiai-ai-white.png"
+                  alt=""
+                />
+              </span>
               <strong>{progressLabel}</strong>
               <small>{activityLabel}</small>
               {runtimeCounter && <b>{runtimeCounter}</b>}

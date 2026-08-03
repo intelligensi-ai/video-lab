@@ -16,6 +16,7 @@ import {
   QueryClientProvider,
   useQuery,
   useMutation,
+  useQueryClient,
 } from "@tanstack/react-query";
 import type { Generation, RuntimeStatus, Me } from "@video-lab/contracts";
 import { useAuthenticatedVideo } from "./AuthenticatedVideo.js";
@@ -148,6 +149,14 @@ async function demoApi<T>(path: string, init: RequestInit = {}) {
     } as T;
   }
 
+  const deleteGenerationMatch = path.match(/^\/v1\/generations\/([^/]+)$/);
+  if (deleteGenerationMatch && method === "DELETE") {
+    writeDemoGenerations(
+      generations.filter((g) => g.id !== deleteGenerationMatch[1]),
+    );
+    return undefined as T;
+  }
+
   if (path === "/v1/generations" && method === "POST") {
     const body = JSON.parse(String(init.body ?? "{}")) as GenerationRequest;
     const generation: Generation = {
@@ -263,6 +272,7 @@ async function api<T>(path: string, init: RequestInit = {}) {
       }
       throw new Error(message);
     }
+    if (r.status === 204) return undefined as T;
     return r.json() as Promise<T>;
   } catch (error) {
     if (ENABLE_DEMO_API && error instanceof TypeError) {
@@ -890,20 +900,40 @@ function Gallery() {
     queryKey: ["gallery"],
     queryFn: () => api<{ items: Generation[] }>("/v1/gallery"),
   });
+  const queryClient = useQueryClient();
+  const deletion = useMutation({
+    mutationFn: (id: string) =>
+      api<void>(`/v1/generations/${id}`, { method: "DELETE" }),
+    onSuccess: (_result, id) => {
+      localStorage.removeItem(`vl_thumbnail_${id}`);
+      queryClient.setQueryData<{ items: Generation[] }>(
+        ["gallery"],
+        (current) => ({
+          items: (current?.items ?? []).filter((item) => item.id !== id),
+        }),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["gallery"] });
+    },
+  });
   return (
     <main className="gallery-page">
       <h1 className="editorial-page-title">
         Gallery<span className="editorial-title-stop">.</span>
       </h1>
+      {deletion.error && (
+        <p className="error" role="alert">
+          Delete failed: {deletion.error.message}
+        </p>
+      )}
       <div className="gallery-grid">
         {q.data?.items.length ? (
           q.data.items.map((g) => (
-            <article className="card gallery-card" key={g.id}>
-              <GalleryArtifact generation={g} />
-              <h3>{g.prompt}</h3>
-              <p>{new Date(g.createdAt).toLocaleString()}</p>
-              <Link to={`/generations/${g.id}`}>Open details</Link>
-            </article>
+            <GalleryCard
+              generation={g}
+              key={g.id}
+              deleting={deletion.variables === g.id && deletion.isPending}
+              onDelete={(id) => deletion.mutate(id)}
+            />
           ))
         ) : (
           <p className={q.error ? "error" : "empty"}>
@@ -916,16 +946,170 @@ function Gallery() {
     </main>
   );
 }
+function GalleryCard({
+  generation,
+  deleting,
+  onDelete,
+}: {
+  generation: Generation;
+  deleting: boolean;
+  onDelete: (id: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const promptNeedsToggle = generation.prompt.length > 190;
+  const requestDelete = () => {
+    const confirmed = window.confirm(
+      "Delete this video from your gallery and Firebase Storage?",
+    );
+    if (confirmed) onDelete(generation.id);
+  };
+  return (
+    <article className="card gallery-card">
+      <GalleryArtifact generation={generation} />
+      <button
+        className="gallery-delete"
+        type="button"
+        aria-label="Delete video"
+        disabled={deleting}
+        onClick={requestDelete}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 6h18" />
+          <path d="M8 6V4h8v2" />
+          <path d="M19 6l-1 14H6L5 6" />
+          <path d="M10 11v5" />
+          <path d="M14 11v5" />
+        </svg>
+      </button>
+      <div className="gallery-card-body">
+        <div className="gallery-card-meta">
+          <span>{generation.status}</span>
+          <time dateTime={generation.createdAt}>
+            {new Date(generation.createdAt).toLocaleString()}
+          </time>
+        </div>
+        <h3 className={expanded ? "expanded" : ""}>{generation.prompt}</h3>
+        {promptNeedsToggle && (
+          <button
+            className="gallery-prompt-toggle"
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "View less" : "View more"}
+          </button>
+        )}
+        <Link className="gallery-card-link" to={`/generations/${generation.id}`}>
+          Open details
+        </Link>
+      </div>
+    </article>
+  );
+}
 function GalleryArtifact({ generation }: { generation: Generation }) {
   const video = useAuthenticatedVideo(generation.output?.downloadUrl);
-  if (video.objectUrl) {
+  const storageKey = `vl_thumbnail_${generation.id}`;
+  const [thumbnail, setThumbnail] = useState(
+    () => localStorage.getItem(storageKey) ?? "",
+  );
+
+  useEffect(() => {
+    if (thumbnail || !video.objectUrl) return;
+    const source = document.createElement("video");
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return;
+    let cancelled = false;
+    let best: { score: number; image: string } | undefined;
+    let sampleIndex = 0;
+    const samplePositions = [0.12, 0.28, 0.44, 0.6, 0.76, 0.9];
+    canvas.width = 640;
+    canvas.height = 480;
+    source.src = video.objectUrl;
+    source.muted = true;
+    source.playsInline = true;
+    source.preload = "auto";
+
+    const finish = () => {
+      if (cancelled || !best) return;
+      try {
+        localStorage.setItem(storageKey, best.image);
+      } catch {
+        /* Thumbnail cache is optional. */
+      }
+      setThumbnail(best.image);
+    };
+    const sample = () => {
+      if (cancelled) return;
+      const width = source.videoWidth;
+      const height = source.videoHeight;
+      if (!width || !height) return finish();
+      const sourceRatio = width / height;
+      const targetRatio = 4 / 3;
+      let sx = 0;
+      let sy = 0;
+      let sw = width;
+      let sh = height;
+      if (sourceRatio > targetRatio) {
+        sw = height * targetRatio;
+        sx = (width - sw) / 2;
+      } else {
+        sh = width / targetRatio;
+        sy = (height - sh) / 2;
+      }
+      context.drawImage(source, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let luminanceTotal = 0;
+      let luminanceSquared = 0;
+      for (let index = 0; index < pixels.length; index += 16) {
+        const luminance =
+          pixels[index] * 0.2126 +
+          pixels[index + 1] * 0.7152 +
+          pixels[index + 2] * 0.0722;
+        luminanceTotal += luminance;
+        luminanceSquared += luminance * luminance;
+      }
+      const count = pixels.length / 16;
+      const mean = luminanceTotal / count;
+      const variance = Math.max(0, luminanceSquared / count - mean * mean);
+      if (mean > 18 && mean < 237) {
+        const score = variance + Math.min(mean, 255 - mean) * 12;
+        if (!best || score > best.score)
+          best = { score, image: canvas.toDataURL("image/jpeg", 0.78) };
+      }
+      sampleIndex += 1;
+      if (sampleIndex >= samplePositions.length) finish();
+      else
+        source.currentTime = Math.max(
+          0.01,
+          source.duration * samplePositions[sampleIndex],
+        );
+    };
+    source.addEventListener(
+      "loadedmetadata",
+      () => {
+        source.currentTime = Math.max(
+          0.01,
+          source.duration * samplePositions[0],
+        );
+      },
+      { once: true },
+    );
+    source.addEventListener("seeked", sample);
+    source.addEventListener("error", finish, { once: true });
+    return () => {
+      cancelled = true;
+      source.removeAttribute("src");
+      source.load();
+    };
+  }, [storageKey, thumbnail, video.objectUrl]);
+
+  if (thumbnail) {
     return (
-      <video
-        className="video-preview gallery-media"
-        src={video.objectUrl}
-        controls
-        preload="metadata"
-      />
+      <div className="gallery-media gallery-thumbnail">
+        <img src={thumbnail} alt="Video thumbnail" />
+        <span aria-hidden="true" />
+      </div>
     );
   }
   if (video.error) {
@@ -1335,14 +1519,28 @@ function Account() {
       .map((part) => part[0])
       .join("")
       .toUpperCase() || "VL";
-  const avatarOptions = [
+  const avatarOptions: Array<{
+    id: string;
+    label: string;
+    tone: string;
+    avatarPosition?: string;
+  }> = [
     ...(googlePhoto
       ? [{ id: "google", label: "Google photo", tone: "google" }]
       : []),
-    { id: "teal", label: "Teal initials", tone: "teal" },
-    { id: "ink", label: "Ink initials", tone: "ink" },
-    { id: "coral", label: "Coral initials", tone: "coral" },
+    { id: "avatar-1", label: "Avatar 1", tone: "generated", avatarPosition: "0% 0%" },
+    { id: "avatar-2", label: "Avatar 2", tone: "generated", avatarPosition: "33.333% 0%" },
+    { id: "avatar-3", label: "Avatar 3", tone: "generated", avatarPosition: "66.667% 0%" },
+    { id: "avatar-4", label: "Avatar 4", tone: "generated", avatarPosition: "100% 0%" },
+    { id: "avatar-5", label: "Avatar 5", tone: "generated", avatarPosition: "0% 100%" },
+    { id: "avatar-6", label: "Avatar 6", tone: "generated", avatarPosition: "33.333% 100%" },
+    { id: "avatar-7", label: "Avatar 7", tone: "generated", avatarPosition: "66.667% 100%" },
+    { id: "avatar-8", label: "Avatar 8", tone: "generated", avatarPosition: "100% 100%" },
   ];
+  const selectedAvatar =
+    avatarOptions.find((option) => option.id === avatarChoice) ??
+    avatarOptions.find((option) => option.avatarPosition);
+  const selectedAvatarId = selectedAvatar?.id ?? avatarChoice;
   return (
     <main className="account-page">
       <h1 className="editorial-page-title">
@@ -1357,6 +1555,16 @@ function Account() {
                   className="account-avatar"
                   src={googlePhoto}
                   alt="Google account profile"
+                />
+              ) : selectedAvatar?.avatarPosition ? (
+                <span
+                  className="account-avatar account-avatar-generated"
+                  style={
+                    {
+                      "--avatar-position": selectedAvatar.avatarPosition,
+                    } as React.CSSProperties
+                  }
+                  aria-label="Selected profile avatar"
                 />
               ) : (
                 <span
@@ -1410,6 +1618,26 @@ function Account() {
               </p>
             )}
           </section>
+
+          <section className="panel account-security">
+            <span className="account-eyebrow">Account controls</span>
+            <h2>Privacy and access</h2>
+            <p>
+              Trial granted{" "}
+              {me.data?.trialGrantedAt
+                ? new Date(me.data.trialGrantedAt).toLocaleDateString()
+                : "—"}
+              . For a data deletion request, contact operations.
+            </p>
+            <button
+              onClick={async () => {
+                await signOutUser();
+                location.href = "/";
+              }}
+            >
+              Sign out
+            </button>
+          </section>
         </div>
 
         <div className="account-column">
@@ -1442,21 +1670,30 @@ function Account() {
             <fieldset className="account-avatar-picker">
               <legend>Select an avatar</legend>
               {avatarOptions.map((option) => {
-                const useGooglePhoto = option.id === "google" && googlePhoto;
+	                const useGooglePhoto = option.id === "google" && googlePhoto;
                 return (
                   <label
                     key={option.id}
-                    className={avatarChoice === option.id ? "selected" : ""}
+                    className={selectedAvatarId === option.id ? "selected" : ""}
                   >
                     <input
                       type="radio"
                       name="account-avatar"
                       value={option.id}
-                      checked={avatarChoice === option.id}
+                      checked={selectedAvatarId === option.id}
                       onChange={() => setAvatarChoice(option.id)}
                     />
                     {useGooglePhoto ? (
                       <img src={googlePhoto} alt="" />
+                    ) : option.avatarPosition ? (
+                      <span
+                        className="account-avatar-option generated"
+                        style={
+                          {
+                            "--avatar-position": option.avatarPosition,
+                          } as React.CSSProperties
+                        }
+                      />
                     ) : (
                       <span className={`account-avatar-option ${option.tone}`}>
                         {initials}
@@ -1467,26 +1704,6 @@ function Account() {
                 );
               })}
             </fieldset>
-          </section>
-
-          <section className="panel account-security">
-            <span className="account-eyebrow">Account controls</span>
-            <h2>Privacy and access</h2>
-            <p>
-              Trial granted{" "}
-              {me.data?.trialGrantedAt
-                ? new Date(me.data.trialGrantedAt).toLocaleDateString()
-                : "—"}
-              . For a data deletion request, contact operations.
-            </p>
-            <button
-              onClick={async () => {
-                await signOutUser();
-                location.href = "/";
-              }}
-            >
-              Sign out
-            </button>
           </section>
         </div>
       </div>

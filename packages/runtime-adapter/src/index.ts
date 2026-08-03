@@ -347,6 +347,33 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     }
   }
 
+  async verifyProtectedAccess(): Promise<{
+    ok: boolean;
+    status: number;
+    message?: string;
+  }> {
+    const path = this.path(
+      this.cfg.statusPath ?? this.defaultPath("status"),
+      "video-lab-auth-check",
+    );
+    const res = await this.request(
+      path,
+      {},
+      Math.min(this.cfg.timeoutMs ?? 120_000, 8_000),
+    );
+    if (res.status === 401 || res.status === 403 || res.status === 503) {
+      let message = `${res.status} ${res.statusText}`;
+      try {
+        const body = (await res.clone().json()) as { error?: string };
+        if (body.error) message = body.error;
+      } catch {
+        // Keep the HTTP status detail.
+      }
+      return { ok: false, status: res.status, message };
+    }
+    return { ok: true, status: res.status };
+  }
+
   private payload(input: RuntimeGenerationInput) {
     if (
       this.cfg.payloadMode === "deploy-studio" ||
@@ -849,13 +876,20 @@ function payloadModeFromEnv(
     : undefined;
 }
 
+function videoLabRuntimeApiKey() {
+  return (
+    process.env.VIDEO_LAB_RUNTIME_API_KEY ??
+    process.env.VIDEO_RUNTIME_API_TOKEN
+  );
+}
+
 export function createRuntimeFromEnv(): VideoRuntimeAdapter {
   return ["sulphur-ltx", "intelligensi-api"].includes(
     process.env.VIDEO_RUNTIME_PROVIDER ?? "",
   )
     ? new SulphurLtxRuntimeAdapter({
         baseUrl: process.env.VIDEO_RUNTIME_BASE_URL,
-        token: process.env.VIDEO_RUNTIME_API_TOKEN,
+        token: videoLabRuntimeApiKey(),
         runtimeId: process.env.VIDEO_RUNTIME_ID,
         healthPath: process.env.VIDEO_RUNTIME_HEALTH_PATH,
         submitPath: process.env.VIDEO_RUNTIME_SUBMIT_PATH,

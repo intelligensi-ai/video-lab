@@ -20,15 +20,16 @@ with:
 VIDEO_RUNTIME_PROVIDER=intelligensi-api
 VIDEO_RUNTIME_BASE_URL=https://api.intelligensi.ai
 VIDEO_RUNTIME_ID=longform-ltx-storyboard-studio
-VIDEO_RUNTIME_API_TOKEN=<server-held Intelligensi API key>
+VIDEO_LAB_RUNTIME_API_KEY=<server-held Intelligensi API key>
 VIDEO_RUNTIME_PAYLOAD_MODE=intelligensi-api
 VIDEO_RUNTIME_AUTH_HEADER=X-Intelligensi-API-Key
 VIDEO_RUNTIME_AUTH_SCHEME=none
 ```
 
-The matching Deploy Studio secret is `VIDEO_LAB_RUNTIME_API_KEY`. This is a
-dedicated Video Lab service credential and must not be the Lambda Cloud
-`LAMBDA_API_KEY` used for instance provisioning.
+The matching Deploy Studio secret is also `VIDEO_LAB_RUNTIME_API_KEY`. This is
+a dedicated Video Lab service credential and must not be the Lambda Cloud
+`LAMBDA_API_KEY` used for instance provisioning. `VIDEO_RUNTIME_API_TOKEN`
+remains a backward-compatible alias only.
 
 Video Lab calls only `/v1/runtimes/{runtimeId}/...`. Deploy Studio resolves and
 validates the renewable runtime lease, authenticates the server caller,
