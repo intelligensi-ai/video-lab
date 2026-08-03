@@ -30,6 +30,7 @@ import {
   DeployStudioStoryboardEnhancerClient,
   mockStoryboardEnhancement,
   SulphurLtxRuntimeAdapter,
+  RuntimeCapacityPendingError,
   type RuntimeGenerationInput,
 } from "@video-lab/runtime-adapter";
 import { log, nowIso, problem } from "@video-lab/shared";
@@ -50,6 +51,7 @@ type StoredGeneration = Generation & {
   outputBytes?: Uint8Array;
   outputContentType?: string;
   outputObjectPath?: string;
+  outputSha256?: string;
 };
 type StoredAsset = {
   id: string;
@@ -138,6 +140,7 @@ function publicGeneration(g: StoredGeneration): Generation {
     outputBytes: _outputBytes,
     outputContentType: _outputContentType,
     outputObjectPath: _outputObjectPath,
+    outputSha256: _outputSha256,
     ...generation
   } = g;
   return {
@@ -297,6 +300,76 @@ async function hydrateAssetReferences(
   );
   return hydrated;
 }
+
+type PortableAssemblySource = {
+  url: string;
+  contentType: "video/mp4" | "video/webm";
+  sizeBytes: number;
+  sha256: string;
+};
+
+async function portableAssemblySource(
+  generation: StoredGeneration,
+): Promise<PortableAssemblySource> {
+  if (
+    !generation.outputContentType ||
+    !["video/mp4", "video/webm"].includes(generation.outputContentType)
+  )
+    throw new Error("invalid_assembly_sources");
+  const contentType =
+    generation.outputContentType as PortableAssemblySource["contentType"];
+  const maximumBytes = Math.max(
+    1,
+    Number(
+      process.env.VIDEO_LAB_ASSEMBLY_SOURCE_MAX_BYTES ??
+        160 * 1024 * 1024,
+    ),
+  );
+  if (localAuth) {
+    const bytes = generation.outputBytes;
+    if (!bytes?.byteLength || bytes.byteLength > maximumBytes)
+      throw new Error("invalid_assembly_sources");
+    return {
+      url: `data:${contentType};base64,${Buffer.from(bytes).toString("base64")}`,
+      contentType,
+      sizeBytes: bytes.byteLength,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+  }
+  if (
+    !generation.outputObjectPath ||
+    !generation.outputObjectPath.startsWith(
+      `users/${generation.uid}/outputs/`,
+    )
+  )
+    throw new Error("invalid_assembly_sources");
+  adminApp();
+  const file = getStorage().bucket().file(generation.outputObjectPath);
+  const [metadata] = await file.getMetadata();
+  const sizeBytes = Number(metadata.size);
+  if (
+    !Number.isInteger(sizeBytes) ||
+    sizeBytes < 1 ||
+    sizeBytes > maximumBytes
+  )
+    throw new Error("invalid_assembly_sources");
+  let sha256 = generation.outputSha256;
+  if (!sha256 || !/^[a-f0-9]{64}$/.test(sha256)) {
+    const [bytes] = await file.download();
+    if (bytes.byteLength !== sizeBytes || bytes.byteLength > maximumBytes)
+      throw new Error("invalid_assembly_sources");
+    sha256 = createHash("sha256").update(bytes).digest("hex");
+    generation.outputSha256 = sha256;
+    await persistGeneration(generation);
+  }
+  const [url] = await file.getSignedUrl({
+    version: "v4",
+    action: "read",
+    expires: Date.now() + 15 * 60_000,
+  });
+  return { url, contentType, sizeBytes, sha256 };
+}
+
 async function runtimeGeneration(
   g: StoredGeneration,
 ): Promise<RuntimeGenerationInput> {
@@ -307,6 +380,7 @@ async function runtimeGeneration(
   const settings = { ...hydrated } as Generation["settings"] & {
     acceptedSceneGenerationIds?: unknown;
     assemblyJobIds?: string[];
+    assemblySources?: PortableAssemblySource[];
   };
   if (settings.operationScope === "assembly") {
     const acceptedIds = settings.acceptedSceneGenerationIds;
@@ -319,7 +393,7 @@ async function runtimeGeneration(
     ) {
       throw new Error("invalid_assembly_sources");
     }
-    const runtimeJobIds: string[] = [];
+    const assemblySources: PortableAssemblySource[] = [];
     for (let index = 0; index < acceptedIds.length; index += 1) {
       const generationId = String(acceptedIds[index] ?? "");
       const accepted = await findGeneration(generationId);
@@ -333,11 +407,11 @@ async function runtimeGeneration(
         accepted.settings.operationScope !== "scene" ||
         accepted.settings.operationSceneId !== expectedSceneId ||
         accepted.settings.projectId !== settings.projectId ||
-        !accepted.runtimeJobId
+        !accepted.output
       ) {
         throw new Error("invalid_assembly_sources");
       }
-      runtimeJobIds.push(accepted.runtimeJobId);
+      assemblySources.push(await portableAssemblySource(accepted));
     }
     settings.storyboard = storyboard.map((scene) => {
       const duration = Number((scene as { duration?: unknown }).duration);
@@ -351,7 +425,8 @@ async function runtimeGeneration(
       const duration = Number((scene as { duration?: unknown }).duration);
       return total + (Number.isFinite(duration) ? duration : 0);
     }, 0);
-    settings.assemblyJobIds = runtimeJobIds;
+    settings.assemblySources = assemblySources;
+    delete settings.assemblyJobIds;
     delete settings.acceptedSceneGenerationIds;
   }
   return {
@@ -1016,6 +1091,7 @@ async function completeGenerationFromRuntime(
       chargeCredits(wallets.get(generation.uid)!, generation.creditCost),
     );
   const outputObjectPath = `users/${generation.uid}/outputs/${generation.id}.${outputExtension(out.contentType)}`;
+  const outputSha256 = createHash("sha256").update(out.bytes).digest("hex");
   if (!localAuth) {
     adminApp();
     await getStorage()
@@ -1024,7 +1100,10 @@ async function completeGenerationFromRuntime(
       .save(Buffer.from(out.bytes), {
         resumable: false,
         contentType: out.contentType,
-        metadata: { cacheControl: "private,no-store" },
+        metadata: {
+          cacheControl: "private,no-store",
+          metadata: { sha256: outputSha256 },
+        },
       });
   }
   const completed: StoredGeneration = {
@@ -1042,6 +1121,7 @@ async function completeGenerationFromRuntime(
     ...(localAuth ? { outputBytes: out.bytes } : {}),
     outputObjectPath,
     outputContentType: out.contentType,
+    outputSha256,
     updatedAt: nowIso(),
   };
   gens.set(generation.id, completed);
@@ -1346,22 +1426,76 @@ async function finishQueueItem(item: QueueItem, uid?: string) {
   });
 }
 
-async function refreshQueueDepth() {
+async function requeueQueueItem(item: QueueItem) {
   if (localAuth) {
-    runtimeState.queueDepth = queue.filter(
-      (item) => item.status !== "done",
-    ).length;
+    item.status = "queued";
+    item.claimedBy = undefined;
+    item.leaseExpiresAt = undefined;
     return;
   }
   adminApp();
-  const snapshot = await getFirestore()
-    .collection("runtimeState")
-    .doc(queueMetricsDocument)
-    .get();
-  runtimeState.queueDepth = Math.max(
-    0,
-    Number(snapshot.data()?.outstanding ?? 0),
-  );
+  await getFirestore()
+    .collection(generationQueueCollection)
+    .doc(item.generationId)
+    .set(
+      {
+        status: "queued",
+        claimedBy: null,
+        leaseExpiresAt: null,
+        capacityRetryAt: nowIso(),
+      },
+      { merge: true },
+    );
+}
+
+async function refreshQueueDepth() {
+  let oldestQueuedJobAgeSeconds: number;
+  if (localAuth) {
+    const outstanding = queue.filter(
+      (item) => item.status !== "done",
+    );
+    runtimeState.queueDepth = outstanding.length;
+    const oldest = outstanding
+      .map((item) => Date.parse(item.createdAt))
+      .filter(Number.isFinite)
+      .sort((left, right) => left - right)[0];
+    oldestQueuedJobAgeSeconds = oldest
+      ? Math.max(0, Math.floor((Date.now() - oldest) / 1_000))
+      : 0;
+  } else {
+    adminApp();
+    const firestore = getFirestore();
+    const [snapshot, oldestSnapshot] = await Promise.all([
+      firestore.collection("runtimeState").doc(queueMetricsDocument).get(),
+      firestore
+        .collection(generationQueueCollection)
+        .where("status", "==", "queued")
+        .orderBy("createdAt", "asc")
+        .limit(1)
+        .get(),
+    ]);
+    runtimeState.queueDepth = Math.max(
+      0,
+      Number(snapshot.data()?.outstanding ?? 0),
+    );
+    const oldest = oldestSnapshot.docs[0]?.data()?.createdAt;
+    oldestQueuedJobAgeSeconds =
+      typeof oldest === "string" && Number.isFinite(Date.parse(oldest))
+        ? Math.max(0, Math.floor((Date.now() - Date.parse(oldest)) / 1_000))
+        : 0;
+  }
+  if (runtime.reportCapacityDemand) {
+    await runtime
+      .reportCapacityDemand(
+        runtimeState.queueDepth,
+        oldestQueuedJobAgeSeconds,
+      )
+      .catch((error) =>
+        log("runtime_capacity_report_failed", {
+          errorCode: operationalErrorCode(error),
+        }),
+      );
+  }
 }
 async function principal(req: express.Request): Promise<Principal> {
   const h = req.header("authorization");
@@ -2373,7 +2507,10 @@ app.post(
         if (!project)
           throw problem(404, "project_not_found", "Project not found");
       }
-      if (Object.prototype.hasOwnProperty.call(settings, "assemblyJobIds"))
+      if (
+        Object.prototype.hasOwnProperty.call(settings, "assemblyJobIds") ||
+        Object.prototype.hasOwnProperty.call(settings, "assemblySources")
+      )
         throw problem(
           400,
           "invalid_assembly_sources",
@@ -2506,6 +2643,11 @@ app.post(
       };
       log("generation_submitted", { uid: p.uid, generationId: id });
       res.status(201).json(publicGeneration(gen));
+      void refreshQueueDepth().catch((error) =>
+        log("runtime_capacity_refresh_failed", {
+          errorCode: operationalErrorCode(error),
+        }),
+      );
       if (
         process.env.NODE_ENV !== "test" &&
         process.env.NODE_ENV !== "production" &&
@@ -2838,6 +2980,7 @@ async function processQueueItem(workerId = "local-worker") {
     await refreshQueueDepth();
     return true;
   }
+  let finishClaim = true;
   try {
     const preparing = {
       ...g,
@@ -2892,6 +3035,25 @@ async function processQueueItem(workerId = "local-worker") {
       await completeGenerationFromRuntime(gens.get(g.id)!, sub.runtimeJobId);
     } else throw new Error(st.message ?? st.state);
   } catch (e) {
+    if (e instanceof RuntimeCapacityPendingError) {
+      finishClaim = false;
+      const waiting: StoredGeneration = {
+        ...(gens.get(g.id) ?? g),
+        status: "queued",
+        queuePosition: Math.max(1, g.queuePosition ?? 1),
+        runtimeMessage: "Preparing generation capacity",
+        safeErrorMessage: undefined,
+        updatedAt: nowIso(),
+      };
+      gens.set(g.id, waiting);
+      await persistGeneration(waiting);
+      await requeueQueueItem(item);
+      log("generation_waiting_for_capacity", {
+        generationId: g.id,
+        retryAfterSeconds: e.retryAfterSeconds,
+      });
+      return true;
+    }
     const detail = e instanceof Error ? e.message : String(e);
     const wallet = wallets.get(g.uid);
     let creditsReturned = false;
@@ -2930,7 +3092,7 @@ async function processQueueItem(workerId = "local-worker") {
       creditsReturned,
     });
   } finally {
-    await finishQueueItem(item, g.uid);
+    if (finishClaim) await finishQueueItem(item, g.uid);
     await refreshQueueDepth();
     runtimeState = { ...runtimeState, updatedAt: nowIso() };
   }
@@ -2939,17 +3101,48 @@ async function processQueueItem(workerId = "local-worker") {
 export async function processOne(workerId = "local-worker") {
   await processQueueItem(workerId);
 }
-let workerPromise: Promise<boolean> | undefined;
+export function workerConcurrencyLimit(env: NodeJS.ProcessEnv = process.env) {
+  const configured = Number(env.VIDEO_LAB_WORKER_CONCURRENCY ?? 2);
+  return Number.isInteger(configured)
+    ? Math.max(1, Math.min(20, configured))
+    : 2;
+}
+const activeWorkerPromises = new Set<Promise<boolean>>();
+
+function startQueueWorker() {
+  let worker: Promise<boolean>;
+  worker = processQueueItem(`web-triggered-worker-${nanoid(8)}`).finally(() => {
+    activeWorkerPromises.delete(worker);
+  });
+  activeWorkerPromises.add(worker);
+  return worker;
+}
+
 const processNextHandler = async (
   _req: express.Request,
   res: express.Response,
 ) => {
-  if (!workerPromise)
-    workerPromise = processQueueItem(`web-triggered-worker-${nanoid(8)}`).finally(() => {
-      workerPromise = undefined;
+  const availableSlots = Math.max(
+    0,
+    workerConcurrencyLimit() - activeWorkerPromises.size,
+  );
+  if (!availableSlots) {
+    res.status(202).json({
+      ok: true,
+      processed: false,
+      processedCount: 0,
+      capacity: "scheduler_busy",
     });
-  const processed = await workerPromise;
-  res.json({ ok: true, processed });
+    return;
+  }
+  const results = await Promise.all(
+    Array.from({ length: availableSlots }, () => startQueueWorker()),
+  );
+  res.json({
+    ok: true,
+    processed: results.some(Boolean),
+    processedCount: results.filter(Boolean).length,
+  });
 };
 async function internalWorker(
   req: express.Request,

@@ -12,5 +12,5 @@
 - Refund generation: admin credit adjustment with audit reason.
 - Suspend abusive account: update server-controlled user status and audit.
 - Restore service: clear kill switch by resume after runtime health passes.
-- Worker invocation: call `/v1/internal/process-next` only from the trusted scheduler with `VIDEO_LAB_WORKER_TOKEN`; one invocation claims at most one FIFO item and returns `processed: false` when the queue is empty. Invoke again after completion or on the next bounded schedule tick. Rotate the token if it appears in logs or configuration output.
+- Worker invocation: call `/v1/internal/process-next` only from the trusted scheduler with `VIDEO_LAB_WORKER_TOKEN`. One invocation fills the bounded local dispatcher up to `VIDEO_LAB_WORKER_CONCURRENCY`; transactional queue claims and Deploy Studio pool reservations prevent duplicate assignment. Capacity misses return the generation to the durable queue instead of failing it. Invoke again after completion or on the next bounded schedule tick. Rotate the token if it appears in logs or configuration output.
 - Runtime rotation: publish a fresh Deploy Studio lease, wait for Video Lab readiness, then retire the old endpoint. Production environment fallback should remain disabled.

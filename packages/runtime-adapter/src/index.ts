@@ -31,6 +31,12 @@ export interface RuntimeVideoSettings {
   seedMode?: string;
   baseSeed?: number;
   assemblyJobIds?: string[];
+  assemblySources?: Array<{
+    url: string;
+    contentType: "video/mp4" | "video/webm";
+    sizeBytes: number;
+    sha256: string;
+  }>;
   overallGoal?: string;
   projectId?: string;
   operationScope?:
@@ -100,6 +106,16 @@ export interface RuntimeSubmission {
   runtimeJobId: string;
 }
 
+export class RuntimeCapacityPendingError extends Error {
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds = 20) {
+    super("runtime_capacity_pending");
+    this.name = "RuntimeCapacityPendingError";
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 export interface RuntimeGenerationStatus {
   state:
     | "queued"
@@ -151,6 +167,10 @@ export interface VideoRuntimeAdapter {
   getGenerationStatus(runtimeJobId: string): Promise<RuntimeGenerationStatus>;
   cancelGeneration(runtimeJobId: string): Promise<RuntimeCancelResult>;
   fetchOutput(runtimeJobId: string): Promise<RuntimeOutput>;
+  reportCapacityDemand?(
+    queueDepth: number,
+    oldestQueuedJobAgeSeconds: number,
+  ): Promise<void>;
 }
 
 export class MockVideoRuntimeAdapter implements VideoRuntimeAdapter {
@@ -437,6 +457,12 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
           seed_mode: settings.seedMode ?? "per_scene",
           base_seed: settings.baseSeed ?? settings.seed,
           assembly_job_ids: settings.assemblyJobIds,
+          assembly_sources: settings.assemblySources?.map((source) => ({
+            url: source.url,
+            content_type: source.contentType,
+            size_bytes: source.sizeBytes,
+            sha256: source.sha256,
+          })),
           global_visual_anchor_base64: settings.globalVisualAnchorBase64,
           storyboard: storyboard.map((scene) => ({
             id: scene.id,
@@ -660,6 +686,23 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     };
   }
 
+  async reportCapacityDemand(
+    queueDepth: number,
+    oldestQueuedJobAgeSeconds: number,
+  ): Promise<void> {
+    if (this.cfg.payloadMode !== "intelligensi-api") return;
+    const res = await this.request(
+      this.gatewayPath("/capacity-demand"),
+      {
+        method: "POST",
+        body: JSON.stringify({ queueDepth, oldestQueuedJobAgeSeconds }),
+      },
+      Math.min(this.cfg.timeoutMs ?? 120_000, 8_000),
+    );
+    if (!res.ok)
+      throw new Error(`Deploy Studio capacity report failed: ${await res.text()}`);
+  }
+
   async submitGeneration(
     input: RuntimeGenerationInput,
   ): Promise<RuntimeSubmission> {
@@ -674,8 +717,13 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       },
     );
 
-    if (!res.ok)
-      throw new Error(`Sulphur submission failed: ${await res.text()}`);
+    if (!res.ok) {
+      const responseText = await res.text();
+      if (res.status === 429 && /runtime_capacity_pending|rate_limited/i.test(responseText)) {
+        throw new RuntimeCapacityPendingError(Number(res.headers.get("retry-after")) || 20);
+      }
+      throw new Error(`Sulphur submission failed: ${responseText}`);
+    }
     const json = (await res.json()) as {
       id?: string;
       jobId?: string;

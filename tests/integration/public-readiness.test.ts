@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import request from "supertest";
-import { app, processOne } from "../../apps/api/src/index.js";
+import { app, processOne, workerConcurrencyLimit } from "../../apps/api/src/index.js";
 
 const emptyBible = {
   characters: "",
@@ -52,6 +52,11 @@ const projectForm = (sceneCount = 2) => ({
 });
 
 describe("public runtime readiness boundaries", () => {
+  it("bounds distributed dispatcher concurrency", () => {
+    expect(workerConcurrencyLimit({ VIDEO_LAB_WORKER_CONCURRENCY: "2" } as NodeJS.ProcessEnv)).toBe(2);
+    expect(workerConcurrencyLimit({ VIDEO_LAB_WORKER_CONCURRENCY: "999" } as NodeJS.ProcessEnv)).toBe(20);
+    expect(workerConcurrencyLimit({ VIDEO_LAB_WORKER_CONCURRENCY: "invalid" } as NodeJS.ProcessEnv)).toBe(2);
+  });
   it("rejects untrusted browser origins", async () => {
     const response = await request(app)
       .options("/v1/me")

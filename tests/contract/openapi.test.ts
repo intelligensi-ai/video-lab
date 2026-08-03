@@ -79,7 +79,7 @@ describe("Deploy Studio runtime API compatibility", () => {
 
   contractIt("matches the authoritative LongForm gateway surface", () => {
     const runtime = YAML.parse(fs.readFileSync(deployContractPath, "utf8"));
-    expect(runtime.info.version).toBe("1.1.0");
+    expect(runtime.info.version).toBe("1.2.0");
     expect(runtime.components.securitySchemes.ApiKeyAuth).toMatchObject({
       type: "apiKey",
       in: "header",
@@ -89,6 +89,7 @@ describe("Deploy Studio runtime API compatibility", () => {
       "/v1/runtimes",
       "/v1/runtimes/{runtimeId}",
       "/v1/runtimes/{runtimeId}/health",
+      "/v1/runtimes/{runtimeId}/capacity-demand",
       "/v1/runtimes/{runtimeId}/preview",
       "/v1/runtimes/{runtimeId}/jobs/{jobId}",
       "/v1/runtimes/{runtimeId}/jobs/{jobId}/cancel",

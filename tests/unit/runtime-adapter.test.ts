@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SulphurLtxRuntimeAdapter } from "../../packages/runtime-adapter/src/index.js";
+import { RuntimeCapacityPendingError, SulphurLtxRuntimeAdapter } from "../../packages/runtime-adapter/src/index.js";
 
 describe("SulphurLtxRuntimeAdapter", () => {
   afterEach(() => {
@@ -335,6 +335,78 @@ describe("SulphurLtxRuntimeAdapter", () => {
       operation_scope: "assembly",
       assembly_job_ids: ["runtime-scene-1", "runtime-scene-2"],
     });
+  });
+
+  it("maps verified portable assembly artifacts without exposing storage to the browser", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Response.json({ id: "portable-assembly-job" }, { status: 202 });
+    }));
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.test",
+      payloadMode: "intelligensi-api",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+    await adapter.submitGeneration({
+      prompt: "Assemble portable accepted clips",
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        aspectRatio: "16:9",
+        durationSeconds: 8,
+        quality: "draft",
+        operationScope: "assembly",
+        assemblySources: [{
+          url: "https://storage.googleapis.com/private-signed-object",
+          contentType: "video/mp4",
+          sizeBytes: 1024,
+          sha256: "a".repeat(64),
+        }],
+        storyboard: [{
+          id: "scene-1",
+          title: "Scene 1",
+          prompt: "Scene direction",
+          duration: 4,
+          trimStart: 0,
+          trimEnd: 4,
+          seed: 1337,
+          transition: "cut",
+          transitionDuration: 0.75,
+          carryPreviousFrame: false,
+        }],
+      },
+    });
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({
+      assembly_sources: [{
+        url: "https://storage.googleapis.com/private-signed-object",
+        content_type: "video/mp4",
+        size_bytes: 1024,
+        sha256: "a".repeat(64),
+      }],
+    });
+  });
+
+  it("reports managed demand and classifies temporary pool exhaustion", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(String(url));
+      if (String(url).endsWith("/capacity-demand")) return Response.json({ accepted: true, observedAt: new Date().toISOString() }, { status: 202 });
+      return Response.json({ code: "runtime_capacity_pending" }, { status: 429, headers: { "Retry-After": "17" } });
+    }));
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.test",
+      payloadMode: "intelligensi-api",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+    await expect(adapter.reportCapacityDemand(3, 75)).resolves.toBeUndefined();
+    await expect(adapter.submitGeneration({
+      prompt: "Wait safely for capacity",
+      settings: { aspectRatio: "16:9", durationSeconds: 4, quality: "draft" },
+    })).rejects.toMatchObject<Partial<RuntimeCapacityPendingError>>({
+      name: "RuntimeCapacityPendingError",
+      retryAfterSeconds: 17,
+    });
+    expect(calls[0]).toContain("/capacity-demand");
   });
 
   it("projects only safe LongForm capability metadata", async () => {
