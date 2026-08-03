@@ -1,8 +1,8 @@
 # Video Lab public runtime readiness
 
-Audit date: 2026-08-01
-Video Lab base revision audited: `e69c5cf060f397a733f7f4c9980945994ffc499e` on `main`
-Deploy Studio revision audited: `81decc8da3bc7191aa2c6bfce961d0398f6c52a1` on `main`
+Audit date: 2026-08-03
+Video Lab revision under audit: `a9563da8cd150bf392e38c2927abf3c818ec382b` on `main`
+Deploy Studio revision under audit: `926f3739caa30ebcbd95df5cd1facd564841b93c` on `main`
 
 ## Product boundary
 
@@ -35,6 +35,7 @@ The browser never selects an upstream URL and never receives a runtime origin, p
 
 - Removed the browser-side paid Gemini fallback. Prompt assistance now uses the existing local Gemma path or fails honestly without replacing user text.
 - Added strict production runtime-origin validation: HTTPS, origin-only URLs, explicit allow-list support, and rejection of loopback, private, link-local and unique-local targets.
+- Removed the remaining nested runtime-origin projection from public and administrator status responses; regression tests cover both top-level and nested non-disclosure.
 - Rejected upstream redirects and cross-origin artifact URLs in the runtime adapter.
 - Replaced direct browser/runtime traffic with authenticated same-origin API routes.
 - Removed the public queue-drain endpoint. Production processing requires a server-held worker token; the local development route is not registered in production.
@@ -51,6 +52,8 @@ The browser never selects an upstream URL and never receives a runtime origin, p
 - Added stable runtime idempotency keys so a queue lease retry cannot silently duplicate paid LongForm work.
 - Constrained storyboard projects to an allow-list, 24 shots, 512 KiB and no embedded base64 media.
 - Added transactional production idempotency, one-active-job-per-user enforcement, queue capacity, FIFO ordering and reclaimable worker leases. Each protected worker invocation processes one claimed item, so a large backlog cannot hold one HTTP request open for multiple paid generations.
+- Made the LongForm worker own its bearer-protected Gemma enhancement endpoint and private digest-pinned Ollama sidecar. The stable Runtime API validates exact shot cardinality and ordering before returning suggestions; the previous control-plane-only path is retained solely as a bounded migration fallback for the old approved image.
+- Bounded public gallery filters before Firestore and capped the process-local rate-limit identity map. Coordinated production enforcement still requires an edge or distributed limiter.
 - Pinned application and tool dependencies. Firebase Admin is pinned to compatible 13.x for the selected Functions SDK.
 - Upgraded the declarative SPA from vulnerable `react-router-dom` 6.30.4 to `react-router` 8.3.0, pinned transitive `uuid` to 11.1.1, and retained the patched URL/XML parser overrides. `pnpm audit --prod --audit-level moderate` reports no known production vulnerabilities.
 
@@ -91,7 +94,7 @@ Lambda's [official on-demand table](https://lambda.ai/instances) checked on 2026
 3. Configure a production allow-list, worker token, Deploy Studio enhancer token, runtime discovery lease and secret rotation procedure.
 4. Validate the Firebase Hosting CSP against the production authentication flow and add a distributed/edge rate limiter.
 5. Run desktop, mobile, keyboard and two-user browser acceptance against Firebase emulators or staging.
-6. Run one approved temporary GPU test through the Video Lab gateway, including Gemma, both frame edges, one short video, restart recovery and zero-instance confirmation.
+6. Complete the in-progress approved candidate GPU test through the Video Lab gateway, including real Gemma enhancement, both frame edges, one short video, two-user queue isolation, restart recovery and zero-instance confirmation.
 7. Produce and inspect SBOM/vulnerability results for the candidate Video Lab and LongForm images.
 8. Decide retention/deletion policy for prompts, frames, videos, idempotency records and completed queue records.
 9. Continue the route-level split beyond the 59.4 KiB LongForm chunk; the remaining Firebase/auth/account/admin shell is about 1,006.7 KiB minified and still triggers Vite's 500 KiB warning.

@@ -1,6 +1,6 @@
 # Deploy Studio runtime API contract audit
 
-Date: 2026-08-01
+Date: 2026-08-03
 
 Authoritative source:
 `Deploy Studio/docs/intelligensi-runtime-api.openapi.yaml`, version 1.1.0.
@@ -77,8 +77,8 @@ Lambda Cloud API key used to create or terminate provider instances.
 - Deploy Studio regression suite: 67/67 tests passed.
 - OpenAPI 3.1 validation of the authoritative contract.
 - Video Lab lint, TypeScript checks and production workspace build.
-- Video Lab regression suite: 70/70 tests passed, including adapter, enhancer
-  and cross-repository contract coverage.
+- Video Lab regression suite: 72/72 tests passed, including adapter, enhancer,
+  multi-user queue, bounded gallery query and cross-repository contract coverage.
 
 No LTX, Gemma, Docker, CUDA, frame generation or video generation ran on the
 local workstation.
@@ -115,7 +115,7 @@ field starts empty and clears after success, and the bundled UI contains no
 literal provider IP. Regression tests assert both top-level and nested
 non-disclosure. A second boundary repair replaced implicit non-production
 authentication with an explicit local-only opt-in and rejected HTTP runtime
-origins in production. All 70 tests, lint, TypeScript checks and the production build
+origins in production. All 72 tests, lint, TypeScript checks and the production build
 pass after the repair.
 
 The follow-up also aligned Video Lab's own OpenAPI document with the implemented
@@ -123,3 +123,13 @@ owner-authorized media download and administrator-only emergency connection
 routes. Reusable problem responses now document authentication, authorization,
 validation, not-found and rate-limit behaviour. Redocly validation completes
 without the previous 25 warnings.
+
+The audit then found that the stable storyboard endpoint still executed Gemma
+inside the Deploy Studio control-plane process. It worked only in the earlier
+smoke test because that test created a localhost Ollama tunnel. Deploy Studio
+`ed1b06a` moved the strict enhancer into the LongForm worker, packages
+`soul.md` and `enhancer.md` in the appliance, and launches a private
+digest-pinned Ollama sidecar with `gemma4:e4b`. The gateway now proxies the
+versioned request to the leased worker and independently validates exact shot
+count, order and required prompts. Paid candidate acceptance is required before
+the immutable production LongForm digest changes.
