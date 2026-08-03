@@ -365,7 +365,8 @@ function normalizeRuntimeBaseUrl(value: unknown) {
 let runtimeBaseUrl = normalizeRuntimeBaseUrl(
   process.env.VIDEO_RUNTIME_BASE_URL,
 );
-type RuntimeDiscovery = NonNullable<RuntimeStatus["discovery"]>;
+type PublicRuntimeDiscovery = NonNullable<RuntimeStatus["discovery"]>;
+type RuntimeDiscovery = PublicRuntimeDiscovery & { baseUrl?: string };
 let runtimeDiscovery: RuntimeDiscovery = {
   source: runtimeBaseUrl ? "environment" : "none",
   state: runtimeBaseUrl ? "waiting" : "unavailable",
@@ -835,13 +836,15 @@ async function refreshRuntimeHealth() {
   }
 }
 function publicRuntimeStatus(): RuntimeStatus {
+  const { baseUrl: _privateRuntimeOrigin, ...publicDiscovery } =
+    runtimeDiscovery;
   return {
     ...runtimeState,
     provider: runtimeState.provider === "mock" ? "mock" : "managed-longform",
     queueDepth: localAuth
       ? queue.filter((q) => q.status !== "done").length
       : runtimeState.queueDepth,
-    discovery: runtimeDiscovery,
+    discovery: publicDiscovery,
   };
 }
 function publicRuntimeProgress(st: Awaited<ReturnType<typeof runtime.getGenerationStatus>>) {

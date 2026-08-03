@@ -38,6 +38,7 @@ describe("api integration", () => {
       .expect(200);
     expect(status.body.provider).toBeTruthy();
     expect(status.body.baseUrl).toBeUndefined();
+    expect(status.body.discovery?.baseUrl).toBeUndefined();
     await request(app)
       .post("/api/v1/admin/runtime/discover")
       .set(auth)

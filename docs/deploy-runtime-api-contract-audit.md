@@ -77,7 +77,7 @@ Lambda Cloud API key used to create or terminate provider instances.
 - Deploy Studio regression suite: 67/67 tests passed.
 - OpenAPI 3.1 validation of the authoritative contract.
 - Video Lab lint, TypeScript checks and production workspace build.
-- Video Lab regression suite: 62/62 tests passed, including adapter, enhancer
+- Video Lab regression suite: 68/68 tests passed, including adapter, enhancer
   and cross-repository contract coverage.
 
 No LTX, Gemma, Docker, CUDA, frame generation or video generation ran on the
@@ -100,3 +100,18 @@ The approved paid-runtime test must exercise this exact path, not a worker URL:
    provider details.
 9. Exercise automatic shutdown and independently confirm zero active Lambda
    instances.
+
+## 2026-08-03 follow-up security audit
+
+The first production-audit pass found that the internal runtime-discovery
+object still carried `baseUrl` into the public `RuntimeStatus` projection. The
+OpenAPI schema did not advertise the field, but JavaScript response spreading
+made the raw origin observable to authenticated users and allowed the admin UI
+to read it back.
+
+The public projection now explicitly removes the internal origin. The shared
+browser contract no longer contains `baseUrl`, the administrator connection
+field starts empty and clears after success, and the bundled UI contains no
+literal provider IP. Regression tests assert both top-level and nested
+non-disclosure. All 68 tests, lint, TypeScript checks and the production build
+pass after the repair.
