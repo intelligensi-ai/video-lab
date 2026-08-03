@@ -37,6 +37,26 @@ const shotKeys = new Set([
   "continuityNotes",
 ]);
 
+function runtimeApiEnhancementRequest(
+  request: StoryboardEnhancementRequest,
+): Record<string, unknown> {
+  return {
+    masterPrompt: request.masterPrompt,
+    shotCount: request.shotCount,
+    generationMode: request.generationMode,
+    continuityBible: request.continuityBible,
+    shots: request.shots.map((shot) => ({
+      shotNumber: shot.shotNumber,
+      title: shot.title,
+      prompt: shot.prompt,
+      generationMode: shot.generationMode,
+    })),
+    ...(request.targetShotNumber === undefined
+      ? {}
+      : { targetShotNumber: request.targetShotNumber }),
+  };
+}
+
 function object(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} is invalid`);
@@ -156,9 +176,10 @@ export class DeployStudioStoryboardEnhancerClient {
   async enhance(
     request: StoryboardEnhancementRequest,
   ): Promise<StoryboardEnhancementResponse> {
+    const runtimeApi = Boolean(this.config.runtimeId);
     const path =
       this.config.path ??
-      (this.config.runtimeId
+      (runtimeApi
         ? `/v1/runtimes/${encodeURIComponent(this.config.runtimeId)}/storyboards/enhance`
         : "/api/storyboards/enhance");
     if (!path.startsWith("/") || path.startsWith("//")) {
@@ -166,11 +187,10 @@ export class DeployStudioStoryboardEnhancerClient {
     }
     const headerName =
       this.config.authHeaderName ??
-      (this.config.runtimeId
+      (runtimeApi
         ? "X-Intelligensi-API-Key"
         : "authorization");
-    const authScheme =
-      this.config.authScheme ?? (this.config.runtimeId ? "none" : "Bearer");
+    const authScheme = this.config.authScheme ?? (runtimeApi ? "none" : "Bearer");
     const authentication =
       authScheme.toLowerCase() === "none"
         ? this.config.token
@@ -184,7 +204,9 @@ export class DeployStudioStoryboardEnhancerClient {
           "content-type": "application/json",
           [headerName]: authentication,
         },
-        body: JSON.stringify(request),
+        body: JSON.stringify(
+          runtimeApi ? runtimeApiEnhancementRequest(request) : request,
+        ),
         signal: AbortSignal.timeout(this.config.timeoutMs ?? 100_000),
       });
     } catch {
