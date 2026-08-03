@@ -20,10 +20,12 @@ describe("openapi contract", () => {
       "/v1/assets/{assetId}/content",
       "/v1/generations",
       "/v1/generations/{generationId}",
+      "/v1/generations/{generationId}/download",
       "/v1/generations/{generationId}/cancel",
       "/v1/gallery",
       "/v1/runtime/status",
       "/v1/admin/runtime/discover",
+      "/v1/admin/runtime/connect",
       "/v1/admin/runtime/pause",
       "/v1/admin/runtime/resume",
       "/v1/admin/runtime/stop",
@@ -38,6 +40,12 @@ describe("openapi contract", () => {
       "failed",
       "cancelled",
     ]);
+    expect(
+      doc.components.schemas.RuntimeDiscovery.properties.baseUrl,
+    ).toBeUndefined();
+    expect(doc.components.responses.Unauthorized.content).toHaveProperty(
+      "application/problem+json",
+    );
   });
   it("requires idempotency key on generation submission", () => {
     expect(doc.paths["/v1/generations"].post.parameters[0].required).toBe(true);

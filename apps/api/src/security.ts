@@ -104,7 +104,6 @@ export function runtimeOriginAllowed(
     .map((entry) =>
       normalizeRuntimeOrigin(entry, {
         production: env.NODE_ENV === "production",
-        allowHttpInProduction: true,
       }),
     )
     .filter((entry): entry is string => Boolean(entry));
@@ -166,6 +165,21 @@ export const securityHeaders: RequestHandler = (req, res, next) => {
 
 type RateBucket = { startedAt: number; count: number };
 const rateBuckets = new Map<string, RateBucket>();
+const maximumRateBuckets = 10_000;
+let nextRateBucketSweepAt = 0;
+
+function sweepRateBuckets(now: number, windowMs: number) {
+  if (now < nextRateBucketSweepAt && rateBuckets.size < maximumRateBuckets) return;
+  for (const [key, bucket] of rateBuckets) {
+    if (now - bucket.startedAt >= windowMs) rateBuckets.delete(key);
+  }
+  while (rateBuckets.size >= maximumRateBuckets) {
+    const oldest = rateBuckets.keys().next().value as string | undefined;
+    if (!oldest) break;
+    rateBuckets.delete(oldest);
+  }
+  nextRateBucketSweepAt = now + Math.min(windowMs, 60_000);
+}
 
 export function rateLimit(options: {
   name: string;
@@ -176,6 +190,7 @@ export function rateLimit(options: {
   const windowMs = options.windowMs ?? 60_000;
   return (req, res, next) => {
     const now = Date.now();
+    sweepRateBuckets(now, windowMs);
     const identity = options.key?.(req) ?? req.ip ?? "unknown";
     const key = `${options.name}:${identity}`;
     const existing = rateBuckets.get(key);

@@ -19,5 +19,7 @@ describe("runtime API key boundary", () => {
     const webSource = readSourceFiles(path.resolve("apps/web/src"));
     expect(webSource).not.toContain("VIDEO_RUNTIME_API_TOKEN");
     expect(webSource).not.toContain("X-Intelligensi-API-Key");
+    expect(webSource).not.toContain("discovery.baseUrl");
+    expect(webSource).not.toMatch(/https?:\/\/\d{1,3}(?:\.\d{1,3}){3}/);
   });
 });

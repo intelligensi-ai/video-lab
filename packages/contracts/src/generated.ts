@@ -215,6 +215,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/generations/{generationId}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download an owner-authorized generated image or video */
+        get: operations["downloadGeneration"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/generations/{generationId}/cancel": {
         parameters: {
             query?: never;
@@ -300,6 +317,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/runtime/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate and store an allow-listed emergency runtime origin server-side */
+        post: operations["connectRuntime"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/runtime/resume": {
         parameters: {
             query?: never;
@@ -359,13 +393,6 @@ export interface components {
             ok: boolean;
             service: string;
             version: string;
-        };
-        RuntimeHealth: {
-            ok: boolean;
-            provider: string;
-            worker?: string;
-            ready?: boolean;
-            message?: string;
         };
         PromptCompletionRequest: {
             prompt: string;
@@ -608,7 +635,54 @@ export interface components {
             fieldErrors?: Record<string, never>[];
         };
     };
-    responses: never;
+    responses: {
+        /** @description Request validation failed */
+        InvalidRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description Authentication is missing, invalid or expired */
+        Unauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The authenticated caller is not authorized for this operation */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The resource does not exist or is not owned by the caller */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description Request rate limit exceeded */
+        RateLimited: {
+            headers: {
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+    };
     parameters: {
         generationId: string;
     };
@@ -636,6 +710,7 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
+            429: components["responses"]["RateLimited"];
         };
     };
     getMe: {
@@ -656,6 +731,7 @@ export interface operations {
                     "application/json": components["schemas"]["Me"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
         };
     };
     getCredits: {
@@ -676,6 +752,7 @@ export interface operations {
                     "application/json": components["schemas"]["CreditWallet"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
         };
     };
     completePrompt: {
@@ -700,6 +777,7 @@ export interface operations {
                     "application/json": components["schemas"]["PromptCompletionResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             /** @description Runtime unavailable */
             503: {
                 headers: {
@@ -731,6 +809,7 @@ export interface operations {
                     "application/json": components["schemas"]["StoryboardEnhancementResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             /** @description Local enhancer unavailable */
             503: {
                 headers: {
@@ -760,6 +839,7 @@ export interface operations {
                     };
                 };
             };
+            401: components["responses"]["Unauthorized"];
         };
     };
     createStoryboardProject: {
@@ -784,6 +864,7 @@ export interface operations {
                     "application/json": components["schemas"]["StoryboardProject"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
         };
     };
     getStoryboardProject: {
@@ -891,6 +972,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Unauthorized"];
         };
     };
     saveStoryboardDraft: {
@@ -915,6 +997,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Unauthorized"];
         };
     };
     deleteStoryboardDraft: {
@@ -933,6 +1016,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Unauthorized"];
         };
     };
     createUploadUrl: {
@@ -957,6 +1041,7 @@ export interface operations {
                     "application/json": components["schemas"]["CreateUploadUrlResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
         };
     };
     uploadAssetContent: {
@@ -983,6 +1068,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Unauthorized"];
         };
     };
     createGeneration: {
@@ -1018,6 +1104,7 @@ export interface operations {
                     "application/json": components["schemas"]["Generation"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
         };
     };
     getGeneration: {
@@ -1040,6 +1127,37 @@ export interface operations {
                     "application/json": components["schemas"]["Generation"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    downloadGeneration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                generationId: components["parameters"]["generationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Generated media */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "video/mp4": string;
+                    "video/webm": string;
+                    "image/png": string;
+                    "image/jpeg": string;
+                    "image/webp": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
         };
     };
     cancelGeneration: {
@@ -1062,6 +1180,8 @@ export interface operations {
                     "application/json": components["schemas"]["Generation"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
         };
     };
     listGallery: {
@@ -1086,6 +1206,7 @@ export interface operations {
                     "application/json": components["schemas"]["GalleryPage"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
         };
     };
     getRuntimeStatus: {
@@ -1106,6 +1227,7 @@ export interface operations {
                     "application/json": components["schemas"]["RuntimeStatus"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
         };
     };
     pauseRuntime: {
@@ -1126,6 +1248,8 @@ export interface operations {
                     "application/json": components["schemas"]["RuntimeStatus"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     discoverRuntime: {
@@ -1145,6 +1269,44 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RuntimeStatus"];
                 };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    connectRuntime: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uri */
+                    baseUrl: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Runtime connection established; the configured origin is not returned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeStatus"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Runtime health check failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -1166,6 +1328,8 @@ export interface operations {
                     "application/json": components["schemas"]["RuntimeStatus"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     stopRuntime: {
@@ -1186,6 +1350,8 @@ export interface operations {
                     "application/json": components["schemas"]["RuntimeStatus"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     adjustCredits: {
@@ -1210,6 +1376,8 @@ export interface operations {
                     "application/json": components["schemas"]["CreditWallet"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
 }

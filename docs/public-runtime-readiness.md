@@ -1,8 +1,8 @@
 # Video Lab public runtime readiness
 
-Audit date: 2026-08-01
-Video Lab base revision audited: `e69c5cf060f397a733f7f4c9980945994ffc499e` on `main`
-Deploy Studio revision audited: `81decc8da3bc7191aa2c6bfce961d0398f6c52a1` on `main`
+Audit date: 2026-08-03
+Video Lab revision under audit: `7b848d811d39bc4de7c5201c987859d22dc6dd30` on `main`
+Deploy Studio revision under audit: `516b32a69c6fa66b330568dd5eb0522c584f5d36` on `main`
 
 ## Product boundary
 
@@ -35,6 +35,7 @@ The browser never selects an upstream URL and never receives a runtime origin, p
 
 - Removed the browser-side paid Gemini fallback. Prompt assistance now uses the existing local Gemma path or fails honestly without replacing user text.
 - Added strict production runtime-origin validation: HTTPS, origin-only URLs, explicit allow-list support, and rejection of loopback, private, link-local and unique-local targets.
+- Removed the remaining nested runtime-origin projection from public and administrator status responses; regression tests cover both top-level and nested non-disclosure.
 - Rejected upstream redirects and cross-origin artifact URLs in the runtime adapter.
 - Replaced direct browser/runtime traffic with authenticated same-origin API routes.
 - Removed the public queue-drain endpoint. Production processing requires a server-held worker token; the local development route is not registered in production.
@@ -50,7 +51,9 @@ The browser never selects an upstream URL and never receives a runtime origin, p
 - Added secure accepted-scene assembly: the browser supplies only owned Video Lab generation IDs, while the API resolves private runtime job IDs immediately before dispatch.
 - Added stable runtime idempotency keys so a queue lease retry cannot silently duplicate paid LongForm work.
 - Constrained storyboard projects to an allow-list, 24 shots, 512 KiB and no embedded base64 media.
-- Added transactional production idempotency, one-active-job enforcement, queue capacity and reclaimable worker leases.
+- Added transactional production idempotency, one-active-job-per-user enforcement, queue capacity, FIFO ordering and reclaimable worker leases. Each protected worker invocation processes one claimed item, so a large backlog cannot hold one HTTP request open for multiple paid generations.
+- Made the LongForm worker own its bearer-protected Gemma enhancement endpoint and private digest-pinned Ollama sidecar. The stable Runtime API validates exact shot cardinality and ordering before returning suggestions; the previous control-plane-only path is retained solely as a bounded migration fallback for the old approved image.
+- Bounded public gallery filters before Firestore and capped the process-local rate-limit identity map. Coordinated production enforcement still requires an edge or distributed limiter.
 - Pinned application and tool dependencies. Firebase Admin is pinned to compatible 13.x for the selected Functions SDK.
 - Upgraded the declarative SPA from vulnerable `react-router-dom` 6.30.4 to `react-router` 8.3.0, pinned transitive `uuid` to 11.1.1, and retained the patched URL/XML parser overrides. `pnpm audit --prod --audit-level moderate` reports no known production vulnerabilities.
 
@@ -76,11 +79,11 @@ Automated tests do not establish that the product is secure. The remaining deplo
 Recommended initial 24/7 architecture:
 
 - Always on: static Video Lab frontend, low-cost application API, Firebase Auth, Firestore metadata/queue, private object storage and lightweight monitoring.
-- On demand: one Deploy Studio-managed LongForm GPU worker that scales from zero. Queue states explicitly distinguish waiting for capacity from active generation.
+- On demand: one Deploy Studio-managed LongForm GPU worker that scales from zero. Many authenticated users may submit independently; Video Lab keeps their work in an owner-scoped durable FIFO queue while the VRAM-intensive worker renders one job at a time.
 - Peak periods: optionally keep one pre-warmed worker during measured demand windows. Do not maintain a permanent GPU before traffic data justifies its idle cost.
-- Growth: move to a small warm pool only after queue latency and concurrent demand exceed the cold-start service target.
+- Growth: move to a small warm pool only after queue latency and concurrent demand exceed the cold-start service target. True simultaneous rendering requires multiple private runtime leases; increasing `WORKER_CONCURRENCY` inside one GPU container is not a safe substitute.
 
-The current clean LongForm appliance has previously required roughly 19 minutes to become model-ready. That makes pure scale-to-zero cheapest but not yet ideal for interactive use. A hybrid scheduled warm window is the recommended launch compromise.
+The accepted cold launch required roughly 29 minutes to progress from provider launch through image/model initialization and real Gemma completion. That makes pure scale-to-zero cheapest but not yet ideal for interactive use. A hybrid scheduled warm window is the recommended launch compromise.
 
 Lambda's [official on-demand table](https://lambda.ai/instances) checked on 2026-08-01 lists a single 80 GB H100 PCIe at USD 3.29/hour, and its [billing documentation](https://docs.lambda.ai/public-cloud/billing/) says on-demand use is billed by the minute after health checks. At that rate, continuously warming one worker is about USD 2,401.70 per 730-hour month before tax; an eight-hour daily warm window is about USD 789.60 per 30-day month. The proposed acceptance test should reserve 45–60 minutes, approximately USD 2.47–3.29 before tax. The launch request must still show and confirm the provider's live price because pricing and availability can change.
 
@@ -91,11 +94,17 @@ Lambda's [official on-demand table](https://lambda.ai/instances) checked on 2026
 3. Configure a production allow-list, worker token, Deploy Studio enhancer token, runtime discovery lease and secret rotation procedure.
 4. Validate the Firebase Hosting CSP against the production authentication flow and add a distributed/edge rate limiter.
 5. Run desktop, mobile, keyboard and two-user browser acceptance against Firebase emulators or staging.
-6. Run one approved temporary GPU test through the Video Lab gateway, including Gemma, both frame edges, one short video, restart recovery and zero-instance confirmation.
+6. Decide whether to promote the paid-accepted LongForm candidate digest for new deployments; existing deployments must remain pinned until explicitly upgraded.
 7. Produce and inspect SBOM/vulnerability results for the candidate Video Lab and LongForm images.
 8. Decide retention/deletion policy for prompts, frames, videos, idempotency records and completed queue records.
 9. Continue the route-level split beyond the 59.4 KiB LongForm chunk; the remaining Firebase/auth/account/admin shell is about 1,006.7 KiB minified and still triggers Vite's 500 KiB warning.
 10. Integrate the real server-side entitlement provider without trusting browser state. Payment work remains out of scope.
 11. Run the approved real-runtime accepted-scene assembly and provider-replacement persistence test; assembly still depends on the active worker retaining its accepted scene outputs.
 
-No production image, DNS, payment, deployment or paid provider change was made during this audit.
+## Paid runtime acceptance
+
+Guarded run `vl-e2e-2608031348-098f40` passed through Video Lab and Deploy Studio using LongForm candidate `sha256:2129755951882d68f4636f754422318120539666482fb0ec6509901d5f0f5145`, Gemma `gemma4:e4b`, and an H100 PCIe in `us-west-3`.
+
+Evidence includes exact two-shot enhancement, targeted scene-only regeneration, independent first/last frames, replacement-frame preservation, an anchored two-second MP4, same-origin delivery, two development-auth identities at FIFO queue positions 1 and 2, same-user active-job rejection, cross-user isolation, queued cancellation, stable-gateway idempotency, container-restart recovery with an identical output hash, direct-worker 401 enforcement, and runtime-detail redaction. The 35.4-minute run cost approximately USD 1.94 at the live quoted USD 3.29/hour. Its test instance was terminated, no unexpected active instance remained, and the pre-existing provider baseline was restored. Production Firebase identity/session behaviour remains a staging gate.
+
+No production digest, DNS, payment system or production deployment was changed. The paid provider was used only for this guarded acceptance and was terminated afterward.

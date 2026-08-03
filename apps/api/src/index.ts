@@ -361,9 +361,11 @@ async function runtimeGeneration(
     idempotencyKey: `video-lab:${g.id}`,
   };
 }
-const localAuth =
-  process.env.NODE_ENV === "test" ||
-  (process.env.NODE_ENV !== "production" && !process.env.K_SERVICE);
+export function localAuthEnabled(env: NodeJS.ProcessEnv = process.env) {
+  if (env.NODE_ENV === "production") return false;
+  return env.NODE_ENV === "test" || env.VIDEO_LAB_LOCAL_AUTH === "true";
+}
+const localAuth = localAuthEnabled();
 const usesIntelligensiRuntimeApi =
   process.env.VIDEO_RUNTIME_PROVIDER === "intelligensi-api";
 function videoLabRuntimeApiKey() {
@@ -376,14 +378,14 @@ function normalizeRuntimeBaseUrl(value: unknown) {
   const origin = normalizeRuntimeOrigin(value, {
     production: process.env.NODE_ENV === "production",
     allowPrivate: localAuth,
-    allowHttpInProduction: true,
   });
   return origin && runtimeOriginAllowed(origin) ? origin : undefined;
 }
 let runtimeBaseUrl = normalizeRuntimeBaseUrl(
   process.env.VIDEO_RUNTIME_BASE_URL,
 );
-type RuntimeDiscovery = NonNullable<RuntimeStatus["discovery"]>;
+type PublicRuntimeDiscovery = NonNullable<RuntimeStatus["discovery"]>;
+type RuntimeDiscovery = PublicRuntimeDiscovery & { baseUrl?: string };
 let runtimeDiscovery: RuntimeDiscovery = {
   source: runtimeBaseUrl ? "environment" : "none",
   state: runtimeBaseUrl ? "waiting" : "unavailable",
@@ -895,13 +897,15 @@ async function refreshRuntimeHealth() {
   }
 }
 function publicRuntimeStatus(): RuntimeStatus {
+  const { baseUrl: _privateRuntimeOrigin, ...publicDiscovery } =
+    runtimeDiscovery;
   return {
     ...runtimeState,
     provider: runtimeState.provider === "mock" ? "mock" : "managed-longform",
     queueDepth: localAuth
       ? queue.filter((q) => q.status !== "done").length
       : runtimeState.queueDepth,
-    discovery: runtimeDiscovery,
+    discovery: publicDiscovery,
   };
 }
 function publicRuntimeProgress(st: Awaited<ReturnType<typeof runtime.getGenerationStatus>>) {
@@ -1127,6 +1131,7 @@ async function enqueueGeneration(
         "generation_capacity_reached",
         "Generation capacity is temporarily full; please retry shortly",
       );
+    generation.queuePosition = outstanding + 1;
     gens.set(generation.id, generation);
     queue.push({
       generationId: generation.id,
@@ -1195,6 +1200,7 @@ async function enqueueGeneration(
         "generation_capacity_reached",
         "Generation capacity is temporarily full; please retry shortly",
       );
+    generation.queuePosition = outstanding + 1;
     const storedGeneration = storedGenerationRecord(generation);
     transaction.create(generationRef, storedGeneration);
     transaction.create(queueRef, {
@@ -2637,14 +2643,23 @@ app.delete("/v1/generations/:id", auth, async (req, res, next) => {
 app.get("/v1/gallery", auth, async (req, res, next) => {
   try {
     const p = res.locals.principal as Principal;
+    const requestedLimit = req.query.limit === undefined ? 20 : Number(req.query.limit);
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 50)
+      throw problem(400, "invalid_gallery_query", "Gallery limit must be an integer from 1 to 50");
     const status = req.query.status;
+    if (
+      status !== undefined &&
+      (typeof status !== "string" ||
+        !["queued", "preparing", "generating", "uploading", "completed", "failed", "cancelled"].includes(status))
+    )
+      throw problem(400, "invalid_gallery_query", "Gallery status is invalid");
     if (!localAuth) {
       adminApp();
       let query = getFirestore()
         .collection("generations")
         .where("uid", "==", p.uid)
         .orderBy("createdAt", "desc")
-        .limit(Number(req.query.limit ?? 20));
+        .limit(requestedLimit);
       const snapshot = await query.get();
       const items = snapshot.docs
         .map((doc) => doc.data() as StoredGeneration)
@@ -2668,7 +2683,7 @@ app.get("/v1/gallery", auth, async (req, res, next) => {
           ),
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, Number(req.query.limit ?? 20))
+      .slice(0, requestedLimit)
       .map(publicGeneration);
     res.json({ items });
   } catch (e) {
@@ -2827,6 +2842,7 @@ async function processQueueItem(workerId = "local-worker") {
     const preparing = {
       ...g,
       status: "preparing" as const,
+      queuePosition: 0,
       updatedAt: nowIso(),
     };
     gens.set(g.id, preparing);
@@ -2923,22 +2939,17 @@ async function processQueueItem(workerId = "local-worker") {
 export async function processOne(workerId = "local-worker") {
   await processQueueItem(workerId);
 }
-let workerPromise: Promise<void> | undefined;
-async function drainQueue() {
-  while (await processQueueItem("web-triggered-worker")) {
-    // Keep claiming durable work until the queue has no eligible items.
-  }
-}
+let workerPromise: Promise<boolean> | undefined;
 const processNextHandler = async (
   _req: express.Request,
   res: express.Response,
 ) => {
   if (!workerPromise)
-    workerPromise = drainQueue().finally(() => {
+    workerPromise = processQueueItem(`web-triggered-worker-${nanoid(8)}`).finally(() => {
       workerPromise = undefined;
     });
-  await workerPromise;
-  res.json({ ok: true });
+  const processed = await workerPromise;
+  res.json({ ok: true, processed });
 };
 async function internalWorker(
   req: express.Request,

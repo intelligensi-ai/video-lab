@@ -10,7 +10,7 @@ import {
   useLocation,
   useNavigate,
   useParams,
-} from "react-router-dom";
+} from "react-router";
 import {
   QueryClient,
   QueryClientProvider,
@@ -1711,9 +1711,7 @@ function Account() {
   );
 }
 function Admin() {
-  const [manualRuntimeOrigin, setManualRuntimeOrigin] = useState(
-    "http://209.20.158.84:7860",
-  );
+  const [manualRuntimeOrigin, setManualRuntimeOrigin] = useState("");
   const r = useQuery({
     queryKey: ["runtime"],
     queryFn: () => api<RuntimeStatus>("/v1/runtime/status"),
@@ -1732,17 +1730,12 @@ function Admin() {
         method: "POST",
         body: JSON.stringify({ baseUrl: manualRuntimeOrigin }),
       }),
-    onSuccess: () => r.refetch(),
+    onSuccess: () => {
+      setManualRuntimeOrigin("");
+      return r.refetch();
+    },
   });
   const discovery = r.data?.discovery;
-  useEffect(() => {
-    if (
-      !connectManual.isPending &&
-      discovery?.source === "environment" &&
-      discovery.baseUrl
-    )
-      setManualRuntimeOrigin(discovery.baseUrl);
-  }, [connectManual.isPending, discovery?.baseUrl, discovery?.source]);
   const connected =
     r.data?.status === "healthy" && discovery?.state === "connected";
   return (
@@ -1829,8 +1822,11 @@ function Admin() {
           <label>
             <span>Known Lambda runtime origin</span>
             <input
+              type="url"
               value={manualRuntimeOrigin}
-              placeholder="http://209.20.158.84:7860"
+              placeholder="https://approved-runtime.example"
+              autoComplete="off"
+              spellCheck={false}
               onChange={(event) => setManualRuntimeOrigin(event.target.value)}
             />
           </label>
