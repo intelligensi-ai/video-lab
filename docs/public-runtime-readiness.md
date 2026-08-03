@@ -50,7 +50,7 @@ The browser never selects an upstream URL and never receives a runtime origin, p
 - Added secure accepted-scene assembly: the browser supplies only owned Video Lab generation IDs, while the API resolves private runtime job IDs immediately before dispatch.
 - Added stable runtime idempotency keys so a queue lease retry cannot silently duplicate paid LongForm work.
 - Constrained storyboard projects to an allow-list, 24 shots, 512 KiB and no embedded base64 media.
-- Added transactional production idempotency, one-active-job enforcement, queue capacity and reclaimable worker leases.
+- Added transactional production idempotency, one-active-job-per-user enforcement, queue capacity, FIFO ordering and reclaimable worker leases. Each protected worker invocation processes one claimed item, so a large backlog cannot hold one HTTP request open for multiple paid generations.
 - Pinned application and tool dependencies. Firebase Admin is pinned to compatible 13.x for the selected Functions SDK.
 - Upgraded the declarative SPA from vulnerable `react-router-dom` 6.30.4 to `react-router` 8.3.0, pinned transitive `uuid` to 11.1.1, and retained the patched URL/XML parser overrides. `pnpm audit --prod --audit-level moderate` reports no known production vulnerabilities.
 
@@ -76,9 +76,9 @@ Automated tests do not establish that the product is secure. The remaining deplo
 Recommended initial 24/7 architecture:
 
 - Always on: static Video Lab frontend, low-cost application API, Firebase Auth, Firestore metadata/queue, private object storage and lightweight monitoring.
-- On demand: one Deploy Studio-managed LongForm GPU worker that scales from zero. Queue states explicitly distinguish waiting for capacity from active generation.
+- On demand: one Deploy Studio-managed LongForm GPU worker that scales from zero. Many authenticated users may submit independently; Video Lab keeps their work in an owner-scoped durable FIFO queue while the VRAM-intensive worker renders one job at a time.
 - Peak periods: optionally keep one pre-warmed worker during measured demand windows. Do not maintain a permanent GPU before traffic data justifies its idle cost.
-- Growth: move to a small warm pool only after queue latency and concurrent demand exceed the cold-start service target.
+- Growth: move to a small warm pool only after queue latency and concurrent demand exceed the cold-start service target. True simultaneous rendering requires multiple private runtime leases; increasing `WORKER_CONCURRENCY` inside one GPU container is not a safe substitute.
 
 The current clean LongForm appliance has previously required roughly 19 minutes to become model-ready. That makes pure scale-to-zero cheapest but not yet ideal for interactive use. A hybrid scheduled warm window is the recommended launch compromise.
 

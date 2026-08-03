@@ -304,6 +304,82 @@ describe("public runtime readiness boundaries", () => {
       .expect(200);
   });
 
+  it("queues different users independently and supports concurrent worker claims", async () => {
+    const generationBody = (label: string) => ({
+      prompt: `A complete cinematic generation prompt for ${label}.`,
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        aspectRatio: "16:9",
+        durationSeconds: 4,
+        quality: "draft",
+        operationScope: "project",
+        storyboard: [
+          {
+            id: `scene-${label}`,
+            title: `Scene ${label}`,
+            prompt: `A focused cinematic scene for ${label}.`,
+            duration: 4,
+            trimStart: 0,
+            trimEnd: 4,
+            seed: 1337,
+            transition: "cut",
+            transitionDuration: 0.75,
+            carryPreviousFrame: false,
+          },
+        ],
+      },
+      inputAssets: [],
+    });
+    const first = await request(app)
+      .post("/v1/generations")
+      .set("authorization", "Bearer concurrent-owner-a")
+      .set("Idempotency-Key", "concurrent-owner-a-job")
+      .send(generationBody("owner-a"))
+      .expect(201);
+    const second = await request(app)
+      .post("/v1/generations")
+      .set("authorization", "Bearer concurrent-owner-b")
+      .set("Idempotency-Key", "concurrent-owner-b-job")
+      .send(generationBody("owner-b"))
+      .expect(201);
+
+    expect(first.body.queuePosition).toBe(1);
+    expect(second.body.queuePosition).toBe(2);
+    await request(app)
+      .post("/v1/generations")
+      .set("authorization", "Bearer concurrent-owner-a")
+      .set("Idempotency-Key", "concurrent-owner-a-second")
+      .send(generationBody("owner-a-second"))
+      .expect(409);
+    await request(app)
+      .get(`/v1/generations/${first.body.id}`)
+      .set("authorization", "Bearer concurrent-owner-b")
+      .expect(404);
+
+    await Promise.all([
+      processOne("concurrent-worker-a"),
+      processOne("concurrent-worker-b"),
+    ]);
+    const [firstCompleted, secondCompleted] = await Promise.all([
+      request(app)
+        .get(`/v1/generations/${first.body.id}`)
+        .set("authorization", "Bearer concurrent-owner-a")
+        .expect(200),
+      request(app)
+        .get(`/v1/generations/${second.body.id}`)
+        .set("authorization", "Bearer concurrent-owner-b")
+        .expect(200),
+    ]);
+    expect(firstCompleted.body).toMatchObject({
+      status: "completed",
+      queuePosition: 0,
+    });
+    expect(secondCompleted.body).toMatchObject({
+      status: "completed",
+      queuePosition: 0,
+    });
+  }, 10_000);
+
   it("renders owned scenes and assembles them using only opaque public ids", async () => {
     const owner = "assembly-owner";
     const form = projectForm();

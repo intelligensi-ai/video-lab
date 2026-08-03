@@ -918,6 +918,7 @@ async function enqueueGeneration(
         "generation_capacity_reached",
         "Generation capacity is temporarily full; please retry shortly",
       );
+    generation.queuePosition = outstanding + 1;
     gens.set(generation.id, generation);
     queue.push({
       generationId: generation.id,
@@ -986,6 +987,7 @@ async function enqueueGeneration(
         "generation_capacity_reached",
         "Generation capacity is temporarily full; please retry shortly",
       );
+    generation.queuePosition = outstanding + 1;
     const storedGeneration = storedGenerationRecord(generation);
     transaction.create(generationRef, storedGeneration);
     transaction.create(queueRef, {
@@ -2593,6 +2595,7 @@ async function processQueueItem(workerId = "local-worker") {
     const preparing = {
       ...g,
       status: "preparing" as const,
+      queuePosition: 0,
       updatedAt: nowIso(),
     };
     gens.set(g.id, preparing);
@@ -2736,22 +2739,17 @@ async function processQueueItem(workerId = "local-worker") {
 export async function processOne(workerId = "local-worker") {
   await processQueueItem(workerId);
 }
-let workerPromise: Promise<void> | undefined;
-async function drainQueue() {
-  while (await processQueueItem("web-triggered-worker")) {
-    // Keep claiming durable work until the queue has no eligible items.
-  }
-}
+let workerPromise: Promise<boolean> | undefined;
 const processNextHandler = async (
   _req: express.Request,
   res: express.Response,
 ) => {
   if (!workerPromise)
-    workerPromise = drainQueue().finally(() => {
+    workerPromise = processQueueItem(`web-triggered-worker-${nanoid(8)}`).finally(() => {
       workerPromise = undefined;
     });
-  await workerPromise;
-  res.json({ ok: true });
+  const processed = await workerPromise;
+  res.json({ ok: true, processed });
 };
 async function internalWorker(
   req: express.Request,
