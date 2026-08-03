@@ -74,7 +74,7 @@ Lambda Cloud API key used to create or terminate provider instances.
 ## Validation completed without local inference
 
 - Deploy Studio TypeScript compilation and production build.
-- Deploy Studio regression suite: 67/67 tests passed.
+- Deploy Studio regression suite: 68/68 tests passed.
 - OpenAPI 3.1 validation of the authoritative contract.
 - Video Lab lint, TypeScript checks and production workspace build.
 - Video Lab regression suite: 72/72 tests passed, including adapter, enhancer,
@@ -83,23 +83,19 @@ Lambda Cloud API key used to create or terminate provider instances.
 No LTX, Gemma, Docker, CUDA, frame generation or video generation ran on the
 local workstation.
 
-## Paid-runtime acceptance still required
+## Paid-runtime acceptance completed
 
-The approved paid-runtime test must exercise this exact path, not a worker URL:
+Guarded run `vl-e2e-2608031348-098f40` exercised this exact stable gateway path using immutable LongForm candidate `sha256:2129755951882d68f4636f754422318120539666482fb0ec6509901d5f0f5145`:
 
-1. Authenticate Video Lab's server to the stable gateway.
-2. Verify public health and protected catalogue metadata.
-3. Enhance a multi-shot storyboard through the versioned enhancer endpoint.
-4. Submit first-frame, last-frame, scene and project jobs through `/preview`.
-5. Confirm status normalization, cancellation and stable links.
-6. Download media through the gateway and then Video Lab's owner-authorized
-   same-origin route.
-7. Restart or replace the worker and prove that Video Lab keeps using the same
-   gateway origin.
-8. Confirm the browser contains no gateway key, worker URL, lease data or
-   provider details.
-9. Exercise automatic shutdown and independently confirm zero active Lambda
-   instances.
+1. Video Lab authenticated its server to the stable gateway.
+2. Gateway health became ready only after Gemma, CUDA, workflow and generation-model readiness passed.
+3. Gemma 4 E4B enhanced an exact two-shot storyboard and regenerated only shot 2 on request.
+4. First-frame, last-frame, replacement-frame and anchored scene jobs ran through `/preview`.
+5. Two users received FIFO positions 1 and 2; same-user parallel submission, cross-user reads and queue ownership bypass were rejected.
+6. The MP4 travelled through the gateway and Video Lab's owner-authorized same-origin route.
+7. The worker container restarted and the recovered output hash remained identical.
+8. Runtime/provider details remained redacted and direct unauthenticated worker access returned 401.
+9. The 60-minute guard was armed; cleanup terminated the test instance and restored the provider baseline.
 
 ## 2026-08-03 follow-up security audit
 
@@ -131,5 +127,7 @@ smoke test because that test created a localhost Ollama tunnel. Deploy Studio
 `soul.md` and `enhancer.md` in the appliance, and launches a private
 digest-pinned Ollama sidecar with `gemma4:e4b`. The gateway now proxies the
 versioned request to the leased worker and independently validates exact shot
-count, order and required prompts. Paid candidate acceptance is required before
-the immutable production LongForm digest changes.
+count, order and required prompts. Deploy Studio `516b32a` also adds bounded
+sidecar/model retries, a specific retryable failure classification and redacted
+paid-test diagnostics. The candidate passed paid acceptance, but changing the
+immutable production LongForm digest still requires explicit promotion approval.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import request from "supertest";
+import { createServer } from "node:http";
 import { app, processOne } from "../../apps/api/src/index.js";
 describe("api integration", () => {
   const auth = { authorization: "Bearer testuser" };
@@ -59,12 +60,28 @@ describe("api integration", () => {
       .set("authorization", "Bearer admin-token")
       .send({ baseUrl: "not a url" })
       .expect(400);
-    const response = await request(app)
-      .post("/v1/admin/runtime/connect")
-      .set("authorization", "Bearer admin-token")
-      .send({ baseUrl: "http://example.com" })
-      .expect(503);
-    expect(response.body.code).toBe("runtime_health_failed");
+    const unhealthyRuntime = createServer((_req, res) => {
+      res.writeHead(503, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: false, ready: false }));
+    });
+    await new Promise<void>((resolve) =>
+      unhealthyRuntime.listen(0, "127.0.0.1", resolve),
+    );
+    try {
+      const address = unhealthyRuntime.address();
+      if (!address || typeof address === "string")
+        throw new Error("Local health fixture did not bind a TCP port");
+      const response = await request(app)
+        .post("/v1/admin/runtime/connect")
+        .set("authorization", "Bearer admin-token")
+        .send({ baseUrl: `http://127.0.0.1:${address.port}` })
+        .expect(503);
+      expect(response.body.code).toBe("runtime_health_failed");
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        unhealthyRuntime.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
   it("submits idempotently, processes, and lists private gallery", async () => {
     const body = {

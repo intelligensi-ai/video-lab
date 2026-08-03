@@ -1,8 +1,8 @@
 # Video Lab public runtime readiness
 
 Audit date: 2026-08-03
-Video Lab revision under audit: `a9563da8cd150bf392e38c2927abf3c818ec382b` on `main`
-Deploy Studio revision under audit: `926f3739caa30ebcbd95df5cd1facd564841b93c` on `main`
+Video Lab revision under audit: `7b848d811d39bc4de7c5201c987859d22dc6dd30` on `main`
+Deploy Studio revision under audit: `516b32a69c6fa66b330568dd5eb0522c584f5d36` on `main`
 
 ## Product boundary
 
@@ -83,7 +83,7 @@ Recommended initial 24/7 architecture:
 - Peak periods: optionally keep one pre-warmed worker during measured demand windows. Do not maintain a permanent GPU before traffic data justifies its idle cost.
 - Growth: move to a small warm pool only after queue latency and concurrent demand exceed the cold-start service target. True simultaneous rendering requires multiple private runtime leases; increasing `WORKER_CONCURRENCY` inside one GPU container is not a safe substitute.
 
-The current clean LongForm appliance has previously required roughly 19 minutes to become model-ready. That makes pure scale-to-zero cheapest but not yet ideal for interactive use. A hybrid scheduled warm window is the recommended launch compromise.
+The accepted cold launch required roughly 29 minutes to progress from provider launch through image/model initialization and real Gemma completion. That makes pure scale-to-zero cheapest but not yet ideal for interactive use. A hybrid scheduled warm window is the recommended launch compromise.
 
 Lambda's [official on-demand table](https://lambda.ai/instances) checked on 2026-08-01 lists a single 80 GB H100 PCIe at USD 3.29/hour, and its [billing documentation](https://docs.lambda.ai/public-cloud/billing/) says on-demand use is billed by the minute after health checks. At that rate, continuously warming one worker is about USD 2,401.70 per 730-hour month before tax; an eight-hour daily warm window is about USD 789.60 per 30-day month. The proposed acceptance test should reserve 45–60 minutes, approximately USD 2.47–3.29 before tax. The launch request must still show and confirm the provider's live price because pricing and availability can change.
 
@@ -94,11 +94,17 @@ Lambda's [official on-demand table](https://lambda.ai/instances) checked on 2026
 3. Configure a production allow-list, worker token, Deploy Studio enhancer token, runtime discovery lease and secret rotation procedure.
 4. Validate the Firebase Hosting CSP against the production authentication flow and add a distributed/edge rate limiter.
 5. Run desktop, mobile, keyboard and two-user browser acceptance against Firebase emulators or staging.
-6. Complete the in-progress approved candidate GPU test through the Video Lab gateway, including real Gemma enhancement, both frame edges, one short video, two-user queue isolation, restart recovery and zero-instance confirmation.
+6. Decide whether to promote the paid-accepted LongForm candidate digest for new deployments; existing deployments must remain pinned until explicitly upgraded.
 7. Produce and inspect SBOM/vulnerability results for the candidate Video Lab and LongForm images.
 8. Decide retention/deletion policy for prompts, frames, videos, idempotency records and completed queue records.
 9. Continue the route-level split beyond the 59.4 KiB LongForm chunk; the remaining Firebase/auth/account/admin shell is about 1,006.7 KiB minified and still triggers Vite's 500 KiB warning.
 10. Integrate the real server-side entitlement provider without trusting browser state. Payment work remains out of scope.
 11. Run the approved real-runtime accepted-scene assembly and provider-replacement persistence test; assembly still depends on the active worker retaining its accepted scene outputs.
 
-No production image, DNS, payment, deployment or paid provider change was made during this audit.
+## Paid runtime acceptance
+
+Guarded run `vl-e2e-2608031348-098f40` passed through Video Lab and Deploy Studio using LongForm candidate `sha256:2129755951882d68f4636f754422318120539666482fb0ec6509901d5f0f5145`, Gemma `gemma4:e4b`, and an H100 PCIe in `us-west-3`.
+
+Evidence includes exact two-shot enhancement, targeted scene-only regeneration, independent first/last frames, replacement-frame preservation, an anchored two-second MP4, same-origin delivery, two-user FIFO queue positions 1 and 2, same-user active-job rejection, cross-user isolation, queued cancellation, stable-gateway idempotency, container-restart recovery with an identical output hash, direct-worker 401 enforcement, and runtime-detail redaction. The 35.4-minute run cost approximately USD 1.94 at the live quoted USD 3.29/hour. Its test instance was terminated, no unexpected active instance remained, and the pre-existing provider baseline was restored.
+
+No production digest, DNS, payment system or production deployment was changed. The paid provider was used only for this guarded acceptance and was terminated afterward.
