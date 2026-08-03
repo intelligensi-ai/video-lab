@@ -2,7 +2,9 @@ import { expect, test } from "@playwright/test";
 
 test("landing page presents the creator entry point", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText("Intelligensi.ai Showcase Trial")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /intelligensi\.ai Video Lab/i }),
+  ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Start creating" }),
   ).toBeVisible();
@@ -20,12 +22,16 @@ test("storyboard exposes editable Gemma and frame controls", async ({
   await expect(
     page.getByText(/Suggestions come from the local Gemma enhancer/),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Generate first frame" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Generate last frame" }),
-  ).toBeVisible();
+  const firstFrameButtons = page.getByRole("button", {
+    name: "Generate first frame",
+  });
+  const lastFrameButtons = page.getByRole("button", {
+    name: "Generate last frame",
+  });
+  await expect(firstFrameButtons).toHaveCount(2);
+  await expect(firstFrameButtons.first()).toBeVisible();
+  await expect(lastFrameButtons).toHaveCount(2);
+  await expect(lastFrameButtons.first()).toBeVisible();
   await page.getByRole("button", { name: /Add scene/ }).click();
   await expect(
     page.getByRole("button", { name: /Enhance and plan 3 shots/ }),

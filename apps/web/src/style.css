@@ -432,6 +432,7 @@ body:has(.admin-page) .site-nav.logged-in .site-nav-inner {
 }
 .lf-kickers {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.45rem;
 }
 .lf-kickers span,
@@ -483,6 +484,13 @@ body:has(.admin-page) .site-nav.logged-in .site-nav-inner {
   grid-template-columns: minmax(0, 1fr) minmax(390px, 0.94fr);
   align-items: start;
   gap: 1.2rem;
+}
+.lf-layout > *,
+.lf-controls,
+.lf-scenes,
+.lf-scene,
+.lf-scene > header {
+  min-width: 0;
 }
 .lf-controls,
 .lf-preview-col {
@@ -1309,6 +1317,12 @@ body:has(.admin-page) .site-nav.logged-in .site-nav-inner {
   .lf-hero {
     display: grid;
     padding: 1.15rem;
+  }
+  .lf-scene > header {
+    flex-wrap: wrap;
+  }
+  .lf-scene > header input {
+    flex: 1 1 calc(100% - 5.5rem);
   }
   .lf-session {
     text-align: left;
