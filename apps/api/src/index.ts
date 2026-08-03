@@ -2405,14 +2405,23 @@ app.post("/v1/generations/:id/cancel", auth, async (req, res, next) => {
 app.get("/v1/gallery", auth, async (req, res, next) => {
   try {
     const p = res.locals.principal as Principal;
+    const requestedLimit = req.query.limit === undefined ? 20 : Number(req.query.limit);
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 50)
+      throw problem(400, "invalid_gallery_query", "Gallery limit must be an integer from 1 to 50");
     const status = req.query.status;
+    if (
+      status !== undefined &&
+      (typeof status !== "string" ||
+        !["queued", "preparing", "generating", "uploading", "completed", "failed", "cancelled"].includes(status))
+    )
+      throw problem(400, "invalid_gallery_query", "Gallery status is invalid");
     if (!localAuth) {
       adminApp();
       let query = getFirestore()
         .collection("generations")
         .where("uid", "==", p.uid)
         .orderBy("createdAt", "desc")
-        .limit(Number(req.query.limit ?? 20));
+        .limit(requestedLimit);
       const snapshot = await query.get();
       const items = snapshot.docs
         .map((doc) => doc.data() as StoredGeneration)
@@ -2436,7 +2445,7 @@ app.get("/v1/gallery", auth, async (req, res, next) => {
           ),
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, Number(req.query.limit ?? 20))
+      .slice(0, requestedLimit)
       .map(publicGeneration);
     res.json({ items });
   } catch (e) {

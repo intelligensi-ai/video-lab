@@ -103,6 +103,16 @@ describe("api integration", () => {
       true,
     );
   });
+  it("bounds gallery queries before they reach persistence", async () => {
+    for (const query of ["limit=0", "limit=-1", "limit=51", "limit=NaN", "limit=1.5", "status=unknown"]) {
+      const response = await request(app)
+        .get(`/v1/gallery?${query}`)
+        .set(auth)
+        .expect(400);
+      expect(response.body.code).toBe("invalid_gallery_query");
+    }
+    await request(app).get("/v1/gallery?limit=50&status=completed").set(auth).expect(200);
+  });
   it("rejects storyboard payloads above the 24-scene runtime limit", async () => {
     const response = await request(app)
       .post("/v1/generations")
