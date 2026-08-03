@@ -456,9 +456,10 @@ function normalizeRuntimeBaseUrl(value: unknown) {
   });
   return origin && runtimeOriginAllowed(origin) ? origin : undefined;
 }
-let runtimeBaseUrl = normalizeRuntimeBaseUrl(
+const configuredRuntimeBaseUrl = normalizeRuntimeBaseUrl(
   process.env.VIDEO_RUNTIME_BASE_URL,
 );
+let runtimeBaseUrl = configuredRuntimeBaseUrl;
 type PublicRuntimeDiscovery = NonNullable<RuntimeStatus["discovery"]>;
 type RuntimeDiscovery = PublicRuntimeDiscovery & { baseUrl?: string };
 let runtimeDiscovery: RuntimeDiscovery = {
@@ -649,7 +650,10 @@ function clearRuntimeEndpoint(discovery: RuntimeDiscovery) {
 async function loadRuntimeDiscovery(force = false) {
   const expectedRuntimeId =
     process.env.VIDEO_RUNTIME_ID ?? "longform-ltx-storyboard-studio";
-  if (usesIntelligensiRuntimeApi && runtimeBaseUrl) {
+  const gatewayBaseUrl = usesIntelligensiRuntimeApi
+    ? configuredRuntimeBaseUrl
+    : undefined;
+  if (gatewayBaseUrl) {
     if (manualRuntimeBaseUrl) {
       runtimeDiscoveryCheckedAt = Date.now();
       useRuntimeEndpoint(manualRuntimeBaseUrl, "environment", "direct-worker");
@@ -672,9 +676,15 @@ async function loadRuntimeDiscovery(force = false) {
     let discovered:
       | Awaited<ReturnType<SulphurLtxRuntimeAdapter["discoverReadyRuntime"]>>
       | undefined;
-    if (runtime instanceof SulphurLtxRuntimeAdapter) {
+    const gatewayRuntime =
+      runtimeBaseUrl === gatewayBaseUrl && runtime instanceof SulphurLtxRuntimeAdapter
+        ? runtime
+        : createRuntimeAdapter(gatewayBaseUrl);
+    if (gatewayRuntime instanceof SulphurLtxRuntimeAdapter) {
       try {
-        discovered = await runtime.discoverReadyRuntime("storyboard-enhance");
+        discovered = await gatewayRuntime.discoverReadyRuntime(
+          "storyboard-enhance",
+        );
       } catch (error) {
         log("runtime_gateway_discovery_failed", {
           errorCode: operationalErrorCode(error),
@@ -683,7 +693,7 @@ async function loadRuntimeDiscovery(force = false) {
     }
     if (discovered) {
       runtimeDiscoveryCheckedAt = Date.now();
-      useRuntimeEndpoint(runtimeBaseUrl, "deploy-studio");
+      useRuntimeEndpoint(gatewayBaseUrl, "deploy-studio");
       runtimeDiscovery = {
         source: "deploy-studio",
         state: "connected",
