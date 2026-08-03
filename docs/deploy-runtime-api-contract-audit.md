@@ -117,3 +117,9 @@ non-disclosure. A second boundary repair replaced implicit non-production
 authentication with an explicit local-only opt-in and rejected HTTP runtime
 origins in production. All 70 tests, lint, TypeScript checks and the production build
 pass after the repair.
+
+The follow-up also aligned Video Lab's own OpenAPI document with the implemented
+owner-authorized media download and administrator-only emergency connection
+routes. Reusable problem responses now document authentication, authorization,
+validation, not-found and rate-limit behaviour. Redocly validation completes
+without the previous 25 warnings.
