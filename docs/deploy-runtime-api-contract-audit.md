@@ -91,7 +91,7 @@ Guarded run `vl-e2e-2608031348-098f40` exercised this exact stable gateway path 
 2. Gateway health became ready only after Gemma, CUDA, workflow and generation-model readiness passed.
 3. Gemma 4 E4B enhanced an exact two-shot storyboard and regenerated only shot 2 on request.
 4. First-frame, last-frame, replacement-frame and anchored scene jobs ran through `/preview`.
-5. Two users received FIFO positions 1 and 2; same-user parallel submission, cross-user reads and queue ownership bypass were rejected.
+5. Two isolated development-auth identities received FIFO positions 1 and 2; same-user parallel submission, cross-user reads and queue ownership bypass were rejected. Production Firebase session behaviour remains a staging gate.
 6. The MP4 travelled through the gateway and Video Lab's owner-authorized same-origin route.
 7. The worker container restarted and the recovered output hash remained identical.
 8. Runtime/provider details remained redacted and direct unauthenticated worker access returned 401.

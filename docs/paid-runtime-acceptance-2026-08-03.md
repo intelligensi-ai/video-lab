@@ -23,7 +23,7 @@ The 60-minute automatic-shutdown guard was armed before bootstrap. The test inst
 - Targeted prompt regeneration returned only shot 2.
 - First and last frames generated independently.
 - Replacing the first frame preserved the previous successful frame.
-- Two authenticated users entered the FIFO at positions 1 and 2.
+- Two isolated development-auth identities entered the FIFO at positions 1 and 2.
 - A second active job for the same user was rejected.
 - Cross-user project and generation reads were rejected.
 - The second user cancelled their own queued job.
@@ -48,6 +48,7 @@ Hashes and sizes identify the private audit artifacts without committing generat
 ## Remaining release gates
 
 - Explicit approval is still required before promoting the candidate digest for new production deployments.
+- Production Firebase sign-in, token refresh/session expiry and the same two-user flow still require staging acceptance; the paid harness deliberately used explicit development-only identities.
 - Accepted-scene assembly and a complete multi-scene final film were not exercised in this bounded run.
 - Provider replacement with durable object-store rebinding remains unproven; this run tested a container restart on the same instance.
 - True simultaneous rendering requires multiple private runtime leases or a managed warm pool. One GPU worker intentionally renders serially while accepting multiple users through the durable FIFO queue.
