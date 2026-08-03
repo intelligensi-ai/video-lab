@@ -2549,10 +2549,7 @@ function Preview({
           >
             <div>
               <span className="lf-render-spinner" aria-hidden="true">
-                <img
-                  src="/intelligensiai-ai-white.png"
-                  alt=""
-                />
+                <img src="/fav-icon.png" alt="" />
               </span>
               <strong>{progressLabel}</strong>
               <small>{activityLabel}</small>
