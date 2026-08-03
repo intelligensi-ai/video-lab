@@ -3040,6 +3040,14 @@ export const api =
   process.env.NODE_ENV === "test"
     ? app
     : (await import("firebase-functions/v2/https")).onRequest(
-        { timeoutSeconds: 3600, maxInstances: 1 },
+        {
+          timeoutSeconds: 3600,
+          maxInstances: 1,
+          secrets: [
+            (await import("firebase-functions/params")).defineSecret(
+              "VIDEO_LAB_RUNTIME_API_KEY",
+            ),
+          ],
+        },
         app,
       );
