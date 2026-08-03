@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { creditLimitsEnabled, firebaseStorageBucket } from '../../apps/api/src/index.js';
+import { creditLimitsEnabled, firebaseStorageBucket, localAuthEnabled } from '../../apps/api/src/index.js';
 
 describe('Firebase Storage configuration', () => {
   it('reads the deployed bucket from FIREBASE_CONFIG', () => {
@@ -31,5 +31,14 @@ describe('credit enforcement configuration', () => {
     expect(creditLimitsEnabled({})).toBe(false);
     expect(creditLimitsEnabled({ CREDIT_LIMITS_ENABLED: 'true' })).toBe(false);
     expect(creditLimitsEnabled({ CREDIT_LIMITS_ENABLED: 'false' })).toBe(false);
+  });
+});
+
+describe('local authentication boundary', () => {
+  it('requires an explicit development opt-in and always fails closed in production', () => {
+    expect(localAuthEnabled({ NODE_ENV: 'development' })).toBe(false);
+    expect(localAuthEnabled({ NODE_ENV: 'development', K_SERVICE: '', VIDEO_LAB_LOCAL_AUTH: 'true' })).toBe(true);
+    expect(localAuthEnabled({ NODE_ENV: 'test' })).toBe(true);
+    expect(localAuthEnabled({ NODE_ENV: 'production', VIDEO_LAB_LOCAL_AUTH: 'true' })).toBe(false);
   });
 });

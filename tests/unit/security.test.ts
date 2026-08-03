@@ -77,4 +77,13 @@ describe("runtime origin security", () => {
       }),
     ).toBe(false);
   });
+
+  it("does not accept an HTTP production allow-list entry", () => {
+    expect(
+      runtimeOriginAllowed("http://runtime.example", {
+        VIDEO_RUNTIME_ALLOWED_ORIGINS: "http://runtime.example",
+        NODE_ENV: "production",
+      }),
+    ).toBe(false);
+  });
 });

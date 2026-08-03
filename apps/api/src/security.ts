@@ -104,7 +104,6 @@ export function runtimeOriginAllowed(
     .map((entry) =>
       normalizeRuntimeOrigin(entry, {
         production: env.NODE_ENV === "production",
-        allowHttpInProduction: true,
       }),
     )
     .filter((entry): entry is string => Boolean(entry));

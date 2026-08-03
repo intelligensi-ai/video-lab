@@ -349,16 +349,17 @@ async function runtimeGeneration(
     idempotencyKey: `video-lab:${g.id}`,
   };
 }
-const localAuth =
-  process.env.NODE_ENV === "test" ||
-  (process.env.NODE_ENV !== "production" && !process.env.K_SERVICE);
+export function localAuthEnabled(env: NodeJS.ProcessEnv = process.env) {
+  if (env.NODE_ENV === "production") return false;
+  return env.NODE_ENV === "test" || env.VIDEO_LAB_LOCAL_AUTH === "true";
+}
+const localAuth = localAuthEnabled();
 const usesIntelligensiRuntimeApi =
   process.env.VIDEO_RUNTIME_PROVIDER === "intelligensi-api";
 function normalizeRuntimeBaseUrl(value: unknown) {
   const origin = normalizeRuntimeOrigin(value, {
     production: process.env.NODE_ENV === "production",
     allowPrivate: localAuth,
-    allowHttpInProduction: true,
   });
   return origin && runtimeOriginAllowed(origin) ? origin : undefined;
 }

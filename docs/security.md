@@ -7,3 +7,5 @@ Runtime and Gemma endpoints/tokens are server-only. Origins must be HTTPS, origi
 Runtime discovery keeps the resolved origin in a server-only structure. Public and administrator status responses expose only the connection source, state, safe message and lease timestamps. A manually entered emergency origin is cleared from the administrator form after a successful connection and is never returned by the API.
 
 Responses use safe problem classifications and correlation IDs. Prompts, credentials and raw upstream errors are not logged. See `public-runtime-readiness.md` for the threat model and outstanding deployment controls.
+
+Deterministic local bearer identities are available only when `NODE_ENV=test` or `VIDEO_LAB_LOCAL_AUTH=true`; the explicit flag is ignored in production. Production runtime origins must use HTTPS even when allow-listed.
