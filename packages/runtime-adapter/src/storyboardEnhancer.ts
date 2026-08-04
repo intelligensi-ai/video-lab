@@ -183,7 +183,7 @@ export function validateStoryboardEnhancement(
     };
   });
   const rawBundle = object(root.instructionBundle, "Instruction bundle");
-  exactKeys(rawBundle, new Set(["directorVersion", "enhancerVersion", "hash"]), "Instruction bundle");
+  exactKeys(rawBundle, new Set(["directorVersion", "enhancerVersion", "framePromptVersion", "hash"]), "Instruction bundle");
   const hash = text(rawBundle.hash, "Instruction bundle hash", 64).toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error("Instruction bundle hash is invalid");
   return {
@@ -201,6 +201,7 @@ export function validateStoryboardEnhancement(
     instructionBundle: {
       directorVersion: text(rawBundle.directorVersion, "Director version", 80),
       enhancerVersion: text(rawBundle.enhancerVersion, "Enhancer version", 80),
+      framePromptVersion: text(rawBundle.framePromptVersion, "Frame prompt version", 80),
       hash,
     },
   };
@@ -336,6 +337,7 @@ export function mockStoryboardEnhancement(
     instructionBundle: {
       directorVersion: "mock-2026-08-04.1",
       enhancerVersion: "mock-2026-08-04.1",
+      framePromptVersion: "mock-2026-08-04.1",
       hash: "0".repeat(64),
     },
   };

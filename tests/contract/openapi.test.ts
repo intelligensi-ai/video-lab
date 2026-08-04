@@ -13,6 +13,10 @@ describe("openapi contract", () => {
       "/v1/credits",
       "/v1/prompts/complete",
       "/v1/storyboards/enhance",
+      "/v1/storyboards/director/history",
+      "/v1/storyboards/director/proposals",
+      "/v1/storyboards/director/proposals/{proposalId}/accept",
+      "/v1/storyboards/director/proposals/{proposalId}/discard",
       "/v1/storyboards/projects",
       "/v1/storyboards/projects/{projectId}",
       "/v1/storyboards/draft",
@@ -61,6 +65,13 @@ describe("openapi contract", () => {
     expect(
       doc.components.schemas.RuntimeStatus.properties.capabilities.$ref,
     ).toBe("#/components/schemas/RuntimeCapabilities");
+  });
+  it("defines a closed Director proposal contract", () => {
+    expect(doc.components.schemas.DirectorProposalRequest.additionalProperties).toBe(false);
+    expect(doc.components.schemas.DirectorProposal.required).toEqual(
+      expect.arrayContaining(["action", "kind", "state", "confirmationRequired", "executionClass", "diff"]),
+    );
+    expect(doc.components.schemas.DirectorActionType.enum).not.toContain("launch_runtime");
   });
 });
 

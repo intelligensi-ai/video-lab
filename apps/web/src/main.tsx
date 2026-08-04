@@ -41,6 +41,9 @@ const API = import.meta.env.VITE_API_BASE_URL ?? "/api";
 const LongFormStoryboardStudio = React.lazy(
   () => import("./LongFormStoryboardStudio.js"),
 );
+const DirectorWorkspace = React.lazy(
+  () => import("./DirectorWorkspace.js"),
+);
 const DEMO_GENERATIONS_KEY = "vl_demo_generations";
 const ENABLE_DEMO_API =
   import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_API === "true";
@@ -381,11 +384,33 @@ function Shell() {
                     </main>
                   }
                 >
+                  <DirectorWorkspace />
+                </React.Suspense>
+              }
+            />
+          }
+        />
+        <Route
+          path="/storyboard/classic"
+          element={
+            <ProtectedRoute
+              element={
+                <React.Suspense
+                  fallback={
+                    <main className="auth-page">
+                      <p>Opening the classic storyboard studio...</p>
+                    </main>
+                  }
+                >
                   <LongFormStoryboardStudio />
                 </React.Suspense>
               }
             />
           }
+        />
+        <Route
+          path="/experimental/director-workspace"
+          element={<Navigate to="/storyboard" replace />}
         />
         <Route path="/studio" element={<Navigate to="/storyboard" replace />} />
         <Route

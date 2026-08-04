@@ -121,7 +121,7 @@ export interface RuntimeHealth {
     subjectReference: boolean;
     audioPolicyModes?: Array<"silent" | "intent_only" | "directed">;
     featureStatus?: Record<string, "supported" | "partial" | "unavailable" | "client_managed">;
-    instructionBundle?: { directorVersion: string; enhancerVersion: string; hash: string };
+    instructionBundle?: { directorVersion: string; enhancerVersion: string; framePromptVersion: string; hash: string };
   };
 }
 

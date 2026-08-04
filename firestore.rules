@@ -21,6 +21,7 @@ service cloud.firestore {
     match /assets/{id} { allow read, write: if false; }
     match /storyboardDrafts/{uid} { allow read, write: if false; }
     match /storyboardProjects/{id} { allow read, write: if false; }
+    match /storyboardDirectorProposals/{id} { allow read, write: if false; }
     match /projectDeletionQueue/{id} { allow read, write: if false; }
     match /runtimeState/{id} { allow read, write: if false; }
     match /runtimeDiscovery/{id} { allow read, write: if false; }

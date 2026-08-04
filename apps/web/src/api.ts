@@ -1,5 +1,8 @@
 import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
 import type {
+  DirectorProposal,
+  DirectorProposalRequest,
+  DirectorProposalResult,
   Generation,
   RuntimeStatus,
   StoryboardProject,
@@ -643,6 +646,29 @@ export async function assembleStoryboardFilm(
     }),
   });
 }
+
+export const createDirectorProposal = (request: DirectorProposalRequest) =>
+  api<DirectorProposal>("/v1/storyboards/director/proposals", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+
+export const listDirectorProposals = (projectId: string) =>
+  api<{ items: DirectorProposal[] }>(
+    `/v1/storyboards/director/history?projectId=${encodeURIComponent(projectId)}`,
+  );
+
+export const acceptDirectorProposal = (proposalId: string) =>
+  api<DirectorProposalResult>(
+    `/v1/storyboards/director/proposals/${encodeURIComponent(proposalId)}/accept`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+
+export const discardDirectorProposal = (proposalId: string) =>
+  api<DirectorProposal>(
+    `/v1/storyboards/director/proposals/${encodeURIComponent(proposalId)}/discard`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
 
 export async function waitForGeneration(id: string, timeoutMs = 20 * 60_000) {
   const deadline = Date.now() + timeoutMs;

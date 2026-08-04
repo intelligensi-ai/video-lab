@@ -10,6 +10,9 @@ import { getAuth } from "firebase-admin/auth";
 import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
 import type {
   CreditWallet,
+  DirectorProposal,
+  DirectorProposalDiff,
+  DirectorProposalResult,
   Generation,
   Me,
   RuntimeStatus,
@@ -18,6 +21,7 @@ import type {
   StoryboardAudioPolicy,
   StoryboardContinuityBible,
   StoryboardEnhancementRequest,
+  StoryboardEnhancementResponse,
   StoryboardReferenceSummary,
 } from "@video-lab/contracts";
 import {
@@ -45,6 +49,12 @@ import {
   runtimeOriginAllowed,
   securityHeaders,
 } from "./security.js";
+import {
+  applyDirectorProposal,
+  buildDirectorEnhancementRequest,
+  classifyDirectorMessage,
+  proposalCopy,
+} from "./director.js";
 type Principal = { uid: string; email: string; admin: boolean };
 let runtime = createRuntimeFromEnv();
 type StoredGeneration = Generation & {
@@ -75,6 +85,7 @@ type StoredStoryboardProject = {
   createdAt: string;
   updatedAt: string;
 };
+type StoredDirectorProposal = DirectorProposal & { uid: string };
 const users = new Map<string, Me>();
 const wallets = new Map<string, CreditWallet>();
 const gens = new Map<string, StoredGeneration>();
@@ -89,6 +100,7 @@ const storyboardDrafts = new Map<
   { form: Record<string, unknown>; updatedAt: string }
 >();
 const storyboardProjects = new Map<string, StoredStoryboardProject>();
+const directorProposals = new Map<string, StoredDirectorProposal>();
 const assets = new Map<string, StoredAsset>();
 let runtimeState: RuntimeStatus = {
   provider: process.env.VIDEO_RUNTIME_PROVIDER ?? "mock",
@@ -2120,6 +2132,10 @@ async function deleteStoryboardProject(uid: string, id: string) {
   const project = await findStoryboardProject(uid, id);
   if (!project) throw problem(404, "project_not_found", "Project not found");
   storyboardProjects.delete(storyboardProjectKey(uid, id));
+  for (const [proposalKey, proposal] of directorProposals.entries()) {
+    if (proposal.uid === uid && proposal.projectId === id)
+      directorProposals.delete(proposalKey);
+  }
   if (localAuth) {
     for (const [generationId, generation] of gens.entries()) {
       if (
@@ -2132,6 +2148,17 @@ async function deleteStoryboardProject(uid: string, id: string) {
   }
   adminApp();
   const firestore = getFirestore();
+  const proposalSnapshot = await firestore
+    .collection("storyboardDirectorProposals")
+    .where("uid", "==", uid)
+    .where("projectId", "==", id)
+    .get();
+  for (let offset = 0; offset < proposalSnapshot.docs.length; offset += 400) {
+    const proposalBatch = firestore.batch();
+    for (const document of proposalSnapshot.docs.slice(offset, offset + 400))
+      proposalBatch.delete(document.ref);
+    await proposalBatch.commit();
+  }
   const batch = firestore.batch();
   batch.delete(firestore.collection("storyboardProjects").doc(id));
   batch.set(firestore.collection("projectDeletionQueue").doc(id), {
@@ -2141,6 +2168,257 @@ async function deleteStoryboardProject(uid: string, id: string) {
     createdAt: nowIso(),
   });
   await batch.commit();
+}
+
+function publicDirectorProposal(proposal: StoredDirectorProposal): DirectorProposal {
+  const { uid: _uid, ...visible } = proposal;
+  return visible;
+}
+
+async function persistDirectorProposal(proposal: StoredDirectorProposal) {
+  directorProposals.set(`${proposal.uid}:${proposal.id}`, proposal);
+  if (!localAuth) {
+    adminApp();
+    await getFirestore()
+      .collection("storyboardDirectorProposals")
+      .doc(proposal.id)
+      .set(proposal, { merge: false });
+  }
+  return publicDirectorProposal(proposal);
+}
+
+async function findDirectorProposal(uid: string, id: string) {
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) return undefined;
+  const cached = directorProposals.get(`${uid}:${id}`);
+  if (cached || localAuth) return cached;
+  adminApp();
+  const snapshot = await getFirestore()
+    .collection("storyboardDirectorProposals")
+    .doc(id)
+    .get();
+  if (!snapshot.exists) return undefined;
+  const proposal = snapshot.data() as StoredDirectorProposal;
+  if (proposal.uid !== uid) return undefined;
+  directorProposals.set(`${uid}:${id}`, proposal);
+  return proposal;
+}
+
+async function listDirectorProposals(uid: string, projectId: string) {
+  let proposals: StoredDirectorProposal[];
+  if (localAuth) {
+    proposals = [...directorProposals.values()].filter(
+      (proposal) => proposal.uid === uid && proposal.projectId === projectId,
+    );
+  } else {
+    adminApp();
+    const snapshot = await getFirestore()
+      .collection("storyboardDirectorProposals")
+      .where("uid", "==", uid)
+      .where("projectId", "==", projectId)
+      .limit(50)
+      .get();
+    proposals = snapshot.docs.map(
+      (document) => document.data() as StoredDirectorProposal,
+    );
+    proposals.forEach((proposal) =>
+      directorProposals.set(`${uid}:${proposal.id}`, proposal),
+    );
+  }
+  return proposals
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, 50)
+    .map(publicDirectorProposal);
+}
+
+function directorProposalInput(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw problem(400, "invalid_director_request", "A Director request is required");
+  }
+  const source = value as Record<string, unknown>;
+  const unexpected = Object.keys(source).filter(
+    (key) => !["projectId", "message", "selectedSceneId"].includes(key),
+  );
+  if (unexpected.length) {
+    throw problem(400, "invalid_director_request", "The Director request contains unsupported fields");
+  }
+  const projectId = typeof source.projectId === "string" ? source.projectId : "";
+  const selectedSceneId = typeof source.selectedSceneId === "string" ? source.selectedSceneId : undefined;
+  const message = typeof source.message === "string" ? source.message.trim() : "";
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(projectId)) {
+    throw problem(400, "invalid_project", "A valid project is required");
+  }
+  if (selectedSceneId && !/^[A-Za-z0-9_-]{1,200}$/.test(selectedSceneId)) {
+    throw problem(400, "invalid_scene", "The selected scene is invalid");
+  }
+  if (message.length < 2 || message.length > 2_000) {
+    throw problem(400, "invalid_director_message", "Director messages must be 2-2000 characters");
+  }
+  return { projectId, selectedSceneId, message };
+}
+
+function directorControls() {
+  const capabilities = runtimeState.capabilities;
+  return [
+    capabilities?.startFrame ? "start_frame" : "",
+    capabilities?.endFrame ? "end_frame" : "",
+    capabilities?.previousFrameContinuity ? "previous_frame_continuity" : "",
+  ].filter(Boolean);
+}
+
+function directorSceneRecords(form: Record<string, unknown>) {
+  return Array.isArray(form.scenes)
+    ? form.scenes.filter(
+        (scene): scene is Record<string, unknown> =>
+          Boolean(scene) && typeof scene === "object" && !Array.isArray(scene),
+      )
+    : [];
+}
+
+function directorReferenceForMessage(form: Record<string, unknown>, message: string) {
+  const references = Array.isArray(form.projectReferences)
+    ? form.projectReferences.filter(
+        (reference): reference is Record<string, unknown> =>
+          Boolean(reference) && typeof reference === "object" && !Array.isArray(reference),
+      )
+    : [];
+  const normalizedMessage = message.toLocaleLowerCase();
+  return references.find((reference) => {
+    const label = String(reference.label ?? "").trim().toLocaleLowerCase();
+    return label.length > 0 && (normalizedMessage.includes(`@${label}`) || normalizedMessage.includes(label));
+  });
+}
+
+function directorDiff(
+  action: DirectorProposal["action"],
+  form: Record<string, unknown>,
+  selectedSceneId: string | undefined,
+  payload: Record<string, unknown>,
+): DirectorProposalDiff[] {
+  const scenes = directorSceneRecords(form);
+  const scene = scenes.find((item) => String(item.id) === selectedSceneId) ?? scenes[0];
+  const enhancement = payload.enhancement as StoryboardEnhancementResponse | undefined;
+  if (action === "set_audio_policy") {
+    return [{
+      path: "audioPolicy.mode",
+      label: "Sound behaviour",
+      before: String((form.audioPolicy as Record<string, unknown> | undefined)?.mode ?? "intent_only"),
+      after: String(payload.audioMode),
+    }];
+  }
+  if (action === "restore_original_prompt") {
+    return [{ path: "overallGoal", label: "Creative brief", before: String(form.overallGoal ?? ""), after: String(form.originalOverallGoal ?? form.overallGoal ?? "") }];
+  }
+  if (["assign_project_reference", "remove_project_reference"].includes(action)) {
+    const referenceId = String(payload.referenceId ?? "");
+    const reference = (Array.isArray(form.projectReferences) ? form.projectReferences : [])
+      .find((item) => Boolean(item) && typeof item === "object" && String((item as Record<string, unknown>).id) === referenceId) as Record<string, unknown> | undefined;
+    const assigned = Array.isArray(scene?.referenceIds) && scene.referenceIds.map(String).includes(referenceId);
+    return [{
+      path: action === "remove_project_reference" ? `projectReferences.${referenceId}` : `scenes.${String(scene?.id ?? "selected")}.referenceIds`,
+      label: String(reference?.label ?? "Project reference"),
+      before: action === "remove_project_reference" ? "Available to this project" : assigned ? "Assigned" : "Not assigned",
+      after: action === "remove_project_reference" ? "Removed from this project" : "Assigned to this scene",
+    }];
+  }
+  if (action === "enhance_master_prompt" && enhancement) {
+    return [{ path: "overallGoal", label: "Creative brief", before: String(form.overallGoal ?? ""), after: enhancement.polishedMasterPrompt }];
+  }
+  if (action === "plan_storyboard" && enhancement) {
+    return [
+      { path: "overallGoal", label: "Creative brief", before: String(form.overallGoal ?? ""), after: enhancement.polishedMasterPrompt },
+      { path: "scenes", label: "Scene count", before: String(scenes.length), after: String(enhancement.shots.length) },
+    ];
+  }
+  if (action === "propose_scene_change" && enhancement?.shots[0]) {
+    const shotNumber = Math.max(1, scenes.findIndex((item) => String(item.id) === String(scene?.id)) + 1);
+    const shot = enhancement.shots.find((item) => item.shotNumber === shotNumber);
+    return shot ? [{ path: `scenes.${String(scene?.id ?? "selected")}.prompt`, label: `${String(scene?.title ?? "Scene")} prompt`, before: String(scene?.prompt ?? ""), after: shot.prompt }] : [];
+  }
+  if (action === "propose_frame_prompt_change" && enhancement?.shots[0]) {
+    const edge = payload.edge === "end" ? "lastFramePrompt" : "firstFramePrompt";
+    const shotNumber = Math.max(1, scenes.findIndex((item) => String(item.id) === String(scene?.id)) + 1);
+    const shot = enhancement.shots.find((item) => item.shotNumber === shotNumber);
+    return shot ? [{ path: `scenes.${String(scene?.id ?? "selected")}.${edge}`, label: payload.edge === "end" ? "Closing-frame prompt" : "Opening-frame prompt", before: String(scene?.[edge] ?? ""), after: payload.edge === "end" ? shot.lastFramePrompt : shot.firstFramePrompt }] : [];
+  }
+  return [];
+}
+
+async function createDirectorProposal(
+  uid: string,
+  project: StoredStoryboardProject,
+  message: string,
+  selectedSceneId?: string,
+) {
+  const scenes = directorSceneRecords(project.form);
+  const selectedScene = scenes.find((scene) => String(scene.id) === selectedSceneId) ?? scenes[0];
+  const resolvedSceneId = selectedScene ? String(selectedScene.id) : undefined;
+  const intent = classifyDirectorMessage(message);
+  const payload: Record<string, unknown> = {
+    ...(intent.edge ? { edge: intent.edge } : {}),
+    ...(intent.sceneCount ? { sceneCount: intent.sceneCount } : {}),
+    ...(intent.candidateNumber ? { candidateNumber: intent.candidateNumber } : {}),
+    ...(intent.audioMode ? { audioMode: intent.audioMode } : {}),
+    ...(intent.action === "set_audio_policy" && /\b(no music|remove (?:the )?music)\b/i.test(message) ? { music: "off" } : {}),
+    ...(resolvedSceneId ? { sceneId: resolvedSceneId } : {}),
+    ...(intent.action === "generate_scene_candidates" ? { candidateCount: intent.candidateCount ?? Math.min(4, Math.max(1, Number(project.form.candidateCount) || 3)) } : {}),
+  };
+  if (["assign_project_reference", "remove_project_reference"].includes(intent.action)) {
+    const reference = directorReferenceForMessage(project.form, message);
+    if (!reference) {
+      throw problem(400, "reference_not_found", "Name an existing project reference, for example @Lead character");
+    }
+    payload.referenceId = String(reference.id);
+  }
+  if (["enhance_master_prompt", "plan_storyboard", "propose_scene_change", "propose_frame_prompt_change"].includes(intent.action)) {
+    if (!String(project.form.overallGoal ?? "").trim()) {
+      throw problem(400, "missing_creative_brief", "Add a creative brief before asking the Director to rewrite it");
+    }
+    payload.enhancement = await enhanceStoryboard(
+      buildDirectorEnhancementRequest(
+        project.form,
+        message,
+        intent,
+        resolvedSceneId,
+        directorControls(),
+        project.id,
+      ),
+    );
+  }
+  const copy = proposalCopy(intent, project.form, resolvedSceneId);
+  const now = nowIso();
+  const invalidations = ["enhance_master_prompt", "plan_storyboard", "propose_scene_change", "propose_frame_prompt_change", "set_audio_policy"].includes(intent.action)
+    ? scenes.some((scene) => scene.acceptedVideoGenerationId)
+      ? ["Existing accepted clips affected by this change will be marked for review."]
+      : []
+    : [];
+  const affectedSceneIds = intent.action === "remove_project_reference"
+    ? scenes
+        .filter((scene) => Array.isArray(scene.referenceIds) && scene.referenceIds.map(String).includes(String(payload.referenceId)))
+        .map((scene) => String(scene.id))
+    : resolvedSceneId && !["enhance_master_prompt", "plan_storyboard", "set_audio_policy", "assemble_project", "export_project"].includes(intent.action)
+      ? [resolvedSceneId]
+      : [];
+  const proposal: StoredDirectorProposal = {
+    id: nanoid(16),
+    uid,
+    projectId: project.id,
+    projectRevision: project.updatedAt,
+    kind: intent.kind,
+    action: intent.action,
+    state: "pending",
+    summary: copy.summary,
+    explanation: copy.explanation,
+    confirmationRequired: intent.confirmationRequired,
+    executionClass: intent.executionClass,
+    affectedSceneIds,
+    preserve: resolvedSceneId ? ["Unrelated scenes", "Existing successful media", "Continuity locks"] : ["Existing successful media"],
+    invalidations,
+    diff: directorDiff(intent.action, project.form, resolvedSceneId, payload),
+    payload,
+    createdAt: now,
+    updatedAt: now,
+  };
+  return persistDirectorProposal(proposal);
 }
 
 async function enhanceStoryboard(request: StoryboardEnhancementRequest) {
@@ -2411,6 +2689,169 @@ app.post(
         );
         return;
       }
+      next(error);
+    }
+  },
+);
+app.get("/v1/storyboards/director/history", auth, async (req, res, next) => {
+  try {
+    const projectId = String(req.query.projectId ?? "");
+    const project = await findStoryboardProject(res.locals.principal.uid, projectId);
+    if (!project) throw problem(404, "project_not_found", "Project not found");
+    res.json({ items: await listDirectorProposals(res.locals.principal.uid, projectId) });
+  } catch (error) {
+    next(error);
+  }
+});
+app.post(
+  "/v1/storyboards/director/proposals",
+  auth,
+  rateLimit({ name: "storyboard-director", limit: 30 }),
+  async (req, res, next) => {
+    try {
+      const input = directorProposalInput(req.body);
+      const project = await findStoryboardProject(
+        res.locals.principal.uid,
+        input.projectId,
+      );
+      if (!project) throw problem(404, "project_not_found", "Project not found");
+      const proposal = await createDirectorProposal(
+        res.locals.principal.uid,
+        project,
+        input.message,
+        input.selectedSceneId,
+      );
+      log("director_proposal_created", {
+        uid: res.locals.principal.uid,
+        projectId: project.id,
+        proposalId: proposal.id,
+        action: proposal.action,
+        kind: proposal.kind,
+      });
+      res.status(201).json(proposal);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "storyboard_enhancer_unavailable"
+      ) {
+        next(
+          problem(
+            503,
+            "storyboard_enhancer_unavailable",
+            "The Director is temporarily unavailable; your project is unchanged",
+          ),
+        );
+        return;
+      }
+      if (
+        error instanceof Error &&
+        error.message === "storyboard_enhancement_failed"
+      ) {
+        next(
+          problem(
+            502,
+            "storyboard_enhancement_failed",
+            "The Director could not prepare a valid proposal; your project is unchanged",
+          ),
+        );
+        return;
+      }
+      next(error);
+    }
+  },
+);
+app.post(
+  "/v1/storyboards/director/proposals/:id/accept",
+  auth,
+  async (req, res, next) => {
+    try {
+      if (Object.keys(req.body ?? {}).length) {
+        throw problem(400, "invalid_director_request", "Accept does not take a browser-supplied payload");
+      }
+      const proposal = await findDirectorProposal(
+        res.locals.principal.uid,
+        String(req.params.id),
+      );
+      if (!proposal) throw problem(404, "proposal_not_found", "Director proposal not found");
+      if (proposal.state !== "pending") {
+        throw problem(409, "proposal_resolved", "This Director proposal has already been resolved");
+      }
+      const project = await findStoryboardProject(
+        res.locals.principal.uid,
+        proposal.projectId,
+      );
+      if (!project) throw problem(404, "project_not_found", "Project not found");
+      const changesProject = proposal.kind === "draft_change";
+      if (changesProject && project.updatedAt !== proposal.projectRevision) {
+        throw problem(
+          409,
+          "project_revision_conflict",
+          "The project changed after this proposal was prepared. Ask the Director to review it again.",
+        );
+      }
+      let publicProject: StoryboardProject | undefined;
+      if (changesProject) {
+        const form = sanitizeStoryboardDraft(
+          applyDirectorProposal(project.form, proposal),
+        );
+        const updatedProject: StoredStoryboardProject = {
+          ...project,
+          form,
+          updatedAt: nowIso(),
+        };
+        publicProject = await persistStoryboardProject(updatedProject);
+      }
+      const accepted: StoredDirectorProposal = {
+        ...proposal,
+        state: "accepted",
+        updatedAt: nowIso(),
+      };
+      const visible = await persistDirectorProposal(accepted);
+      log("director_proposal_accepted", {
+        uid: res.locals.principal.uid,
+        projectId: proposal.projectId,
+        proposalId: proposal.id,
+        action: proposal.action,
+      });
+      const result: DirectorProposalResult = {
+        proposal: visible,
+        ...(publicProject ? { project: publicProject } : {}),
+      };
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+app.post(
+  "/v1/storyboards/director/proposals/:id/discard",
+  auth,
+  async (req, res, next) => {
+    try {
+      if (Object.keys(req.body ?? {}).length) {
+        throw problem(400, "invalid_director_request", "Discard does not take a browser-supplied payload");
+      }
+      const proposal = await findDirectorProposal(
+        res.locals.principal.uid,
+        String(req.params.id),
+      );
+      if (!proposal) throw problem(404, "proposal_not_found", "Director proposal not found");
+      if (proposal.state !== "pending") {
+        throw problem(409, "proposal_resolved", "This Director proposal has already been resolved");
+      }
+      const discarded = await persistDirectorProposal({
+        ...proposal,
+        state: "discarded",
+        updatedAt: nowIso(),
+      });
+      log("director_proposal_discarded", {
+        uid: res.locals.principal.uid,
+        projectId: proposal.projectId,
+        proposalId: proposal.id,
+        action: proposal.action,
+      });
+      res.json(discarded);
+    } catch (error) {
       next(error);
     }
   },

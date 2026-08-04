@@ -106,6 +106,7 @@ export interface RuntimeStatus {
     instructionBundle?: {
       directorVersion: string;
       enhancerVersion: string;
+      framePromptVersion: string;
       hash: string;
     };
   };
@@ -231,6 +232,83 @@ export interface StoryboardEnhancementResponse {
   instructionBundle: {
     directorVersion: string;
     enhancerVersion: string;
+    framePromptVersion: string;
     hash: string;
   };
+}
+
+export const directorActionTypes = [
+  "answer_project_question",
+  "suggest_creative_direction",
+  "enhance_master_prompt",
+  "plan_storyboard",
+  "propose_scene_change",
+  "propose_frame_prompt_change",
+  "restore_original_prompt",
+  "undo_prompt_change",
+  "assign_project_reference",
+  "remove_project_reference",
+  "set_audio_policy",
+  "generate_first_frame",
+  "generate_last_frame",
+  "regenerate_frame",
+  "restore_frame_version",
+  "generate_scene_candidates",
+  "accept_candidate",
+  "restore_candidate",
+  "generate_scene_video",
+  "generate_unfinished_scenes",
+  "cancel_job",
+  "retry_job",
+  "explain_failure",
+  "prepare_finishing",
+  "assemble_project",
+  "export_project",
+] as const;
+
+export type DirectorActionType = (typeof directorActionTypes)[number];
+export type DirectorProposalKind =
+  | "answer"
+  | "suggestion"
+  | "draft_change"
+  | "action_request";
+export type DirectorExecutionClass = "none" | "text" | "draft" | "final";
+export type DirectorProposalState = "pending" | "accepted" | "discarded";
+
+export interface DirectorProposalDiff {
+  path: string;
+  label: string;
+  before?: string;
+  after?: string;
+}
+
+export interface DirectorProposal {
+  id: string;
+  projectId: string;
+  projectRevision: string;
+  kind: DirectorProposalKind;
+  action: DirectorActionType;
+  state: DirectorProposalState;
+  summary: string;
+  explanation: string;
+  confirmationRequired: boolean;
+  executionClass: DirectorExecutionClass;
+  affectedSceneIds: string[];
+  preserve: string[];
+  invalidations: string[];
+  diff: DirectorProposalDiff[];
+  payload: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DirectorProposalRequest {
+  projectId: string;
+  message: string;
+  selectedSceneId?: string;
+}
+
+export interface DirectorProposalResult {
+  proposal: DirectorProposal;
+  project?: StoryboardProject;
 }

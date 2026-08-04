@@ -13,12 +13,14 @@ declare module "react" {
     dependencies?: readonly unknown[],
   ): void;
   export function useMemo<T>(factory: () => T, deps: unknown[]): T;
+  export function useCallback<T extends (...args: any[]) => any>(callback: T, deps: unknown[]): T;
   export function useRef<T>(initialValue: T): { current: T };
   export function lazy<T>(loader: () => Promise<{ default: T }>): T;
   export const Suspense: any;
   const React: {
     useState: typeof useState;
     useMemo: typeof useMemo;
+    useCallback: typeof useCallback;
     useEffect: typeof useEffect;
     useRef: typeof useRef;
     lazy: typeof lazy;

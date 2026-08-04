@@ -89,6 +89,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/storyboards/director/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List owner-scoped Director proposals for one project */
+        get: operations["listDirectorProposals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/storyboards/director/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Convert a natural-language direction into a bounded reviewable proposal */
+        post: operations["createDirectorProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/storyboards/director/proposals/{proposalId}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposalId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept an owner-scoped proposal without accepting browser-supplied mutations */
+        post: operations["acceptDirectorProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/storyboards/director/proposals/{proposalId}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposalId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discard an owner-scoped proposal without changing project content */
+        post: operations["discardDirectorProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/storyboards/projects": {
         parameters: {
             query?: never;
@@ -582,6 +654,7 @@ export interface components {
         InstructionBundle: {
             directorVersion: string;
             enhancerVersion: string;
+            framePromptVersion: string;
             hash: string;
         };
         QualityAssessment: {
@@ -639,6 +712,50 @@ export interface components {
             provider: "ollama" | "mock";
             model: string;
             instructionBundle: components["schemas"]["InstructionBundle"];
+        };
+        /** @enum {string} */
+        DirectorActionType: "answer_project_question" | "suggest_creative_direction" | "enhance_master_prompt" | "plan_storyboard" | "propose_scene_change" | "propose_frame_prompt_change" | "restore_original_prompt" | "undo_prompt_change" | "assign_project_reference" | "remove_project_reference" | "set_audio_policy" | "generate_first_frame" | "generate_last_frame" | "regenerate_frame" | "restore_frame_version" | "generate_scene_candidates" | "accept_candidate" | "restore_candidate" | "generate_scene_video" | "generate_unfinished_scenes" | "cancel_job" | "retry_job" | "explain_failure" | "prepare_finishing" | "assemble_project" | "export_project";
+        DirectorProposalDiff: {
+            path: string;
+            label: string;
+            before?: string;
+            after?: string;
+        };
+        DirectorProposalRequest: {
+            projectId: string;
+            message: string;
+            selectedSceneId?: string;
+        };
+        DirectorProposal: {
+            id: string;
+            projectId: string;
+            /** Format: date-time */
+            projectRevision: string;
+            /** @enum {string} */
+            kind: "answer" | "suggestion" | "draft_change" | "action_request";
+            action: components["schemas"]["DirectorActionType"];
+            /** @enum {string} */
+            state: "pending" | "accepted" | "discarded";
+            summary: string;
+            explanation: string;
+            confirmationRequired: boolean;
+            /** @enum {string} */
+            executionClass: "none" | "text" | "draft" | "final";
+            affectedSceneIds: string[];
+            preserve: string[];
+            invalidations: string[];
+            diff: components["schemas"]["DirectorProposalDiff"][];
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        DirectorProposalResult: {
+            proposal: components["schemas"]["DirectorProposal"];
+            project?: components["schemas"]["StoryboardProject"];
         };
         StoryboardProjectSummary: {
             id: string;
@@ -887,6 +1004,151 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             /** @description Local enhancer unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listDirectorProposals: {
+        parameters: {
+            query: {
+                projectId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project Director history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["DirectorProposal"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Project not found or not owned by caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createDirectorProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DirectorProposalRequest"];
+            };
+        };
+        responses: {
+            /** @description Validated Director proposal */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectorProposal"];
+                };
+            };
+            /** @description Invalid or unsupported Director request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Local Director unavailable for creative rewriting */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    acceptDirectorProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposalId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted proposal and any updated project */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectorProposalResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Proposal or project not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Proposal resolved or project revision changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    discardDirectorProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposalId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discarded proposal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectorProposal"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Proposal not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Proposal already resolved */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
