@@ -127,6 +127,33 @@ describe("storyboard enhancer contract", () => {
     expect(() => validateStoryboardEnhancement(wrongCandidates, request)).toThrow("candidate count");
   });
 
+  it("accepts stable gateway responses without optional Director metadata", () => {
+    const enhancement = mockStoryboardEnhancement(request);
+    const stableResponse = {
+      polishedMasterPrompt: enhancement.polishedMasterPrompt,
+      continuityBible: enhancement.continuityBible,
+      shots: enhancement.shots.map((shot) => ({
+        shotNumber: shot.shotNumber,
+        title: shot.title,
+        narrativePurpose: shot.narrativePurpose,
+        prompt: shot.prompt,
+        firstFramePrompt: shot.firstFramePrompt,
+        lastFramePrompt: shot.lastFramePrompt,
+        continuityNotes: shot.continuityNotes,
+      })),
+      provider: enhancement.provider,
+      model: enhancement.model,
+    };
+
+    const result = validateStoryboardEnhancement(stableResponse, request);
+
+    expect(result.referenceUsagePlan).toEqual([]);
+    expect(result.assumptions).toEqual([]);
+    expect(result.instructionBundle.hash).toBe("0".repeat(64));
+    expect(result.shots[0].candidateVariations).toHaveLength(3);
+    expect(result.shots[0].audioIntent.mode).toBe("silent");
+  });
+
   it("uses the authenticated versioned runtime API for LongForm enhancement", async () => {
     vi.stubGlobal(
       "fetch",
@@ -141,6 +168,19 @@ describe("storyboard enhancer contract", () => {
         expect(
           (init?.headers as Record<string, string>).authorization,
         ).toBeUndefined();
+        expect(JSON.parse(String(init?.body))).toEqual({
+          masterPrompt: request.masterPrompt,
+          shotCount: request.shotCount,
+          generationMode: request.generationMode,
+          continuityBible: request.continuityBible,
+          shots: request.shots.map((shot) => ({
+            shotNumber: shot.shotNumber,
+            title: shot.title,
+            prompt: shot.prompt,
+            durationSeconds: shot.durationSeconds,
+            generationMode: shot.generationMode,
+          })),
+        });
         return Response.json(mockStoryboardEnhancement(request));
       }),
     );

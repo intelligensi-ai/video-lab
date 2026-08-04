@@ -652,7 +652,7 @@ export function useDirectorWorkspace() {
       } catch (error) {
         const text = error instanceof Error ? error.message : "The Director could not prepare a proposal.";
         setMessages((items) => [...items, { id: crypto.randomUUID(), from: "director", text }]);
-        setNotice(`${text} Your project is unchanged.`);
+        setNotice(/\bunchanged\b/i.test(text) ? text : `${text} Your project is unchanged.`);
       } finally {
         setDirectorBusy(false);
       }

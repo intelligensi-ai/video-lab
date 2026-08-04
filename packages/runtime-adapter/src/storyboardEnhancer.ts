@@ -48,22 +48,11 @@ const shotKeys = new Set([
 function runtimeApiEnhancementRequest(
   request: StoryboardEnhancementRequest,
 ): Record<string, unknown> {
-  const references = request.references ?? [];
-  const availableControls = request.availableControls ?? [];
   return {
     masterPrompt: request.masterPrompt,
     shotCount: request.shotCount,
     generationMode: request.generationMode,
     continuityBible: request.continuityBible,
-    aspectRatio: request.aspectRatio ?? "16:9",
-    resolution: request.resolution ?? "1280x720",
-    references,
-    availableControls,
-    audioPolicy: request.audioPolicy ?? {
-      mode: "intent_only", dialogue: "prompted_only", soundEffects: "intent_only",
-      ambience: "intent_only", music: "prompted_or_unambiguous_performance", preserveSourceAudio: false,
-    },
-    requestedCandidateCount: request.requestedCandidateCount ?? 3,
     shots: request.shots.map((shot) => ({
       shotNumber: shot.shotNumber,
       title: shot.title,
@@ -128,8 +117,9 @@ export function validateStoryboardEnhancement(
   ) as unknown as StoryboardContinuityBible;
   const allowedReferenceIds = new Set((request.references ?? []).map((reference) => reference.id));
   const allowedControls = new Set(request.availableControls ?? []);
-  if (!Array.isArray(root.referenceUsagePlan)) throw new Error("Reference usage plan is invalid");
-  const referenceUsagePlan = root.referenceUsagePlan.map((entry, index) => {
+  const rawReferenceUsagePlan = root.referenceUsagePlan ?? [];
+  if (!Array.isArray(rawReferenceUsagePlan)) throw new Error("Reference usage plan is invalid");
+  const referenceUsagePlan = rawReferenceUsagePlan.map((entry, index) => {
     const usage = object(entry, `Reference usage ${index + 1}`);
     exactKeys(usage, new Set(["referenceId", "shotNumbers", "purpose"]), `Reference usage ${index + 1}`);
     const referenceId = text(usage.referenceId, "Reference id", 64);
@@ -139,7 +129,9 @@ export function validateStoryboardEnhancement(
     }
     return { referenceId, shotNumbers: [...new Set(usage.shotNumbers as number[])], purpose: text(usage.purpose, "Reference purpose", 1_000) };
   });
-  const assumptions = stringList(root.assumptions, "Director assumption", 24, 1_000);
+  const assumptions = root.assumptions === undefined
+    ? []
+    : stringList(root.assumptions, "Director assumption", 24, 1_000);
   if (!Array.isArray(root.shots))
     throw new Error("Storyboard shots are invalid");
   const expectedNumbers = request.targetShotNumber
@@ -154,15 +146,23 @@ export function validateStoryboardEnhancement(
     if (shot.shotNumber !== expectedNumbers[index]) {
       throw new Error("Storyboard shot order does not match the request");
     }
-    const referenceIds = stringList(shot.referenceIds, "Shot reference id", 16, 64);
+    const referenceIds = shot.referenceIds === undefined
+      ? []
+      : stringList(shot.referenceIds, "Shot reference id", 16, 64);
     if (referenceIds.some((id) => !allowedReferenceIds.has(id))) throw new Error("Shot contains an unknown reference id");
-    const recommendedControls = stringList(shot.recommendedControls, "Shot control", 16, 64);
+    const recommendedControls = shot.recommendedControls === undefined
+      ? []
+      : stringList(shot.recommendedControls, "Shot control", 16, 64);
     if (recommendedControls.some((control) => !allowedControls.has(control))) throw new Error("Shot contains an unsupported control");
-    const rawAudioIntent = object(shot.audioIntent, "Shot audio intent");
+    const rawAudioIntent = shot.audioIntent === undefined
+      ? { mode: "silent", reason: "No explicit audio direction was returned by the runtime." }
+      : object(shot.audioIntent, "Shot audio intent");
     exactKeys(rawAudioIntent, new Set(["mode", "reason"]), "Shot audio intent");
     const audioMode = String(rawAudioIntent.mode) as StoryboardAudioIntent["mode"];
     if (!["silent", "dialogue", "ambience", "sound_effects", "music", "mixed"].includes(audioMode)) throw new Error("Shot audio intent is invalid");
-    const candidateVariations = stringList(shot.candidateVariations, "Candidate variation", 4, 2_000);
+    const candidateVariations = shot.candidateVariations === undefined
+      ? Array.from({ length: request.requestedCandidateCount ?? 3 }, () => text(shot.prompt, "Shot prompt", 12_000))
+      : stringList(shot.candidateVariations, "Candidate variation", 4, 2_000);
     if (candidateVariations.length !== (request.requestedCandidateCount ?? 3)) throw new Error("Shot candidate count does not match the request");
     return {
       shotNumber: expectedNumbers[index],
@@ -182,7 +182,14 @@ export function validateStoryboardEnhancement(
       candidateVariations,
     };
   });
-  const rawBundle = object(root.instructionBundle, "Instruction bundle");
+  const rawBundle = root.instructionBundle === undefined
+    ? {
+        directorVersion: "legacy-runtime-api",
+        enhancerVersion: "legacy-runtime-api",
+        framePromptVersion: "legacy-runtime-api",
+        hash: "0".repeat(64),
+      }
+    : object(root.instructionBundle, "Instruction bundle");
   exactKeys(rawBundle, new Set(["directorVersion", "enhancerVersion", "framePromptVersion", "hash"]), "Instruction bundle");
   const hash = text(rawBundle.hash, "Instruction bundle hash", 64).toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error("Instruction bundle hash is invalid");
