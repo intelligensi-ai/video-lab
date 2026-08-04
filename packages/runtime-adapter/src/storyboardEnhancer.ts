@@ -1,5 +1,6 @@
 import type {
   EnhancedStoryboardShot,
+  StoryboardAudioIntent,
   StoryboardContinuityBible,
   StoryboardEnhancementRequest,
   StoryboardEnhancementResponse,
@@ -23,9 +24,12 @@ const continuityKeys: Array<keyof StoryboardContinuityBible> = [
 const responseKeys = new Set([
   "polishedMasterPrompt",
   "continuityBible",
+  "referenceUsagePlan",
+  "assumptions",
   "shots",
   "provider",
   "model",
+  "instructionBundle",
 ]);
 const shotKeys = new Set([
   "shotNumber",
@@ -35,20 +39,36 @@ const shotKeys = new Set([
   "firstFramePrompt",
   "lastFramePrompt",
   "continuityNotes",
+  "referenceIds",
+  "recommendedControls",
+  "audioIntent",
+  "candidateVariations",
 ]);
 
 function runtimeApiEnhancementRequest(
   request: StoryboardEnhancementRequest,
 ): Record<string, unknown> {
+  const references = request.references ?? [];
+  const availableControls = request.availableControls ?? [];
   return {
     masterPrompt: request.masterPrompt,
     shotCount: request.shotCount,
     generationMode: request.generationMode,
     continuityBible: request.continuityBible,
+    aspectRatio: request.aspectRatio ?? "16:9",
+    resolution: request.resolution ?? "1280x720",
+    references,
+    availableControls,
+    audioPolicy: request.audioPolicy ?? {
+      mode: "intent_only", dialogue: "prompted_only", soundEffects: "intent_only",
+      ambience: "intent_only", music: "prompted_or_unambiguous_performance", preserveSourceAudio: false,
+    },
+    requestedCandidateCount: request.requestedCandidateCount ?? 3,
     shots: request.shots.map((shot) => ({
       shotNumber: shot.shotNumber,
       title: shot.title,
       prompt: shot.prompt,
+      durationSeconds: shot.durationSeconds,
       generationMode: shot.generationMode,
     })),
     ...(request.targetShotNumber === undefined
@@ -87,6 +107,11 @@ function text(
   return normalized;
 }
 
+function stringList(value: unknown, label: string, maximumItems: number, maximumLength: number) {
+  if (!Array.isArray(value) || value.length > maximumItems) throw new Error(`${label} is invalid`);
+  return value.map((entry) => text(entry, label, maximumLength));
+}
+
 export function validateStoryboardEnhancement(
   value: unknown,
   request: StoryboardEnhancementRequest,
@@ -101,6 +126,20 @@ export function validateStoryboardEnhancement(
       text(bible[key], `Continuity ${key}`, 4_000, true),
     ]),
   ) as unknown as StoryboardContinuityBible;
+  const allowedReferenceIds = new Set((request.references ?? []).map((reference) => reference.id));
+  const allowedControls = new Set(request.availableControls ?? []);
+  if (!Array.isArray(root.referenceUsagePlan)) throw new Error("Reference usage plan is invalid");
+  const referenceUsagePlan = root.referenceUsagePlan.map((entry, index) => {
+    const usage = object(entry, `Reference usage ${index + 1}`);
+    exactKeys(usage, new Set(["referenceId", "shotNumbers", "purpose"]), `Reference usage ${index + 1}`);
+    const referenceId = text(usage.referenceId, "Reference id", 64);
+    if (!allowedReferenceIds.has(referenceId)) throw new Error("Reference usage contains an unknown reference id");
+    if (!Array.isArray(usage.shotNumbers) || usage.shotNumbers.some((number) => !Number.isInteger(number) || Number(number) < 1 || Number(number) > request.shotCount)) {
+      throw new Error("Reference usage contains invalid shot numbers");
+    }
+    return { referenceId, shotNumbers: [...new Set(usage.shotNumbers as number[])], purpose: text(usage.purpose, "Reference purpose", 1_000) };
+  });
+  const assumptions = stringList(root.assumptions, "Director assumption", 24, 1_000);
   if (!Array.isArray(root.shots))
     throw new Error("Storyboard shots are invalid");
   const expectedNumbers = request.targetShotNumber
@@ -115,6 +154,16 @@ export function validateStoryboardEnhancement(
     if (shot.shotNumber !== expectedNumbers[index]) {
       throw new Error("Storyboard shot order does not match the request");
     }
+    const referenceIds = stringList(shot.referenceIds, "Shot reference id", 16, 64);
+    if (referenceIds.some((id) => !allowedReferenceIds.has(id))) throw new Error("Shot contains an unknown reference id");
+    const recommendedControls = stringList(shot.recommendedControls, "Shot control", 16, 64);
+    if (recommendedControls.some((control) => !allowedControls.has(control))) throw new Error("Shot contains an unsupported control");
+    const rawAudioIntent = object(shot.audioIntent, "Shot audio intent");
+    exactKeys(rawAudioIntent, new Set(["mode", "reason"]), "Shot audio intent");
+    const audioMode = String(rawAudioIntent.mode) as StoryboardAudioIntent["mode"];
+    if (!["silent", "dialogue", "ambience", "sound_effects", "music", "mixed"].includes(audioMode)) throw new Error("Shot audio intent is invalid");
+    const candidateVariations = stringList(shot.candidateVariations, "Candidate variation", 4, 2_000);
+    if (candidateVariations.length !== (request.requestedCandidateCount ?? 3)) throw new Error("Shot candidate count does not match the request");
     return {
       shotNumber: expectedNumbers[index],
       title: text(shot.title, "Shot title", 160),
@@ -127,8 +176,16 @@ export function validateStoryboardEnhancement(
       ),
       lastFramePrompt: text(shot.lastFramePrompt, "Last-frame prompt", 6_000),
       continuityNotes: text(shot.continuityNotes, "Continuity notes", 2_000),
+      referenceIds,
+      recommendedControls,
+      audioIntent: { mode: audioMode, reason: text(rawAudioIntent.reason, "Audio intent reason", 1_000) },
+      candidateVariations,
     };
   });
+  const rawBundle = object(root.instructionBundle, "Instruction bundle");
+  exactKeys(rawBundle, new Set(["directorVersion", "enhancerVersion", "hash"]), "Instruction bundle");
+  const hash = text(rawBundle.hash, "Instruction bundle hash", 64).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error("Instruction bundle hash is invalid");
   return {
     polishedMasterPrompt: text(
       root.polishedMasterPrompt,
@@ -136,9 +193,16 @@ export function validateStoryboardEnhancement(
       12_000,
     ),
     continuityBible,
+    referenceUsagePlan,
+    assumptions,
     shots,
     provider: root.provider === "mock" ? "mock" : "ollama",
     model: text(root.model, "Enhancer model", 120),
+    instructionBundle: {
+      directorVersion: text(rawBundle.directorVersion, "Director version", 80),
+      enhancerVersion: text(rawBundle.enhancerVersion, "Enhancer version", 80),
+      hash,
+    },
   };
 }
 
@@ -230,12 +294,21 @@ export class DeployStudioStoryboardEnhancerClient {
 export function mockStoryboardEnhancement(
   request: StoryboardEnhancementRequest,
 ): StoryboardEnhancementResponse {
+  const references = request.references ?? [];
+  const availableControls = request.availableControls ?? [];
+  const candidateCount = request.requestedCandidateCount ?? 3;
   const numbers = request.targetShotNumber
     ? [request.targetShotNumber]
     : Array.from({ length: request.shotCount }, (_, index) => index + 1);
   return {
     polishedMasterPrompt: request.masterPrompt,
     continuityBible: request.continuityBible,
+    referenceUsagePlan: references.map((reference) => ({
+      referenceId: reference.id,
+      shotNumbers: numbers,
+      purpose: `Keep ${reference.label} consistent across the selected shots.`,
+    })),
+    assumptions: [],
     shots: numbers.map((shotNumber) => {
       const source = request.shots[shotNumber - 1];
       return {
@@ -249,9 +322,21 @@ export function mockStoryboardEnhancement(
         lastFramePrompt: `Closing composition for shot ${shotNumber}, leading naturally into the next shot.`,
         continuityNotes:
           "Preserve the established characters, wardrobe, geography, lighting and screen direction.",
+        referenceIds: references.map((reference) => reference.id),
+        recommendedControls: availableControls.filter((control) => ["start_frame", "end_frame"].includes(control)),
+        audioIntent: { mode: "silent", reason: "The deterministic test enhancer does not infer sound." },
+        candidateVariations: Array.from(
+          { length: candidateCount },
+          (_, index) => `Draft ${index + 1}: preserve the story and continuity while varying one camera, pacing, blocking or lighting choice.`,
+        ),
       };
     }),
     provider: "mock",
     model: "deterministic-test-enhancer",
+    instructionBundle: {
+      directorVersion: "mock-2026-08-04.1",
+      enhancerVersion: "mock-2026-08-04.1",
+      hash: "0".repeat(64),
+    },
   };
 }

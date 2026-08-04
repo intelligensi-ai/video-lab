@@ -4,9 +4,12 @@ import type {
   RuntimeStatus,
   StoryboardProject,
   StoryboardProjectSummary,
+  StoryboardAudioIntent,
+  StoryboardAudioPolicy,
   StoryboardContinuityBible,
   StoryboardEnhancementRequest,
   StoryboardEnhancementResponse,
+  StoryboardReferenceType,
 } from "@video-lab/contracts";
 import { getApiToken } from "./auth.js";
 
@@ -102,7 +105,7 @@ function fileToDataUrl(file?: File) {
   });
 }
 
-async function storeUserAsset(file: File | undefined, purpose: string) {
+export async function storeUserAsset(file: File | undefined, purpose: string) {
   if (!file) return undefined;
   const normalizedPurpose = purpose.includes("start")
     ? "start_frame"
@@ -133,6 +136,16 @@ async function storeUserAsset(file: File | undefined, purpose: string) {
   });
   if (!response.ok) throw new Error("The frame upload could not be completed.");
   return target.assetId;
+}
+
+export async function fetchUserAsset(assetId: string) {
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(assetId)) throw new Error("The private reference identifier is invalid.");
+  const token = await getApiToken();
+  const response = await fetch(`${API}/v1/assets/${encodeURIComponent(assetId)}/content`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) throw new Error("The private reference could not be loaded.");
+  return response.blob();
 }
 
 export async function generateSulphurVideo(payload: SulphurGenerationPayload) {
@@ -242,6 +255,23 @@ export interface StoryboardScenePayload {
   startFrameGenerationId?: string;
   endFrameGenerationId?: string;
   acceptedVideoGenerationId?: string;
+  candidateGenerationIds?: string[];
+  candidateVariations?: string[];
+  referenceIds?: string[];
+  recommendedControls?: string[];
+  audioIntent?: StoryboardAudioIntent;
+}
+
+export interface StoryboardProjectReference {
+  id: string;
+  type: StoryboardReferenceType;
+  label: string;
+  description: string;
+  lockedTraits: string[];
+  sceneIds: string[];
+  assetId?: string;
+  assetVersionIds: string[];
+  version: number;
 }
 
 export interface LongFormGenerationPayload {
@@ -263,6 +293,11 @@ export interface LongFormGenerationPayload {
   globalVisualAnchor?: File;
   scenes: StoryboardScenePayload[];
   continuityBible: StoryboardContinuityBible;
+  audioPolicy: StoryboardAudioPolicy;
+  candidateCount: number;
+  projectReferences: StoryboardProjectReference[];
+  directorAssumptions?: string[];
+  instructionBundle?: StoryboardEnhancementResponse["instructionBundle"];
 }
 
 export async function generateLongFormVideo(
@@ -333,6 +368,8 @@ export async function generateLongFormVideo(
         durationSeconds,
         quality: payload.postProcess === "none" ? "draft" : "high",
         overallGoal: payload.overallGoal,
+        originalMasterPrompt: payload.originalOverallGoal ?? payload.overallGoal,
+        audioPolicy: payload.audioPolicy,
         projectId,
         operationScope: "project",
         filmBible: payload.continuityBible,
@@ -378,8 +415,13 @@ export const emptyContinuityBible = (): StoryboardContinuityBible => ({
 export function storyboardEnhancementRequest(
   payload: LongFormGenerationPayload,
   targetShotNumber?: number,
+  projectId?: string,
 ): StoryboardEnhancementRequest {
+  const aspectRatio = payload.resolution.startsWith("576x") || payload.resolution.startsWith("720x1280")
+    ? "9:16"
+    : payload.resolution.startsWith("1080x1080") ? "1:1" : "16:9";
   return {
+    projectId,
     masterPrompt: payload.overallGoal,
     shotCount: payload.scenes.length,
     generationMode: payload.scenes.some(
@@ -388,6 +430,18 @@ export function storyboardEnhancementRequest(
       ? "mixed"
       : "text_to_video",
     continuityBible: payload.continuityBible,
+    aspectRatio,
+    resolution: payload.resolution,
+    references: payload.projectReferences.map(({ id, type, label, description, lockedTraits }) => ({
+      id,
+      type,
+      label,
+      description,
+      lockedTraits,
+    })),
+    availableControls: ["start_frame", "end_frame"],
+    audioPolicy: payload.audioPolicy,
+    requestedCandidateCount: payload.candidateCount,
     shots: payload.scenes.map((scene, index) => ({
       shotNumber: index + 1,
       title: scene.title,
@@ -403,11 +457,12 @@ export function storyboardEnhancementRequest(
 export const enhanceStoryboard = (
   payload: LongFormGenerationPayload,
   targetShotNumber?: number,
+  projectId?: string,
 ) =>
   api<StoryboardEnhancementResponse>("/v1/storyboards/enhance", {
     method: "POST",
     body: JSON.stringify(
-      storyboardEnhancementRequest(payload, targetShotNumber),
+      storyboardEnhancementRequest(payload, targetShotNumber, projectId),
     ),
   });
 
@@ -458,6 +513,8 @@ export async function generateStoryboardFrame(
         operationSceneId: scene.id,
         framePrompt,
         overallGoal: payload.overallGoal,
+        originalMasterPrompt: payload.originalOverallGoal ?? payload.overallGoal,
+        audioPolicy: payload.audioPolicy,
         filmBible: payload.continuityBible,
         resolution: payload.resolution,
         imageSteps: payload.imageSteps,
@@ -510,6 +567,8 @@ export async function generateStoryboardScene(
         operationScope: "scene",
         operationSceneId: scene.id,
         overallGoal: payload.overallGoal,
+        originalMasterPrompt: payload.originalOverallGoal ?? payload.overallGoal,
+        audioPolicy: payload.audioPolicy,
         filmBible: payload.continuityBible,
         negativePrompt: payload.negativePrompt,
         resolution: payload.resolution,
@@ -561,9 +620,12 @@ export async function assembleStoryboardFilm(
         projectId,
         operationScope: "assembly",
         overallGoal: payload.overallGoal,
+        originalMasterPrompt: payload.originalOverallGoal ?? payload.overallGoal,
+        audioPolicy: payload.audioPolicy,
         resolution: payload.resolution,
         fps: payload.fps,
         outputFormat: payload.outputFormat,
+        postProcess: payload.postProcess,
         acceptedSceneGenerationIds,
         storyboard: payload.scenes.map((scene) => ({
           ...scene,

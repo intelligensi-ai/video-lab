@@ -22,6 +22,9 @@ test("storyboard exposes editable Gemma and frame controls", async ({
   await expect(
     page.getByText(/Suggestions come from the local Gemma enhancer/),
   ).toBeVisible();
+  await page.getByText("First frame / last frame", { exact: true }).click();
+  await page.getByRole("button", { name: "Expand scene 2" }).click();
+  await page.getByText("First frame / last frame", { exact: true }).nth(1).click();
   const firstFrameButtons = page.getByRole("button", {
     name: "Generate first frame",
   });
@@ -37,11 +40,15 @@ test("storyboard exposes editable Gemma and frame controls", async ({
     page.getByRole("button", { name: /Enhance and plan 3 shots/ }),
   ).toBeVisible();
   await expect(page.getByText("3/24")).toBeVisible();
+  await page.getByRole("button", { name: "New project" }).first().click();
   await expect(page.getByLabel("Open storyboard project")).toBeVisible();
   await expect(page.getByLabel("Project title")).toBeEditable();
+  await page.getByRole("button", { name: "Close project dialog" }).click();
   await expect(
-    page.getByText(/style image references are not offered/i),
+    page.getByRole("button", { name: /Project references/ }),
   ).toBeVisible();
+  await expect(page.getByLabel("Sound behaviour")).toHaveValue("intent_only");
+  await expect(page.getByLabel("Drafts per scene")).toHaveValue("3");
   await expect(
     page.getByRole("button", { name: "Assemble accepted clips" }),
   ).toBeDisabled();

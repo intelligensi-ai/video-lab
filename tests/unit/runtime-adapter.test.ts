@@ -552,6 +552,13 @@ describe("SulphurLtxRuntimeAdapter", () => {
           currentScene: 2,
           totalScenes: 4,
           stage: "generating_scene",
+          qualityAssessment: {
+            version: "media-qc-v2",
+            advisory: true,
+            score: 90,
+            recommendation: "review",
+            checks: [{ id: "black_frames", status: "warning", confidence: 0.95 }],
+          },
           createdAt: "2026-08-01T12:00:00.000Z",
           links: {
             self: "/v1/runtimes/longform-ltx-storyboard-studio/jobs/gateway-job",
@@ -605,6 +612,12 @@ describe("SulphurLtxRuntimeAdapter", () => {
       currentScene: 2,
       totalScenes: 4,
       stage: "generating_scene",
+      qualityAssessment: {
+        version: "media-qc-v2",
+        advisory: true,
+        score: 90,
+        recommendation: "review",
+      },
     });
     expect(calls.map((call) => call.url)).toEqual([
       "https://api.intelligensi.ai/v1/runtimes?capability=storyboard-enhance&ready=true",

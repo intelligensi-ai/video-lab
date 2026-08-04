@@ -15,8 +15,10 @@ import type {
   RuntimeStatus,
   StoryboardProject,
   StoryboardProjectSummary,
+  StoryboardAudioPolicy,
   StoryboardContinuityBible,
   StoryboardEnhancementRequest,
+  StoryboardReferenceSummary,
 } from "@video-lab/contracts";
 import {
   chargeCredits,
@@ -1093,6 +1095,7 @@ function outputExtension(contentType: StoredGeneration["outputContentType"]) {
 async function completeGenerationFromRuntime(
   generation: StoredGeneration,
   runtimeJobId: string,
+  qualityAssessment?: Generation["qualityAssessment"],
 ) {
   const out = await runtime.fetchOutput(runtimeJobId);
   if (creditLimitsEnabled())
@@ -1122,6 +1125,7 @@ async function completeGenerationFromRuntime(
     progress: 100,
     runtimeMessage: undefined,
     runtimeProgress: undefined,
+    ...(qualityAssessment ? { qualityAssessment } : {}),
     output: {
       downloadUrl: `/api/v1/generations/${generation.id}/download`,
       durationSeconds: out.durationSeconds,
@@ -1138,7 +1142,8 @@ async function completeGenerationFromRuntime(
   await persistGeneration(completed);
   log("runtime_generation_completed", {
     generationId: generation.id,
-    outputObjectPath,
+    outputContentType: out.contentType,
+    outputSha256,
   });
   return completed;
 }
@@ -1182,7 +1187,7 @@ async function reconcileActiveGeneration(uid: string) {
       return active;
     const terminal =
       runtimeStatus.state === "completed"
-        ? await completeGenerationFromRuntime(active, active.runtimeJobId)
+        ? await completeGenerationFromRuntime(active, active.runtimeJobId, runtimeStatus.qualityAssessment)
         : await failGenerationFromRuntime(
             active,
             runtimeStatus.state === "cancelled"
@@ -1706,13 +1711,71 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
       "Target shot is outside the storyboard",
     );
   }
+  const projectId = typeof source.projectId === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(source.projectId)
+    ? source.projectId
+    : undefined;
+  const aspectRatio = ["16:9", "9:16", "1:1"].includes(String(source.aspectRatio))
+    ? source.aspectRatio as StoryboardEnhancementRequest["aspectRatio"]
+    : "16:9";
+  const resolution = typeof source.resolution === "string" && /^\d{3,4}x\d{3,4}$/.test(source.resolution)
+    ? source.resolution
+    : "1280x720";
+  const referenceTypes = new Set(["character", "location", "product", "style", "voice", "motion"]);
+  const seenReferences = new Set<string>();
+  const references: StoryboardReferenceSummary[] = Array.isArray(source.references)
+    ? source.references.slice(0, 32).map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw problem(400, "invalid_reference", "Project reference is invalid");
+        const reference = entry as Record<string, unknown>;
+        const id = typeof reference.id === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(reference.id) ? reference.id : "";
+        const type = String(reference.type);
+        if (!id || seenReferences.has(id) || !referenceTypes.has(type)) throw problem(400, "invalid_reference", "Project reference is invalid");
+        seenReferences.add(id);
+        return {
+          id,
+          type: type as StoryboardReferenceSummary["type"],
+          label: String(reference.label ?? type).trim().slice(0, 120),
+          description: String(reference.description ?? "").trim().slice(0, 2_000),
+          lockedTraits: Array.isArray(reference.lockedTraits)
+            ? reference.lockedTraits.slice(0, 24).map((trait) => String(trait).trim().slice(0, 240)).filter(Boolean)
+            : [],
+        };
+      })
+    : [];
+  if (references.length && !projectId) throw problem(400, "invalid_reference", "Project references require a valid project");
+  const availableControls = Array.isArray(source.availableControls)
+    ? source.availableControls.slice(0, 64).map(String).filter((control) => /^[a-z][a-z0-9_]{1,63}$/.test(control))
+    : [];
+  const rawAudioPolicy = source.audioPolicy && typeof source.audioPolicy === "object" && !Array.isArray(source.audioPolicy)
+    ? source.audioPolicy as Record<string, unknown>
+    : {};
+  const audioMode = ["silent", "intent_only", "directed"].includes(String(rawAudioPolicy.mode))
+    ? rawAudioPolicy.mode as StoryboardAudioPolicy["mode"]
+    : "intent_only";
+  const audioPolicy: StoryboardAudioPolicy = {
+    mode: audioMode,
+    dialogue: ["off", "prompted_only", "on"].includes(String(rawAudioPolicy.dialogue)) ? rawAudioPolicy.dialogue as StoryboardAudioPolicy["dialogue"] : audioMode === "silent" ? "off" : "prompted_only",
+    soundEffects: ["off", "intent_only", "on"].includes(String(rawAudioPolicy.soundEffects)) ? rawAudioPolicy.soundEffects as StoryboardAudioPolicy["soundEffects"] : audioMode === "silent" ? "off" : "intent_only",
+    ambience: ["off", "intent_only", "on"].includes(String(rawAudioPolicy.ambience)) ? rawAudioPolicy.ambience as StoryboardAudioPolicy["ambience"] : audioMode === "silent" ? "off" : "intent_only",
+    music: ["off", "prompted_or_unambiguous_performance", "on"].includes(String(rawAudioPolicy.music)) ? rawAudioPolicy.music as StoryboardAudioPolicy["music"] : audioMode === "silent" ? "off" : "prompted_or_unambiguous_performance",
+    preserveSourceAudio: audioMode !== "silent" && rawAudioPolicy.preserveSourceAudio === true,
+  };
+  const requestedCandidateCount = Number.isInteger(Number(source.requestedCandidateCount))
+    ? Math.min(4, Math.max(1, Number(source.requestedCandidateCount)))
+    : 3;
   return {
+    projectId,
     masterPrompt,
     shotCount,
     generationMode: mode,
     continuityBible,
     shots,
     targetShotNumber,
+    aspectRatio,
+    resolution,
+    references,
+    availableControls,
+    audioPolicy,
+    requestedCandidateCount,
   };
 }
 
@@ -1733,6 +1796,11 @@ const draftKeys = new Set([
   "globalSeed",
   "seedPolicy",
   "continuityBible",
+  "audioPolicy",
+  "candidateCount",
+  "projectReferences",
+  "directorAssumptions",
+  "instructionBundle",
   "scenes",
 ]);
 const draftSceneKeys = new Set([
@@ -1752,6 +1820,11 @@ const draftSceneKeys = new Set([
   "startFrameGenerationId",
   "endFrameGenerationId",
   "acceptedVideoGenerationId",
+  "candidateGenerationIds",
+  "candidateVariations",
+  "referenceIds",
+  "recommendedControls",
+  "audioIntent",
   "firstFramePrompt",
   "lastFramePrompt",
   "narrativePurpose",
@@ -1818,8 +1891,75 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
         `Shot ${index + 1} is invalid`,
       );
     }
+    scene.candidateGenerationIds = Array.isArray(scene.candidateGenerationIds)
+      ? [...new Set(scene.candidateGenerationIds
+          .map((id) => String(id))
+          .filter((id) => /^[A-Za-z0-9_-]{8,64}$/.test(id)))]
+          .slice(-24)
+      : [];
+    scene.candidateVariations = Array.isArray(scene.candidateVariations)
+      ? scene.candidateVariations
+          .slice(0, 4)
+          .map((variation) => String(variation).trim().slice(0, 2_000))
+          .filter(Boolean)
+      : [];
+    scene.referenceIds = Array.isArray(scene.referenceIds)
+      ? [...new Set(scene.referenceIds
+          .map((id) => String(id))
+          .filter((id) => /^[A-Za-z0-9_-]{8,64}$/.test(id)))]
+          .slice(0, 32)
+      : [];
+    scene.recommendedControls = Array.isArray(scene.recommendedControls)
+      ? [...new Set(scene.recommendedControls
+          .map((control) => String(control))
+          .filter((control) => ["start_frame", "end_frame"].includes(control)))]
+      : [];
     return scene;
   });
+  draft.candidateCount = Math.min(4, Math.max(1, Math.round(Number(draft.candidateCount) || 3)));
+  const audioSource = draft.audioPolicy && typeof draft.audioPolicy === "object" && !Array.isArray(draft.audioPolicy)
+    ? draft.audioPolicy as Record<string, unknown>
+    : {};
+  const audioMode = ["silent", "intent_only", "directed"].includes(String(audioSource.mode)) ? String(audioSource.mode) : "intent_only";
+  draft.audioPolicy = {
+    mode: audioMode,
+    dialogue: ["off", "prompted_only", "on"].includes(String(audioSource.dialogue)) ? audioSource.dialogue : audioMode === "silent" ? "off" : "prompted_only",
+    soundEffects: ["off", "intent_only", "on"].includes(String(audioSource.soundEffects)) ? audioSource.soundEffects : audioMode === "silent" ? "off" : "intent_only",
+    ambience: ["off", "intent_only", "on"].includes(String(audioSource.ambience)) ? audioSource.ambience : audioMode === "silent" ? "off" : "intent_only",
+    music: ["off", "prompted_or_unambiguous_performance", "on"].includes(String(audioSource.music)) ? audioSource.music : audioMode === "silent" ? "off" : "prompted_or_unambiguous_performance",
+    preserveSourceAudio: audioMode !== "silent" && audioSource.preserveSourceAudio === true,
+  };
+  draft.projectReferences = Array.isArray(draft.projectReferences)
+    ? draft.projectReferences.slice(0, 32).map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw problem(400, "invalid_reference", "Project reference is invalid");
+        const reference = entry as Record<string, unknown>;
+        const type = String(reference.type ?? "");
+        if (!/^[A-Za-z0-9_-]{8,64}$/.test(String(reference.id ?? "")) || !["character", "location", "product", "style", "voice", "motion"].includes(type)) {
+          throw problem(400, "invalid_reference", "Project reference is invalid");
+        }
+        const assetId = typeof reference.assetId === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(reference.assetId)
+          ? reference.assetId
+          : undefined;
+        const assetVersionIds = Array.isArray(reference.assetVersionIds)
+          ? [...new Set(reference.assetVersionIds
+              .map((id) => String(id))
+              .filter((id) => /^[A-Za-z0-9_-]{8,64}$/.test(id)))]
+              .slice(-24)
+          : [];
+        if (assetId && !assetVersionIds.includes(assetId)) assetVersionIds.push(assetId);
+        return {
+          id: String(reference.id),
+          type,
+          label: String(reference.label ?? type).trim().slice(0, 120),
+          description: String(reference.description ?? "").trim().slice(0, 2_000),
+          lockedTraits: Array.isArray(reference.lockedTraits) ? reference.lockedTraits.slice(0, 24).map((trait) => String(trait).trim().slice(0, 240)).filter(Boolean) : [],
+          sceneIds: Array.isArray(reference.sceneIds) ? reference.sceneIds.slice(0, MAX_STORYBOARD_SCENES).map((id) => String(id).slice(0, 200)) : [],
+          ...(assetId ? { assetId } : {}),
+          assetVersionIds,
+          version: Math.min(1000, Math.max(1, Math.round(Number(reference.version) || 1))),
+        };
+      })
+    : [];
   const encoded = JSON.stringify(draft);
   if (
     Buffer.byteLength(encoded, "utf8") > 512_000 ||
@@ -1832,6 +1972,26 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
     );
   }
   return draft;
+}
+
+async function validateStoryboardReferenceAssets(form: Record<string, unknown>, uid: string) {
+  const references = Array.isArray(form.projectReferences)
+    ? form.projectReferences as Array<Record<string, unknown>>
+    : [];
+  for (const reference of references) {
+    const assetIds = new Set<string>([
+      ...(typeof reference.assetId === "string" ? [reference.assetId] : []),
+      ...(Array.isArray(reference.assetVersionIds)
+        ? reference.assetVersionIds.map((assetId) => String(assetId))
+        : []),
+    ]);
+    for (const assetId of assetIds) {
+      const asset = await findAsset(assetId);
+      if (!asset || asset.uid !== uid || !asset.uploadedAt || asset.purpose !== "reference") {
+        throw problem(403, "reference_forbidden", "A project reference asset is not owned by the caller");
+      }
+    }
+  }
 }
 
 async function readStoryboardDraft(uid: string) {
@@ -2080,11 +2240,13 @@ app.get("/v1/storyboards/projects", auth, async (_req, res, next) => {
 app.post("/v1/storyboards/projects", auth, async (req, res, next) => {
   try {
     const createdAt = nowIso();
+    const form = sanitizeStoryboardDraft(req.body?.form);
+    await validateStoryboardReferenceAssets(form, res.locals.principal.uid);
     const project: StoredStoryboardProject = {
       id: nanoid(),
       uid: res.locals.principal.uid,
       title: storyboardProjectTitle(req.body?.title),
-      form: sanitizeStoryboardDraft(req.body?.form),
+      form,
       createdAt,
       updatedAt: createdAt,
     };
@@ -2111,11 +2273,13 @@ app.put("/v1/storyboards/projects/:id", auth, async (req, res, next) => {
     const id = String(req.params.id ?? "");
     const existing = await findStoryboardProject(uid, id);
     if (!existing) throw problem(404, "project_not_found", "Project not found");
+    const form = sanitizeStoryboardDraft(req.body?.form);
+    await validateStoryboardReferenceAssets(form, uid);
     res.json(
       await persistStoryboardProject({
         ...existing,
         title: storyboardProjectTitle(req.body?.title),
-        form: sanitizeStoryboardDraft(req.body?.form),
+        form,
         updatedAt: nowIso(),
       }),
     );
@@ -2145,6 +2309,7 @@ app.get("/v1/storyboards/draft", auth, async (_req, res, next) => {
 app.put("/v1/storyboards/draft", auth, async (req, res, next) => {
   try {
     const form = sanitizeStoryboardDraft(req.body?.form);
+    await validateStoryboardReferenceAssets(form, res.locals.principal.uid);
     res.json(await writeStoryboardDraft(res.locals.principal.uid, form));
   } catch (error) {
     next(error);
@@ -2197,6 +2362,19 @@ app.post(
   async (req, res, next) => {
     try {
       const request = enhancementRequest(req.body);
+      if (request.references.length) {
+        const project = await findStoryboardProject(
+          res.locals.principal.uid,
+          String(request.projectId),
+        );
+        const storedReferences = Array.isArray(project?.form.projectReferences)
+          ? project.form.projectReferences as Array<Record<string, unknown>>
+          : [];
+        const ownedIds = new Set(storedReferences.map((reference) => String(reference.id ?? "")));
+        if (request.references.some((reference) => !ownedIds.has(reference.id))) {
+          throw problem(403, "reference_forbidden", "A project reference is not owned by this project");
+        }
+      }
       const result = await enhanceStoryboard(request);
       log("storyboard_enhanced", {
         uid: res.locals.principal.uid,
@@ -2342,6 +2520,35 @@ app.put(
     }
   },
 );
+app.get("/v1/assets/:id/content", auth, async (req, res, next) => {
+  try {
+    const asset = await findAsset(String(req.params.id));
+    if (!asset || asset.uid !== res.locals.principal.uid || !asset.uploadedAt) {
+      throw problem(404, "asset_not_found", "Private reference was not found");
+    }
+    let bytes: Buffer;
+    if (localAuth) {
+      if (!asset.bytes) throw problem(404, "asset_not_found", "Private reference was not found");
+      bytes = Buffer.from(asset.bytes);
+    } else {
+      adminApp();
+      [bytes] = await getStorage().bucket().file(asset.objectPath).download();
+    }
+    if (bytes.byteLength !== asset.expectedSize || !imageSignatureMatches(bytes, asset.contentType)) {
+      throw problem(500, "asset_corrupt", "Private reference could not be read safely");
+    }
+    res.set({
+      "Content-Type": asset.contentType,
+      "Content-Length": String(bytes.byteLength),
+      "Cache-Control": "private, no-store",
+      "Content-Disposition": `inline; filename="${asset.id}"`,
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.send(bytes);
+  } catch (error) {
+    next(error);
+  }
+});
 app.post(
   "/v1/generations",
   auth,
@@ -3042,7 +3249,7 @@ async function processQueueItem(workerId = "local-worker") {
       gens.set(g.id, cancelled);
       await persistGeneration(cancelled);
     } else if (st.state === "completed") {
-      await completeGenerationFromRuntime(gens.get(g.id)!, sub.runtimeJobId);
+      await completeGenerationFromRuntime(gens.get(g.id)!, sub.runtimeJobId, st.qualityAssessment);
     } else throw new Error(st.message ?? st.state);
   } catch (e) {
     if (e instanceof RuntimeCapacityPendingError) {

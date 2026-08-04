@@ -33,6 +33,18 @@ export interface Generation {
     totalScenes?: number;
     stage?: string;
   };
+  qualityAssessment?: {
+    version: string;
+    advisory: true;
+    score: number;
+    recommendation: "review" | "recommended" | "repair";
+    checks: Array<{
+      id: string;
+      status: "passed" | "failed" | "warning" | "not_evaluated";
+      confidence: number;
+      detail?: string;
+    }>;
+  };
   creditCost: number;
   output?: {
     downloadUrl?: string;
@@ -89,6 +101,13 @@ export interface RuntimeStatus {
     audioPreservation: boolean;
     styleReference: boolean;
     subjectReference: boolean;
+    audioPolicyModes?: Array<"silent" | "intent_only" | "directed">;
+    featureStatus?: Record<string, "supported" | "partial" | "unavailable" | "client_managed">;
+    instructionBundle?: {
+      directorVersion: string;
+      enhancerVersion: string;
+      hash: string;
+    };
   };
   discovery?: {
     source: "deploy-studio" | "environment" | "legacy" | "none";
@@ -135,13 +154,56 @@ export interface StoryboardEnhancementShotInput {
   generationMode: "text_to_video" | "image_to_video" | "mixed";
 }
 
+export type StoryboardReferenceType =
+  | "character"
+  | "location"
+  | "product"
+  | "style"
+  | "voice"
+  | "motion";
+
+export interface StoryboardReferenceSummary {
+  id: string;
+  type: StoryboardReferenceType;
+  label: string;
+  description: string;
+  lockedTraits: string[];
+}
+
+export interface StoryboardAudioPolicy {
+  mode: "silent" | "intent_only" | "directed";
+  dialogue: "off" | "prompted_only" | "on";
+  soundEffects: "off" | "intent_only" | "on";
+  ambience: "off" | "intent_only" | "on";
+  music: "off" | "prompted_or_unambiguous_performance" | "on";
+  preserveSourceAudio: boolean;
+}
+
+export interface StoryboardAudioIntent {
+  mode: "silent" | "dialogue" | "ambience" | "sound_effects" | "music" | "mixed";
+  reason: string;
+}
+
+export interface StoryboardReferenceUsage {
+  referenceId: string;
+  shotNumbers: number[];
+  purpose: string;
+}
+
 export interface StoryboardEnhancementRequest {
+  projectId?: string;
   masterPrompt: string;
   shotCount: number;
   generationMode: "text_to_video" | "image_to_video" | "mixed";
   continuityBible: StoryboardContinuityBible;
   shots: StoryboardEnhancementShotInput[];
   targetShotNumber?: number;
+  aspectRatio: "16:9" | "9:16" | "1:1";
+  resolution: string;
+  references: StoryboardReferenceSummary[];
+  availableControls: string[];
+  audioPolicy: StoryboardAudioPolicy;
+  requestedCandidateCount: number;
 }
 
 export interface EnhancedStoryboardShot {
@@ -152,12 +214,23 @@ export interface EnhancedStoryboardShot {
   firstFramePrompt: string;
   lastFramePrompt: string;
   continuityNotes: string;
+  referenceIds: string[];
+  recommendedControls: string[];
+  audioIntent: StoryboardAudioIntent;
+  candidateVariations: string[];
 }
 
 export interface StoryboardEnhancementResponse {
   polishedMasterPrompt: string;
   continuityBible: StoryboardContinuityBible;
+  referenceUsagePlan: StoryboardReferenceUsage[];
+  assumptions: string[];
   shots: EnhancedStoryboardShot[];
   provider: "ollama" | "mock";
   model: string;
+  instructionBundle: {
+    directorVersion: string;
+    enhancerVersion: string;
+    hash: string;
+  };
 }

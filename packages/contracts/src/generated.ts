@@ -171,7 +171,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Read owner-scoped private reference bytes through Video Lab */
+        get: operations["getAssetContent"];
         /** Upload image bytes through the authenticated Video Lab origin */
         put: operations["uploadAssetContent"];
         post?: never;
@@ -417,6 +418,8 @@ export interface components {
             runtime?: string;
             resolution?: string;
             overallGoal?: string;
+            originalMasterPrompt?: string;
+            audioPolicy?: components["schemas"]["StoryboardAudioPolicy"];
             /** @enum {string} */
             operationScope?: "project" | "scene" | "start_frame" | "end_frame" | "assembly";
             operationSceneId?: string;
@@ -473,6 +476,7 @@ export interface components {
                 totalScenes?: number;
                 stage?: string;
             };
+            qualityAssessment?: components["schemas"]["QualityAssessment"];
             creditCost: number;
             output?: {
                 downloadUrl?: string;
@@ -544,6 +548,57 @@ export interface components {
             /** @enum {string} */
             generationMode: "text_to_video" | "image_to_video" | "mixed";
         };
+        StoryboardReferenceSummary: {
+            id: string;
+            /** @enum {string} */
+            type: "character" | "location" | "product" | "style" | "voice" | "motion";
+            label: string;
+            description: string;
+            lockedTraits: string[];
+        };
+        StoryboardAudioPolicy: {
+            /** @enum {string} */
+            mode: "silent" | "intent_only" | "directed";
+            /** @enum {string} */
+            dialogue: "off" | "prompted_only" | "on";
+            /** @enum {string} */
+            soundEffects: "off" | "intent_only" | "on";
+            /** @enum {string} */
+            ambience: "off" | "intent_only" | "on";
+            /** @enum {string} */
+            music: "off" | "prompted_or_unambiguous_performance" | "on";
+            preserveSourceAudio: boolean;
+        };
+        StoryboardAudioIntent: {
+            /** @enum {string} */
+            mode: "silent" | "dialogue" | "ambience" | "sound_effects" | "music" | "mixed";
+            reason: string;
+        };
+        StoryboardReferenceUsage: {
+            referenceId: string;
+            shotNumbers: number[];
+            purpose: string;
+        };
+        InstructionBundle: {
+            directorVersion: string;
+            enhancerVersion: string;
+            hash: string;
+        };
+        QualityAssessment: {
+            version: string;
+            /** @enum {boolean} */
+            advisory: true;
+            score: number;
+            /** @enum {string} */
+            recommendation: "review" | "recommended" | "repair";
+            checks: {
+                id: string;
+                /** @enum {string} */
+                status: "passed" | "failed" | "warning" | "not_evaluated";
+                confidence: number;
+                detail?: string;
+            }[];
+        };
         StoryboardEnhancementRequest: {
             masterPrompt: string;
             shotCount: number;
@@ -552,6 +607,14 @@ export interface components {
             continuityBible: components["schemas"]["StoryboardContinuityBible"];
             shots: components["schemas"]["StoryboardEnhancementShotInput"][];
             targetShotNumber?: number;
+            projectId?: string;
+            /** @enum {string} */
+            aspectRatio: "16:9" | "9:16" | "1:1";
+            resolution: string;
+            references: components["schemas"]["StoryboardReferenceSummary"][];
+            availableControls: string[];
+            audioPolicy: components["schemas"]["StoryboardAudioPolicy"];
+            requestedCandidateCount: number;
         };
         EnhancedStoryboardShot: {
             shotNumber: number;
@@ -561,14 +624,21 @@ export interface components {
             firstFramePrompt: string;
             lastFramePrompt: string;
             continuityNotes: string;
+            referenceIds: string[];
+            recommendedControls: string[];
+            audioIntent: components["schemas"]["StoryboardAudioIntent"];
+            candidateVariations: string[];
         };
         StoryboardEnhancementResponse: {
             polishedMasterPrompt: string;
             continuityBible: components["schemas"]["StoryboardContinuityBible"];
+            referenceUsagePlan: components["schemas"]["StoryboardReferenceUsage"][];
+            assumptions: string[];
             shots: components["schemas"]["EnhancedStoryboardShot"][];
             /** @enum {string} */
             provider: "ollama" | "mock";
             model: string;
+            instructionBundle: components["schemas"]["InstructionBundle"];
         };
         StoryboardProjectSummary: {
             id: string;
@@ -604,6 +674,11 @@ export interface components {
             audioPreservation: boolean;
             styleReference: boolean;
             subjectReference: boolean;
+            audioPolicyModes?: ("silent" | "intent_only" | "directed")[];
+            featureStatus?: {
+                [key: string]: "supported" | "partial" | "unavailable" | "client_managed";
+            };
+            instructionBundle?: components["schemas"]["InstructionBundle"];
         };
         RuntimeStatus: {
             provider: string;
@@ -1042,6 +1117,38 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    getAssetContent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private image bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": string;
+                    "image/png": string;
+                    "image/webp": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Asset not found or not owned by caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     uploadAssetContent: {

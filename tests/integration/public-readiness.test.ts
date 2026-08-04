@@ -245,6 +245,76 @@ describe("public runtime readiness boundaries", () => {
       .expect(204);
   });
 
+  it("serves project references only to their owner through the same origin", async () => {
+    const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const target = await request(app)
+      .post("/v1/assets/upload-url")
+      .set("authorization", "Bearer reference-owner")
+      .send({
+        fileName: "character.png",
+        contentType: "image/png",
+        sizeBytes: bytes.length,
+        purpose: "reference",
+      })
+      .expect(201);
+    await request(app)
+      .put(target.body.uploadUrl)
+      .set("authorization", "Bearer reference-owner")
+      .set("content-type", "image/png")
+      .send(bytes)
+      .expect(204);
+    const ownerRead = await request(app)
+      .get(`/v1/assets/${target.body.assetId}/content`)
+      .set("authorization", "Bearer reference-owner")
+      .expect(200);
+    expect(ownerRead.headers["content-type"]).toMatch(/^image\/png/);
+    expect(ownerRead.headers["cache-control"]).toBe("private, no-store");
+    await request(app)
+      .get(`/v1/assets/${target.body.assetId}/content`)
+      .set("authorization", "Bearer reference-other")
+      .expect(404);
+  });
+
+  it("rejects another user's asset hidden in a reference version history", async () => {
+    const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const target = await request(app)
+      .post("/v1/assets/upload-url")
+      .set("authorization", "Bearer reference-history-other")
+      .send({
+        fileName: "private-character.png",
+        contentType: "image/png",
+        sizeBytes: bytes.length,
+        purpose: "reference",
+      })
+      .expect(201);
+    await request(app)
+      .put(target.body.uploadUrl)
+      .set("authorization", "Bearer reference-history-other")
+      .set("content-type", "image/png")
+      .send(bytes)
+      .expect(204);
+    await request(app)
+      .post("/v1/storyboards/projects")
+      .set("authorization", "Bearer reference-history-owner")
+      .send({
+        title: "Rejected reference history",
+        form: {
+          ...projectForm(1),
+          projectReferences: [{
+            id: "reference-history-01",
+            type: "character",
+            label: "Lead",
+            description: "Continuity reference",
+            lockedTraits: [],
+            sceneIds: [],
+            assetVersionIds: [target.body.assetId],
+            version: 1,
+          }],
+        },
+      })
+      .expect(403);
+  });
+
   it("rejects an upload whose bytes do not match its declared image type", async () => {
     const bytes = Buffer.from("not-a-png");
     const target = await request(app)

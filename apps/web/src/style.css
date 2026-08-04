@@ -2638,6 +2638,55 @@ body:has(.lf-page) {
   max-height: 320px;
   background: #000;
 }
+.lf-project-references,
+.lf-candidate-stack {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.9rem;
+}
+.lf-reference-create {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+.lf-reference-create textarea,
+.lf-reference-card textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+.lf-reference-card > img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: 0.7rem;
+  object-fit: cover;
+}
+.lf-candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+.lf-candidate-card {
+  display: grid;
+  gap: 0.6rem;
+  border: 1px solid #1112;
+  border-radius: 0.9rem;
+  background: #fff;
+  padding: 0.7rem;
+}
+.lf-candidate-card.accepted {
+  border-color: #159d91;
+  box-shadow: 0 0 0 2px #159d9122;
+}
+.lf-candidate-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.lf-candidate-card video {
+  width: 100%;
+  border-radius: 0.65rem;
+  background: #000;
+}
 .lf-assembly > strong {
   color: #087f76;
   font-size: 0.75rem;
@@ -2658,7 +2707,8 @@ body:has(.lf-page) {
   }
   .lf-project-fields,
   .lf-scene-copy-grid,
-  .lf-seed-controls {
+  .lf-seed-controls,
+  .lf-reference-create {
     grid-template-columns: 1fr;
   }
 }

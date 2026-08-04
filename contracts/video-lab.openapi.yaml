@@ -259,6 +259,20 @@ paths:
           }
         "401": { $ref: "#/components/responses/Unauthorized" }
   /v1/assets/{assetId}/content:
+    get:
+      operationId: getAssetContent
+      summary: Read owner-scoped private reference bytes through Video Lab
+      parameters:
+        [{ name: assetId, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200":
+          description: Private image bytes
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: Asset not found or not owned by caller }
     put:
       operationId: uploadAssetContent
       summary: Upload image bytes through the authenticated Video Lab origin
@@ -608,6 +622,8 @@ components:
             runtime: { type: string },
             resolution: { type: string },
             overallGoal: { type: string },
+            originalMasterPrompt: { type: string },
+            audioPolicy: { $ref: "#/components/schemas/StoryboardAudioPolicy" },
             operationScope:
               {
                 type: string,
@@ -710,6 +726,7 @@ components:
                     stage: { type: string },
                   },
               },
+            qualityAssessment: { $ref: "#/components/schemas/QualityAssessment" },
             creditCost: { type: integer },
             output:
               {
@@ -840,12 +857,80 @@ components:
               { type: string, enum: [text_to_video, image_to_video, mixed] },
           },
       }
+    StoryboardReferenceSummary:
+      type: object
+      additionalProperties: false
+      required: [id, type, label, description, lockedTraits]
+      properties:
+        id: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
+        type: { type: string, enum: [character, location, product, style, voice, motion] }
+        label: { type: string, maxLength: 120 }
+        description: { type: string, maxLength: 2000 }
+        lockedTraits:
+          type: array
+          maxItems: 24
+          items: { type: string, maxLength: 240 }
+    StoryboardAudioPolicy:
+      type: object
+      additionalProperties: false
+      required: [mode, dialogue, soundEffects, ambience, music, preserveSourceAudio]
+      properties:
+        mode: { type: string, enum: [silent, intent_only, directed] }
+        dialogue: { type: string, enum: [off, prompted_only, on] }
+        soundEffects: { type: string, enum: [off, intent_only, on] }
+        ambience: { type: string, enum: [off, intent_only, on] }
+        music: { type: string, enum: [off, prompted_or_unambiguous_performance, on] }
+        preserveSourceAudio: { type: boolean }
+    StoryboardAudioIntent:
+      type: object
+      additionalProperties: false
+      required: [mode, reason]
+      properties:
+        mode: { type: string, enum: [silent, dialogue, ambience, sound_effects, music, mixed] }
+        reason: { type: string, maxLength: 1000 }
+    StoryboardReferenceUsage:
+      type: object
+      additionalProperties: false
+      required: [referenceId, shotNumbers, purpose]
+      properties:
+        referenceId: { type: string }
+        shotNumbers: { type: array, items: { type: integer, minimum: 1, maximum: 24 } }
+        purpose: { type: string, maxLength: 1000 }
+    InstructionBundle:
+      type: object
+      additionalProperties: false
+      required: [directorVersion, enhancerVersion, hash]
+      properties:
+        directorVersion: { type: string }
+        enhancerVersion: { type: string }
+        hash: { type: string, pattern: "^[a-f0-9]{64}$" }
+    QualityAssessment:
+      type: object
+      additionalProperties: false
+      required: [version, advisory, score, recommendation, checks]
+      properties:
+        version: { type: string }
+        advisory: { type: boolean, enum: [true] }
+        score: { type: integer, minimum: 0, maximum: 100 }
+        recommendation: { type: string, enum: [review, recommended, repair] }
+        checks:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, status, confidence]
+            properties:
+              id: { type: string }
+              status: { type: string, enum: [passed, failed, warning, not_evaluated] }
+              confidence: { type: number, minimum: 0, maximum: 1 }
+              detail: { type: string, maxLength: 500 }
     StoryboardEnhancementRequest:
       {
         type: object,
         additionalProperties: false,
         required:
-          [masterPrompt, shotCount, generationMode, continuityBible, shots],
+          [masterPrompt, shotCount, generationMode, continuityBible, shots, aspectRatio, resolution, references, availableControls, audioPolicy, requestedCandidateCount],
         properties:
           {
             masterPrompt: { type: string, minLength: 3, maxLength: 12000 },
@@ -865,6 +950,13 @@ components:
                   },
               },
             targetShotNumber: { type: integer, minimum: 1, maximum: 24 },
+            projectId: { type: string },
+            aspectRatio: { type: string, enum: ["16:9", "9:16", "1:1"] },
+            resolution: { type: string, pattern: "^\\d{3,4}x\\d{3,4}$" },
+            references: { type: array, maxItems: 32, items: { $ref: "#/components/schemas/StoryboardReferenceSummary" } },
+            availableControls: { type: array, maxItems: 64, items: { type: string, pattern: "^[a-z][a-z0-9_]{1,63}$" } },
+            audioPolicy: { $ref: "#/components/schemas/StoryboardAudioPolicy" },
+            requestedCandidateCount: { type: integer, minimum: 1, maximum: 4 },
           },
       }
     EnhancedStoryboardShot:
@@ -880,6 +972,10 @@ components:
             firstFramePrompt,
             lastFramePrompt,
             continuityNotes,
+            referenceIds,
+            recommendedControls,
+            audioIntent,
+            candidateVariations,
           ],
         properties:
           {
@@ -890,6 +986,10 @@ components:
             firstFramePrompt: { type: string },
             lastFramePrompt: { type: string },
             continuityNotes: { type: string },
+            referenceIds: { type: array, items: { type: string } },
+            recommendedControls: { type: array, items: { type: string } },
+            audioIntent: { $ref: "#/components/schemas/StoryboardAudioIntent" },
+            candidateVariations: { type: array, minItems: 1, maxItems: 4, items: { type: string } },
           },
       }
     StoryboardEnhancementResponse:
@@ -897,12 +997,14 @@ components:
         type: object,
         additionalProperties: false,
         required:
-          [polishedMasterPrompt, continuityBible, shots, provider, model],
+          [polishedMasterPrompt, continuityBible, referenceUsagePlan, assumptions, shots, provider, model, instructionBundle],
         properties:
           {
             polishedMasterPrompt: { type: string },
             continuityBible:
               { $ref: "#/components/schemas/StoryboardContinuityBible" },
+            referenceUsagePlan: { type: array, items: { $ref: "#/components/schemas/StoryboardReferenceUsage" } },
+            assumptions: { type: array, items: { type: string } },
             shots:
               {
                 type: array,
@@ -910,6 +1012,7 @@ components:
               },
             provider: { type: string, enum: [ollama, mock] },
             model: { type: string },
+            instructionBundle: { $ref: "#/components/schemas/InstructionBundle" },
           },
       }
     StoryboardProjectSummary:
@@ -985,6 +1088,14 @@ components:
         audioPreservation: { type: boolean }
         styleReference: { type: boolean }
         subjectReference: { type: boolean }
+        audioPolicyModes:
+          type: array
+          items: { type: string, enum: [silent, intent_only, directed] }
+        featureStatus:
+          type: object
+          additionalProperties:
+            { type: string, enum: [supported, partial, unavailable, client_managed] }
+        instructionBundle: { $ref: "#/components/schemas/InstructionBundle" }
     RuntimeStatus:
       {
         type: object,

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
 import type {
   Generation,
@@ -22,10 +22,13 @@ import {
   getRuntimeStatus,
   getStoryboardDraft,
   listStoryboardProjects,
+  fetchUserAsset,
+  storeUserAsset,
   waitForGeneration,
   type LongFormGenerationPayload,
   type ReferenceRole,
   type StoryboardScenePayload,
+  type StoryboardProjectReference,
   type StoryboardTransition,
 } from "./api.js";
 import {
@@ -190,10 +193,45 @@ const initialForm: LongFormGenerationPayload = {
   globalVisualAnchorEnabled: false,
   scenes: initialScenes,
   continuityBible: emptyContinuityBible(),
+  audioPolicy: {
+    mode: "intent_only",
+    dialogue: "prompted_only",
+    soundEffects: "intent_only",
+    ambience: "intent_only",
+    music: "prompted_or_unambiguous_performance",
+    preserveSourceAudio: false,
+  },
+  candidateCount: 3,
+  projectReferences: [],
 };
 
 const freshInitialForm = (): LongFormGenerationPayload =>
   globalThis.structuredClone(initialForm);
+
+function normalizePersistedForm(
+  saved: LongFormGenerationPayload,
+): LongFormGenerationPayload {
+  return {
+    ...freshInitialForm(),
+    ...saved,
+    audioPolicy: saved.audioPolicy ?? freshInitialForm().audioPolicy,
+    candidateCount: Math.min(4, Math.max(1, saved.candidateCount ?? 3)),
+    projectReferences: (saved.projectReferences ?? []).map((reference) => {
+      const assetVersionIds = reference.assetVersionIds?.length
+        ? [...new Set(reference.assetVersionIds)]
+        : reference.assetId
+          ? [reference.assetId]
+          : [];
+      return {
+        ...reference,
+        assetVersionIds,
+        version: reference.version ?? Math.max(1, assetVersionIds.length),
+        sceneIds: reference.sceneIds ?? [],
+        lockedTraits: reference.lockedTraits ?? [],
+      };
+    }),
+  };
+}
 
 function markAcceptedClipsStale(
   form: LongFormGenerationPayload,
@@ -312,7 +350,7 @@ export default function LongFormStoryboardStudio() {
   });
   const enhancement = useMutation({
     mutationFn: (action: EnhancementAction) =>
-      enhanceStoryboard(form, action.targetShotNumber),
+      enhanceStoryboard(form, action.targetShotNumber, projectId),
     onSuccess: (result, action) => {
       setUndoForm(form);
       setForm((current) => {
@@ -324,6 +362,8 @@ export default function LongFormStoryboardStudio() {
                 current.originalOverallGoal ?? current.overallGoal,
               overallGoal: result.polishedMasterPrompt,
               continuityBible: result.continuityBible,
+              directorAssumptions: result.assumptions,
+              instructionBundle: result.instructionBundle,
             },
             "The film brief or continuity bible changed after this clip was accepted. Render this scene again before assembly.",
           );
@@ -342,6 +382,10 @@ export default function LongFormStoryboardStudio() {
                     firstFramePrompt: enhanced.firstFramePrompt,
                     lastFramePrompt: enhanced.lastFramePrompt,
                     continuityNotes: enhanced.continuityNotes,
+                    referenceIds: enhanced.referenceIds,
+                    recommendedControls: enhanced.recommendedControls,
+                    audioIntent: enhanced.audioIntent,
+                    candidateVariations: enhanced.candidateVariations,
                     promptOrigin: "agent",
                     staleReason:
                       scene.startFrame ||
@@ -360,6 +404,8 @@ export default function LongFormStoryboardStudio() {
             current.originalOverallGoal ?? current.overallGoal,
           overallGoal: result.polishedMasterPrompt,
           continuityBible: result.continuityBible,
+          directorAssumptions: result.assumptions,
+          instructionBundle: result.instructionBundle,
           scenes: current.scenes.map((scene, index) => {
             const enhanced = result.shots[index];
             return {
@@ -370,6 +416,10 @@ export default function LongFormStoryboardStudio() {
               firstFramePrompt: enhanced.firstFramePrompt,
               lastFramePrompt: enhanced.lastFramePrompt,
               continuityNotes: enhanced.continuityNotes,
+              referenceIds: enhanced.referenceIds,
+              recommendedControls: enhanced.recommendedControls,
+              audioIntent: enhanced.audioIntent,
+              candidateVariations: enhanced.candidateVariations,
               promptOrigin: "agent" as const,
               staleReason:
                 scene.startFrame ||
@@ -422,8 +472,7 @@ export default function LongFormStoryboardStudio() {
         setProjectTitle(activeProject.title);
         if (saved) {
           const normalized = {
-            ...initialForm,
-            ...saved,
+            ...normalizePersistedForm(saved),
             scenes: saved.scenes?.length
               ? saved.scenes.slice(0, MAX_STORYBOARD_SCENES).map((scene) => ({
                   ...scene,
@@ -525,8 +574,7 @@ export default function LongFormStoryboardStudio() {
       const saved = await loadStoryboardSession(sessionOwner, nextProjectId);
       const normalized = saved
         ? ({
-            ...freshInitialForm(),
-            ...saved,
+            ...normalizePersistedForm(saved),
             scenes: saved.scenes.map((scene) => ({
               ...scene,
               summary: scene.summary ?? "",
@@ -691,29 +739,34 @@ export default function LongFormStoryboardStudio() {
       [scene.id]: { status: "queued" },
     }));
     try {
-      const submitted = await generateStoryboardScene(form, scene, projectId);
-      setSelected(submitted);
-      setHistory((items) => [submitted, ...items].slice(0, 8));
-      setSceneRenderStates((current) => ({
-        ...current,
-        [scene.id]: { status: "generating" },
-      }));
-      const completed = await waitForGeneration(submitted.id);
-      if (
-        completed.status !== "completed" ||
-        completed.output?.kind !== "video"
-      )
-        throw new Error(
-          completed.safeErrorMessage || "The scene clip was not generated.",
-        );
-      updateScene(index, {
-        acceptedVideoGenerationId: completed.id,
-        staleReason: undefined,
-      });
-      setSelected(completed);
-      setHistory((items) =>
-        items.map((item) => (item.id === completed.id ? completed : item)),
-      );
+      const successfulIds = [...(scene.candidateGenerationIds ?? [])].slice(-24);
+      const variations = scene.candidateVariations ?? [];
+      for (let candidateIndex = 0; candidateIndex < form.candidateCount; candidateIndex += 1) {
+        const variation = variations[candidateIndex];
+        const candidateScene = variation
+          ? { ...scene, prompt: `${scene.prompt}\n\nControlled draft variation: ${variation}` }
+          : scene;
+        const submitted = await generateStoryboardScene(form, candidateScene, projectId);
+        setSelected(submitted);
+        setHistory((items) => [submitted, ...items].slice(0, 12));
+        setSceneRenderStates((current) => ({
+          ...current,
+          [scene.id]: { status: "generating" },
+        }));
+        const completed = await waitForGeneration(submitted.id);
+        if (completed.status !== "completed" || completed.output?.kind !== "video") {
+          throw new Error(completed.safeErrorMessage || `Draft ${candidateIndex + 1} was not generated.`);
+        }
+        successfulIds.push(completed.id);
+        setForm((current) => ({
+          ...current,
+          scenes: current.scenes.map((candidate, sceneIndex) => sceneIndex === index
+            ? { ...candidate, candidateGenerationIds: [...successfulIds].slice(-24) }
+            : candidate),
+        }));
+        setSelected(completed);
+        setHistory((items) => items.map((item) => item.id === completed.id ? completed : item));
+      }
       setSceneRenderStates((current) => ({
         ...current,
         [scene.id]: { status: "idle" },
@@ -730,6 +783,9 @@ export default function LongFormStoryboardStudio() {
         },
       }));
     }
+  };
+  const acceptSceneCandidate = (index: number, generationId: string) => {
+    updateScene(index, { acceptedVideoGenerationId: generationId, staleReason: undefined });
   };
   const moveScene = (index: number, direction: -1 | 1) =>
     setForm((current) => {
@@ -778,6 +834,7 @@ export default function LongFormStoryboardStudio() {
     MAX_STORYBOARD_SCENES,
     runtime.data?.capabilities?.maxScenes ?? MAX_STORYBOARD_SCENES,
   );
+  const runtimeFeatureStatus = runtime.data?.capabilities?.featureStatus ?? {};
   const allScenesAccepted =
     form.scenes.length > 0 &&
     form.scenes.every(
@@ -960,6 +1017,11 @@ export default function LongFormStoryboardStudio() {
               </p>
             )}
           </section>
+          <ProjectReferencePanel
+            references={form.projectReferences}
+            sceneIds={form.scenes.map((scene) => scene.id)}
+            onChange={(projectReferences) => setForm((current) => ({ ...current, projectReferences }))}
+          />
           <section className="lf-scenes">
             <div className="lf-section-head">
               <div>
@@ -999,6 +1061,7 @@ export default function LongFormStoryboardStudio() {
                 promptBusy={enhancement.isPending}
                 renderState={sceneRenderStates[scene.id] ?? { status: "idle" }}
                 onRender={() => void renderScene(index)}
+                onAcceptCandidate={(generationId) => acceptSceneCandidate(index, generationId)}
                 globalSeed={form.globalSeed}
                 seedPolicy={form.seedPolicy}
               />
@@ -1010,6 +1073,45 @@ export default function LongFormStoryboardStudio() {
             <span className="lf-label">Setup</span>
             <h2>Storyboard settings</h2>
             <div className="lf-settings">
+              <Field
+                label="Sound behaviour"
+                help="Only when requested is conservative: mood words never add music, while quoted dialogue and explicit sound markers can enable sound."
+              >
+                <select
+                  value={form.audioPolicy.mode}
+                  onChange={(event) => {
+                    const mode = event.target.value as LongFormGenerationPayload["audioPolicy"]["mode"];
+                    setForm((current) => markAcceptedClipsStale({
+                      ...current,
+                      audioPolicy: {
+                        ...current.audioPolicy,
+                        mode,
+                        dialogue: mode === "silent" ? "off" : current.audioPolicy.dialogue,
+                        soundEffects: mode === "silent" ? "off" : current.audioPolicy.soundEffects,
+                        ambience: mode === "silent" ? "off" : current.audioPolicy.ambience,
+                        music: mode === "silent" ? "off" : current.audioPolicy.music,
+                        preserveSourceAudio: mode !== "silent" && current.audioPolicy.preserveSourceAudio,
+                      },
+                    }, "The sound policy changed after this clip was accepted. Render it again before assembly."));
+                  }}
+                >
+                  <option value="silent">Silent</option>
+                  <option value="intent_only">Only when requested</option>
+                  <option value="directed">Directed sound</option>
+                </select>
+              </Field>
+              <NumberField
+                label="Drafts per scene"
+                help="Drafts run sequentially so one creator cannot monopolise the shared generation pool."
+                value={form.candidateCount}
+                min={1}
+                max={4}
+                step={1}
+                onChange={(candidateCount) => setForm((current) => ({
+                  ...current,
+                  candidateCount: Math.min(4, Math.max(1, Math.round(candidateCount))),
+                }))}
+              />
               <Field
                 label="Working resolution"
                 help="Sets the frame dimensions. Draft sizes render faster; HD sizes contain more detail and require more processing."
@@ -1096,10 +1198,48 @@ export default function LongFormStoryboardStudio() {
                 }
               />
             </div>
+            {form.audioPolicy.mode === "directed" && (
+              <details className="lf-continuity-details">
+                <summary>Direct dialogue, ambience, effects and music</summary>
+                <div className="lf-settings">
+                  {([
+                    ["dialogue", "Dialogue", ["off", "prompted_only", "on"]],
+                    ["soundEffects", "Sound effects", ["off", "intent_only", "on"]],
+                    ["ambience", "Ambience", ["off", "intent_only", "on"]],
+                    ["music", "Music", ["off", "prompted_or_unambiguous_performance", "on"]],
+                  ] as const).map(([key, label, options]) => (
+                    <Field key={key} label={label}>
+                      <select
+                        value={form.audioPolicy[key]}
+                        onChange={(event) => setForm((current) => ({
+                          ...current,
+                          audioPolicy: { ...current.audioPolicy, [key]: event.target.value },
+                        }))}
+                      >
+                        {options.map((option) => (
+                          <option key={option} value={option}>{option.replaceAll("_", " ")}</option>
+                        ))}
+                      </select>
+                    </Field>
+                  ))}
+                  <label className="lf-toggle">
+                    <input
+                      type="checkbox"
+                      checked={form.audioPolicy.preserveSourceAudio}
+                      onChange={(event) => setForm((current) => ({
+                        ...current,
+                        audioPolicy: { ...current.audioPolicy, preserveSourceAudio: event.target.checked },
+                      }))}
+                    />
+                    <span /> Preserve supplied source audio
+                  </label>
+                </div>
+              </details>
+            )}
             <p className="lf-capability-note">
               This generator supports up to {runtimeMaxScenes} scenes, 1–8
               seconds per scene, independent frame anchors, individual scene
-              renders and final assembly with audio preserved.
+              renders and final assembly that enforces your sound policy.
             </p>
             <div className="lf-plan">
               <button
@@ -1193,10 +1333,10 @@ export default function LongFormStoryboardStudio() {
               </div>
             </details>
             <p className="lf-capability-note">
-              Character and style image references are not offered here because
-              the active LongForm worker does not apply them. Use the continuity
-              bible and per-scene first/last frames instead; the studio will not
-              upload an image that the generator ignores.
+              Project references guide Gemma's continuity plan, but the active
+              LongForm worker does not yet condition LTX directly on character,
+              style or voice media. Per-scene first and last frames remain the
+              verified visual controls.
             </p>
             <div className="lf-bible-grid">
               <UploadBox
@@ -1329,7 +1469,7 @@ export default function LongFormStoryboardStudio() {
                 </Field>
                 <Field
                   label="Finishing pass"
-                  help="None is fastest; Interpolate smooths motion; Upscale increases output size; Both performs both finishing operations."
+                  help="These are delivery transforms after you accept the creative draft. They use FFmpeg and cannot repair identity drift, weak motion or composition."
                 >
                   <select
                     value={form.postProcess}
@@ -1340,10 +1480,10 @@ export default function LongFormStoryboardStudio() {
                       }))
                     }
                   >
-                    <option value="none">None - fastest draft</option>
-                    <option value="interpolate">Interpolate motion</option>
-                    <option value="upscale">Upscale 2x</option>
-                    <option value="both">Interpolate + upscale</option>
+                    <option value="none">Draft â€” no delivery transform</option>
+                    <option value="interpolate">Review â€” smooth motion</option>
+                    <option value="upscale">Final â€” delivery upscale</option>
+                    <option value="both">Final â€” smooth + upscale</option>
                   </select>
                 </Field>
                 <Field
@@ -1399,6 +1539,15 @@ export default function LongFormStoryboardStudio() {
                     )
                   }
                 />
+              </div>
+              <div className="lf-capability-note" role="status">
+                <strong>Verified production controls</strong>
+                <p>
+                  Start/end frames: {runtimeFeatureStatus.startFrame ?? "supported"}; draft version stacks: {runtimeFeatureStatus.candidates ?? "client_managed"}; technical quality checks: {runtimeFeatureStatus.qualityAssessment ?? "partial"}.
+                </p>
+                <p>
+                  Retake, extend, generative reframe, video modification, identity-reference conditioning and HDR remain unavailable until their runtime workflows produce acceptance evidence.
+                </p>
               </div>
             </div>
           </details>
@@ -1563,6 +1712,161 @@ function Range({
   );
 }
 
+function ProjectReferencePanel({
+  references,
+  sceneIds,
+  onChange,
+}: {
+  references: StoryboardProjectReference[];
+  sceneIds: string[];
+  onChange: (references: StoryboardProjectReference[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [type, setType] = useState<StoryboardProjectReference["type"]>("character");
+  const [label, setLabel] = useState("");
+  const [description, setDescription] = useState("");
+  const [traits, setTraits] = useState("");
+  const [file, setFile] = useState<File>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const addReference = async () => {
+    if (!label.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const assetId = await storeUserAsset(file, "projectReference");
+      onChange([...references, {
+        id: crypto.randomUUID(),
+        type,
+        label: label.trim(),
+        description: description.trim(),
+        lockedTraits: traits.split(",").map((trait) => trait.trim()).filter(Boolean).slice(0, 24),
+        sceneIds: [],
+        ...(assetId ? { assetId } : {}),
+        assetVersionIds: assetId ? [assetId] : [],
+        version: 1,
+      }]);
+      setLabel("");
+      setDescription("");
+      setTraits("");
+      setFile(undefined);
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "The private reference could not be added.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const updateReference = (id: string, patch: Partial<StoryboardProjectReference>) =>
+    onChange(references.map((reference) => reference.id === id ? { ...reference, ...patch } : reference));
+  const replaceFile = async (reference: StoryboardProjectReference, replacement?: File) => {
+    if (!replacement) return;
+    setBusy(true);
+    setError("");
+    try {
+      const assetId = await storeUserAsset(replacement, "projectReference");
+      if (assetId) updateReference(reference.id, {
+        assetId,
+        assetVersionIds: [...reference.assetVersionIds, assetId].slice(-24),
+        version: reference.version + 1,
+      });
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "The private reference could not be replaced.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="lf-reference-panel">
+      <button type="button" className="lf-reference-summary" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <span className="lf-reference-icon">â–§</span>
+        <span><strong>Project references</strong><small>Characters, places, products, style and voice direction Â· {references.length} saved</small></span>
+        <b>{open ? "âŒƒ" : "âŒ„"}</b>
+      </button>
+      {open && (
+        <div className="lf-project-references">
+          <p className="lf-capability-note">
+            Gemma uses these private descriptions as continuity locks. The current LTX workflow supports actual start/end frame conditioning; other reference media remain planning-only until runtime capability evidence is available.
+          </p>
+          <div className="lf-reference-create">
+            <Field label="Reference type">
+              <select value={type} onChange={(event) => setType(event.target.value as StoryboardProjectReference["type"])}>
+                {(["character", "location", "product", "style", "voice", "motion"] as const).map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </Field>
+            <Field label="Friendly name"><input value={label} maxLength={120} onChange={(event) => setLabel(event.target.value)} /></Field>
+            <Field label="How to use it"><textarea value={description} maxLength={2000} onChange={(event) => setDescription(event.target.value)} /></Field>
+            <Field label="Locked traits" help="Comma-separated details that should not drift."><input value={traits} onChange={(event) => setTraits(event.target.value)} /></Field>
+            <Field label="Optional private image">
+              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => setFile(event.target.files?.[0])} />
+            </Field>
+            <button type="button" className="lf-outline" disabled={busy || !label.trim()} onClick={() => void addReference()}>{busy ? "Savingâ€¦" : "Add reference"}</button>
+          </div>
+          {error && <p className="lf-error" role="alert">{error}</p>}
+          <div className="lf-reference-grid">
+            {references.map((reference) => (
+              <article key={reference.id} className="lf-reference-card has-file">
+                <ProjectReferencePreview reference={reference} />
+                <strong>{reference.label}</strong>
+                <small>{reference.type} Â· version {reference.version}</small>
+                {reference.assetVersionIds.length > 1 && (
+                  <select
+                    aria-label={`${reference.label} media version`}
+                    value={reference.assetId}
+                    onChange={(event) => updateReference(reference.id, {
+                      assetId: event.target.value,
+                      version: reference.assetVersionIds.indexOf(event.target.value) + 1,
+                    })}
+                  >
+                    {reference.assetVersionIds.map((assetId, versionIndex) => (
+                      <option key={assetId} value={assetId}>Media version {versionIndex + 1}</option>
+                    ))}
+                  </select>
+                )}
+                <textarea value={reference.description} aria-label={`${reference.label} usage`} onChange={(event) => updateReference(reference.id, { description: event.target.value })} />
+                <input value={reference.lockedTraits.join(", ")} aria-label={`${reference.label} locked traits`} onChange={(event) => updateReference(reference.id, { lockedTraits: event.target.value.split(",").map((trait) => trait.trim()).filter(Boolean).slice(0, 24) })} />
+                <details>
+                  <summary>Assign to scenes</summary>
+                  {sceneIds.map((sceneId, sceneIndex) => (
+                    <label key={sceneId} className="lf-toggle">
+                      <input type="checkbox" checked={reference.sceneIds.includes(sceneId)} onChange={(event) => updateReference(reference.id, { sceneIds: event.target.checked ? [...reference.sceneIds, sceneId] : reference.sceneIds.filter((id) => id !== sceneId) })} />
+                      <span /> Scene {sceneIndex + 1}
+                    </label>
+                  ))}
+                  <small>No selected scenes means the reference applies project-wide.</small>
+                </details>
+                <label className="lf-outline">Replace image<input hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void replaceFile(reference, event.target.files?.[0])} /></label>
+                <button type="button" onClick={() => onChange(references.filter((item) => item.id !== reference.id))}>Remove from project</button>
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ProjectReferencePreview({ reference }: { reference: StoryboardProjectReference }) {
+  const [preview, setPreview] = useState("");
+  useEffect(() => {
+    let active = true;
+    let objectUrl = "";
+    if (!reference.assetId) {
+      setPreview("");
+      return;
+    }
+    void fetchUserAsset(reference.assetId).then((blob) => {
+      if (!active) return;
+      objectUrl = URL.createObjectURL(blob);
+      setPreview(objectUrl);
+    }).catch(() => setPreview(""));
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [reference.assetId]);
+  return preview ? <img src={preview} alt={`${reference.label} private reference`} /> : <div className="lf-reference-preview">No media preview</div>;
+}
+
 function _LongFormReferencePanel({
   references,
   onChange,
@@ -1710,6 +2014,7 @@ function SceneCard({
   promptBusy,
   renderState,
   onRender,
+  onAcceptCandidate,
   globalSeed,
   seedPolicy,
 }: {
@@ -1725,6 +2030,7 @@ function SceneCard({
   promptBusy: boolean;
   renderState: SceneRenderState;
   onRender: () => void;
+  onAcceptCandidate: (generationId: string) => void;
   globalSeed: number;
   seedPolicy: LongFormGenerationPayload["seedPolicy"];
 }) {
@@ -2047,8 +2353,8 @@ function SceneCard({
               : "No accepted clip yet"}
           </strong>
           <small>
-            Rendering this scene keeps the previous successful clip available
-            until its replacement completes.
+            Draft candidates render one at a time for queue fairness. Previous
+            versions and the accepted clip remain available.
           </small>
         </div>
         <button
@@ -2065,9 +2371,9 @@ function SceneCard({
             ? "Queued…"
             : renderState.status === "generating"
               ? "Rendering scene…"
-              : scene.acceptedVideoGenerationId
-                ? "Render replacement clip"
-                : "Render this scene"}
+              : scene.candidateGenerationIds?.length
+                ? "Generate more drafts"
+                : "Generate draft candidates"}
         </button>
       </div>
       {renderState.status === "failed" && (
@@ -2077,6 +2383,14 @@ function SceneCard({
       )}
       {scene.acceptedVideoGenerationId && (
         <SceneAcceptedVideo generationId={scene.acceptedVideoGenerationId} />
+      )}
+      {!!scene.candidateGenerationIds?.length && (
+        <SceneCandidateStack
+          sceneNumber={index + 1}
+          generationIds={scene.candidateGenerationIds}
+          acceptedGenerationId={scene.acceptedVideoGenerationId}
+          onAccept={onAcceptCandidate}
+        />
       )}
       {pickerOpen && (
         <TransitionPicker
@@ -2181,6 +2495,104 @@ function SceneAcceptedVideo({ generationId }: { generationId: string }) {
     <div className="lf-scene-video">
       <AuthenticatedVideo downloadUrl={generation.data.output.downloadUrl} />
     </div>
+  );
+}
+
+function SceneCandidateStack({
+  sceneNumber,
+  generationIds,
+  acceptedGenerationId,
+  onAccept,
+}: {
+  sceneNumber: number;
+  generationIds: string[];
+  acceptedGenerationId?: string;
+  onAccept: (generationId: string) => void;
+}) {
+  const results = useQueries({
+    queries: generationIds.map((generationId) => ({
+      queryKey: ["scene-candidate", generationId],
+      queryFn: () => getGeneration(generationId),
+    })),
+  });
+  const ranked = generationIds
+    .map((generationId, originalIndex) => ({
+      generationId,
+      originalIndex,
+      generation: results[originalIndex]?.data,
+    }))
+    .sort((left, right) => {
+      const leftScore = left.generation?.qualityAssessment?.score ?? -1;
+      const rightScore = right.generation?.qualityAssessment?.score ?? -1;
+      return rightScore - leftScore || left.originalIndex - right.originalIndex;
+    });
+  return (
+    <div className="lf-candidate-stack" aria-label={`Scene ${sceneNumber} draft candidates`}>
+      <strong>Draft version stack</strong>
+      <small>Ranked by advisory technical checks; your creative choice remains authoritative.</small>
+      <div className="lf-candidate-grid">
+        {ranked.map((candidate, rankIndex) => (
+          <SceneCandidateVideo
+            key={candidate.generationId}
+            generationId={candidate.generationId}
+            label={`Draft ${candidate.originalIndex + 1}`}
+            rank={candidate.generation?.qualityAssessment ? rankIndex + 1 : undefined}
+            accepted={acceptedGenerationId === candidate.generationId}
+            onAccept={() => onAccept(candidate.generationId)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SceneCandidateVideo({
+  generationId,
+  label,
+  rank,
+  accepted,
+  onAccept,
+}: {
+  generationId: string;
+  label: string;
+  rank?: number;
+  accepted: boolean;
+  onAccept: () => void;
+}) {
+  const generation = useQuery({
+    queryKey: ["scene-candidate", generationId],
+    queryFn: () => getGeneration(generationId),
+  });
+  if (generation.isLoading)
+    return <article className="lf-candidate-card">Loading {label.toLowerCase()}â€¦</article>;
+  if (generation.data?.status !== "completed" || !generation.data.output?.downloadUrl) {
+    return (
+      <article className="lf-candidate-card">
+        <strong>{label}</strong>
+        <p className="lf-error">This draft is unavailable.</p>
+      </article>
+    );
+  }
+  const quality = generation.data.qualityAssessment;
+  const issues = quality?.checks.filter((check) => check.status === "failed" || check.status === "warning") ?? [];
+  return (
+    <article className={accepted ? "lf-candidate-card accepted" : "lf-candidate-card"}>
+      <header>
+        <strong>{label}</strong>
+        <span>{accepted ? "Accepted" : rank ? `Rank ${rank}` : "Review"}</span>
+      </header>
+      <AuthenticatedVideo downloadUrl={generation.data.output.downloadUrl} />
+      {quality && (
+        <small>
+          Quality score {quality.score}/100. Automated checks are advisory. {issues.length
+            ? `${issues.length} issue${issues.length === 1 ? "" : "s"} need review.`
+            : "No media-integrity issues were reported."}
+        </small>
+      )}
+      <button type="button" className="lf-outline" disabled={accepted} onClick={onAccept}>
+        {accepted ? "Selected draft" : "Use this draft"}
+      </button>
+    </article>
   );
 }
 

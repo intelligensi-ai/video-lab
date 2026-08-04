@@ -1,4 +1,5 @@
 declare const process: { env: Record<string, string | undefined> };
+import type { Generation } from "@video-lab/contracts";
 
 export * from "./storyboardEnhancer.js";
 
@@ -7,6 +8,30 @@ function optionalPositiveInteger<K extends string>(key: K, value: unknown) {
   return Number.isInteger(number) && number >= 0
     ? ({ [key]: number } as Record<K, number>)
     : {};
+}
+
+function safeQualityAssessment(value: unknown): Generation["qualityAssessment"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  if (source.advisory !== true || !Array.isArray(source.checks)) return undefined;
+  const recommendation = ["review", "recommended", "repair"].includes(String(source.recommendation))
+    ? String(source.recommendation) as "review" | "recommended" | "repair"
+    : "review";
+  const checks = source.checks.slice(0, 32).flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const check = entry as Record<string, unknown>;
+    const status = String(check.status);
+    const id = String(check.id ?? "").trim();
+    if (!id || !["passed", "failed", "warning", "not_evaluated"].includes(status)) return [];
+    return [{
+      id: id.slice(0, 80),
+      status: status as "passed" | "failed" | "warning" | "not_evaluated",
+      confidence: Math.min(1, Math.max(0, Number(check.confidence) || 0)),
+      ...(typeof check.detail === "string" ? { detail: check.detail.trim().slice(0, 500) } : {}),
+    }];
+  });
+  const score = Math.min(100, Math.max(0, Math.round(Number(source.score) || 0)));
+  return { version: String(source.version ?? "media-qc-v2").slice(0, 80), advisory: true, score, recommendation, checks };
 }
 
 export interface RuntimeVideoSettings {
@@ -38,6 +63,8 @@ export interface RuntimeVideoSettings {
     sha256: string;
   }>;
   overallGoal?: string;
+  originalMasterPrompt?: string;
+  audioPolicy?: Record<string, unknown>;
   projectId?: string;
   operationScope?:
     "project" | "scene" | "start_frame" | "end_frame" | "assembly";
@@ -92,6 +119,9 @@ export interface RuntimeHealth {
     audioPreservation: boolean;
     styleReference: boolean;
     subjectReference: boolean;
+    audioPolicyModes?: Array<"silent" | "intent_only" | "directed">;
+    featureStatus?: Record<string, "supported" | "partial" | "unavailable" | "client_managed">;
+    instructionBundle?: { directorVersion: string; enhancerVersion: string; hash: string };
   };
 }
 
@@ -132,6 +162,7 @@ export interface RuntimeGenerationStatus {
   currentScene?: number;
   totalScenes?: number;
   stage?: string;
+  qualityAssessment?: Generation["qualityAssessment"];
 }
 
 export interface RuntimeCancelResult {
@@ -442,6 +473,8 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
           operation_frame_base64: settings.operationFrameBase64,
           film_bible: settings.filmBible,
           overall_goal: settings.overallGoal ?? input.prompt,
+          original_master_prompt: settings.originalMasterPrompt ?? settings.overallGoal ?? input.prompt,
+          audio_policy: settings.audioPolicy,
           prompt: input.prompt,
           negative_prompt: settings.negativePrompt,
           resolution: settings.resolution ?? resolution,
@@ -618,6 +651,19 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
         subjectReference:
           body.capabilities?.subject_reference !==
           "not_supported_by_this_runtime",
+        audioPolicyModes: ["silent", "intent_only", "directed"],
+        featureStatus: {
+          startEndFrames: "supported",
+          referencePlanning: "partial",
+          referenceConditioning: "unavailable",
+          candidateVersions: "client_managed",
+          qualityAssessment: "partial",
+          retake: "unavailable",
+          extend: "unavailable",
+          reframe: "unavailable",
+          videoToVideo: "unavailable",
+          hdr: "unavailable",
+        },
       },
       message:
         res.ok && ready
@@ -755,6 +801,8 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       currentScene?: number;
       totalScenes?: number;
       stage?: string;
+      quality_report?: unknown;
+      qualityAssessment?: unknown;
       error?: string | { title?: string; detail?: string; code?: string };
     };
     const rawState = json.status ?? json.state ?? "failed";
@@ -785,6 +833,9 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       typeof json.error === "string"
         ? json.error
         : json.error?.detail ?? json.error?.title ?? json.error?.code;
+    const qualityAssessment = safeQualityAssessment(
+      json.quality_report ?? json.qualityAssessment,
+    );
     return {
       state: map[rawState.toLowerCase()] ?? "failed",
       progress,
@@ -795,6 +846,9 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       ...optionalPositiveInteger("totalScenes", json.totalScenes),
       ...(typeof json.stage === "string" && json.stage.trim()
         ? { stage: json.stage.trim() }
+        : {}),
+      ...(qualityAssessment
+        ? { qualityAssessment }
         : {}),
     };
   }

@@ -7,6 +7,7 @@ import {
 import type { StoryboardEnhancementRequest } from "../../packages/contracts/src/index.js";
 
 const request: StoryboardEnhancementRequest = {
+  projectId: "project_12345678",
   masterPrompt: "A founder follows a teal signal through rainy London.",
   shotCount: 2,
   generationMode: "text_to_video",
@@ -32,6 +33,25 @@ const request: StoryboardEnhancementRequest = {
     durationSeconds: 5,
     generationMode: "text_to_video" as const,
   })),
+  aspectRatio: "16:9",
+  resolution: "1280x720",
+  references: [{
+    id: "ref_character_01",
+    type: "character",
+    label: "Founder",
+    description: "The recurring lead.",
+    lockedTraits: ["short dark hair", "charcoal coat"],
+  }],
+  availableControls: ["start_frame", "end_frame"],
+  audioPolicy: {
+    mode: "intent_only",
+    dialogue: "prompted_only",
+    soundEffects: "intent_only",
+    ambience: "intent_only",
+    music: "prompted_or_unambiguous_performance",
+    preserveSourceAudio: false,
+  },
+  requestedCandidateCount: 3,
 };
 
 describe("storyboard enhancer contract", () => {
@@ -91,6 +111,20 @@ describe("storyboard enhancer contract", () => {
     await expect(client.enhance(request)).rejects.toThrow(
       "storyboard_enhancer_unavailable",
     );
+  });
+
+  it("rejects unknown references, unsupported controls and wrong candidate counts", () => {
+    const unknownReference = mockStoryboardEnhancement(request);
+    unknownReference.shots[0].referenceIds = ["ref_unknown_01"];
+    expect(() => validateStoryboardEnhancement(unknownReference, request)).toThrow("unknown reference");
+
+    const unsupportedControl = mockStoryboardEnhancement(request);
+    unsupportedControl.shots[0].recommendedControls = ["launch_gpu"];
+    expect(() => validateStoryboardEnhancement(unsupportedControl, request)).toThrow("unsupported control");
+
+    const wrongCandidates = mockStoryboardEnhancement(request);
+    wrongCandidates.shots[0].candidateVariations.pop();
+    expect(() => validateStoryboardEnhancement(wrongCandidates, request)).toThrow("candidate count");
   });
 
   it("uses the authenticated versioned runtime API for LongForm enhancement", async () => {
