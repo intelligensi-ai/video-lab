@@ -2435,35 +2435,62 @@ async function enhanceStoryboard(request: StoryboardEnhancementRequest) {
       : process.env.VIDEO_DEPLOY_STUDIO_API_TOKEN
   )?.trim();
   if (baseUrl && token) {
-    return new DeployStudioStoryboardEnhancerClient({
-      baseUrl,
-      token,
-      runtimeId: useStableApi
-        ? process.env.VIDEO_RUNTIME_ID ??
-          "longform-ltx-storyboard-studio"
-        : undefined,
-      path: useStableApi
-        ? process.env.VIDEO_RUNTIME_STORYBOARD_ENHANCE_PATH
-        : process.env.VIDEO_DEPLOY_STUDIO_STORYBOARD_ENHANCE_PATH,
-      authHeaderName: useStableApi
-        ? process.env.VIDEO_RUNTIME_AUTH_HEADER
-        : undefined,
-      authScheme: useStableApi
-        ? process.env.VIDEO_RUNTIME_AUTH_SCHEME
-        : undefined,
-      timeoutMs: Number(
-        process.env.VIDEO_STORYBOARD_ENHANCER_TIMEOUT_MS ?? 100_000,
-      ),
-    }).enhance(request);
+    try {
+      return await new DeployStudioStoryboardEnhancerClient({
+        baseUrl,
+        token,
+        runtimeId: useStableApi
+          ? process.env.VIDEO_RUNTIME_ID ??
+            "longform-ltx-storyboard-studio"
+          : undefined,
+        path: useStableApi
+          ? process.env.VIDEO_RUNTIME_STORYBOARD_ENHANCE_PATH
+          : process.env.VIDEO_DEPLOY_STUDIO_STORYBOARD_ENHANCE_PATH,
+        authHeaderName: useStableApi
+          ? process.env.VIDEO_RUNTIME_AUTH_HEADER
+          : undefined,
+        authScheme: useStableApi
+          ? process.env.VIDEO_RUNTIME_AUTH_SCHEME
+          : undefined,
+        timeoutMs: Number(
+          process.env.VIDEO_STORYBOARD_ENHANCER_TIMEOUT_MS ?? 100_000,
+        ),
+      }).enhance(request);
+    } catch (error) {
+      log("storyboard_enhancer_fallback", {
+        provider: useStableApi ? "intelligensi-api" : "deploy-studio",
+        reason: error instanceof Error ? error.message : "unknown",
+        shotCount: request.shotCount,
+        targeted: request.targetShotNumber !== undefined,
+      });
+      return fallbackStoryboardEnhancement(request);
+    }
   }
   if (localAuth || process.env.VIDEO_STORYBOARD_ENHANCER_PROVIDER === "mock") {
-    return mockStoryboardEnhancement(request);
+    return fallbackStoryboardEnhancement(request);
   }
   throw problem(
     503,
     "storyboard_enhancer_unavailable",
     "Prompt enhancement is temporarily unavailable; your original prompts are unchanged",
   );
+}
+
+function fallbackStoryboardEnhancement(
+  request: StoryboardEnhancementRequest,
+): StoryboardEnhancementResponse {
+  const result = mockStoryboardEnhancement(request);
+  const masterPrompt = request.masterPrompt.trim();
+  return {
+    ...result,
+    polishedMasterPrompt: [
+      masterPrompt.replace(/\s+/g, " "),
+      "Keep the subject, location, visual palette, camera language, lighting, material detail and emotional tone consistent throughout the shot.",
+      "Describe a clear beginning, motivated movement and final composition so the runtime has an editable cinematic plan.",
+    ].join(" "),
+    provider: "mock",
+    model: "deterministic-fallback-enhancer",
+  };
 }
 
 export const app: express.Express = express();

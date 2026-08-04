@@ -299,7 +299,12 @@ type FrameState = {
 };
 type SceneRenderState = FrameState;
 
-export default function LongFormStoryboardStudio() {
+export default function LongFormStoryboardStudio({
+  variant = "advanced",
+}: {
+  variant?: "advanced" | "classic";
+}) {
+  const isClassic = variant === "classic";
   const queryClient = useQueryClient();
   const [form, setForm] = useState(freshInitialForm);
   const [history, setHistory] = useState<Generation[]>([]);
@@ -474,7 +479,7 @@ export default function LongFormStoryboardStudio() {
           const normalized = {
             ...normalizePersistedForm(saved),
             scenes: saved.scenes?.length
-              ? saved.scenes.slice(0, MAX_STORYBOARD_SCENES).map((scene) => ({
+              ? saved.scenes.slice(0, isClassic ? 1 : MAX_STORYBOARD_SCENES).map((scene) => ({
                   ...scene,
                   trimStart: 0,
                   trimEnd: scene.duration,
@@ -482,7 +487,7 @@ export default function LongFormStoryboardStudio() {
                   continuityOverrides: scene.continuityOverrides ?? {},
                   seedOverrideEnabled: scene.seedOverrideEnabled === true,
                 }))
-              : initialScenes,
+              : initialScenes.slice(0, isClassic ? 1 : initialScenes.length),
             globalSeed: saved.globalSeed ?? DEFAULT_SCENE_SEED,
             seedPolicy: saved.seedPolicy ?? "global_locked",
           } satisfies LongFormGenerationPayload;
@@ -500,7 +505,7 @@ export default function LongFormStoryboardStudio() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [isClassic]);
   useEffect(() => {
     if (!sessionReady || !sessionOwner || !projectId) return;
     setSessionStatus("saving");
@@ -575,14 +580,17 @@ export default function LongFormStoryboardStudio() {
       const normalized = saved
         ? ({
             ...normalizePersistedForm(saved),
-            scenes: saved.scenes.map((scene) => ({
+            scenes: saved.scenes.slice(0, isClassic ? 1 : MAX_STORYBOARD_SCENES).map((scene) => ({
               ...scene,
               summary: scene.summary ?? "",
               continuityOverrides: scene.continuityOverrides ?? {},
               seedOverrideEnabled: scene.seedOverrideEnabled === true,
             })),
           } satisfies LongFormGenerationPayload)
-        : freshInitialForm();
+        : {
+            ...freshInitialForm(),
+            scenes: initialScenes.slice(0, isClassic ? 1 : initialScenes.length),
+          };
       setForm(await hydrateGeneratedFrameFiles(normalized));
       setProjectId(nextProjectId);
       setProjectTitle(summary.title);
@@ -604,16 +612,20 @@ export default function LongFormStoryboardStudio() {
   const createProject = async () => {
     setProjectBusy(true);
     setProjectError("");
+    const nextForm = {
+      ...freshInitialForm(),
+      scenes: initialScenes.slice(0, isClassic ? 1 : initialScenes.length),
+    };
     try {
       const title = `Untitled film ${projects.length + 1}`;
       const created = await createStoryboardProject(
         title,
-        freshInitialForm() as unknown as Record<string, unknown>,
+        nextForm as unknown as Record<string, unknown>,
       );
       setProjects((items) => [created, ...items]);
       setProjectId(created.id);
       setProjectTitle(created.title);
-      setForm(freshInitialForm());
+      setForm(nextForm);
       setUndoForm(undefined);
       setFrameStates({});
       setSceneRenderStates({});
@@ -830,7 +842,7 @@ export default function LongFormStoryboardStudio() {
   const invalid =
     !form.overallGoal.trim() ||
     !form.scenes.length;
-  const runtimeMaxScenes = Math.min(
+  const runtimeMaxScenes = isClassic ? 1 : Math.min(
     MAX_STORYBOARD_SCENES,
     runtime.data?.capabilities?.maxScenes ?? MAX_STORYBOARD_SCENES,
   );
@@ -851,8 +863,8 @@ export default function LongFormStoryboardStudio() {
                 ? "Generator ready"
                 : "Generator unavailable"}
             </span>
-            <span data-help="Z-Image creates still frame anchors; LTX turns each planned scene into motion and joins the clips into one film.">
-              Z-Image + LTX Storyboard
+            <span data-help="Z-Image creates still frame anchors; LTX turns your planned scene into motion.">
+              {isClassic ? "Single scene storyboard" : "Z-Image + LTX Storyboard"}
             </span>
             <span
               className={`lf-session-save ${sessionStatus}`}
@@ -877,12 +889,12 @@ export default function LongFormStoryboardStudio() {
             </button>
           </div>
           <h1 className="editorial-page-title lf-storyboard-title">
-            Storyboard Studio<span className="editorial-title-stop">.</span>
+            {isClassic ? "Classic Storyboard" : "Storyboard Studio"}<span className="editorial-title-stop">.</span>
           </h1>
           <p>
-            Direct a longer film scene by scene. Upload frame anchors where they
-            matter; otherwise the runtime generates the opening and carries each
-            real final frame into the next clip.
+            {isClassic
+              ? "Create one cinematic scene from a simple overview. Add frame anchors only if they matter; otherwise the runtime handles the opening visual."
+              : "Direct a longer film scene by scene. Upload frame anchors where they matter; otherwise the runtime generates the opening and carries each real final frame into the next clip."}
           </p>
         </div>
         <div className="lf-session">
@@ -1017,26 +1029,30 @@ export default function LongFormStoryboardStudio() {
               </p>
             )}
           </section>
-          <ProjectReferencePanel
-            references={form.projectReferences}
-            sceneIds={form.scenes.map((scene) => scene.id)}
-            onChange={(projectReferences) => setForm((current) => ({ ...current, projectReferences }))}
-          />
+          {!isClassic && (
+            <ProjectReferencePanel
+              references={form.projectReferences}
+              sceneIds={form.scenes.map((scene) => scene.id)}
+              onChange={(projectReferences) => setForm((current) => ({ ...current, projectReferences }))}
+            />
+          )}
           <section className="lf-scenes">
             <div className="lf-section-head">
               <div>
                 <span className="lf-label">Timeline</span>
-                <h2>Storyboard scenes</h2>
+                <h2>{isClassic ? "Scene" : "Storyboard scenes"}</h2>
               </div>
-              <button
-                type="button"
-                className="lf-primary lf-add"
-                data-help="Append a new editable scene card up to the active LongForm runtime limit."
-                disabled={form.scenes.length >= runtimeMaxScenes}
-                onClick={addScene}
-              >
-                ＋ Add scene
-              </button>
+              {!isClassic && (
+                <button
+                  type="button"
+                  className="lf-primary lf-add"
+                  data-help="Append a new editable scene card up to the active LongForm runtime limit."
+                  disabled={form.scenes.length >= runtimeMaxScenes}
+                  onClick={addScene}
+                >
+                  ＋ Add scene
+                </button>
+              )}
             </div>
             {form.scenes.map((scene, index) => (
               <SceneCard
@@ -1064,11 +1080,13 @@ export default function LongFormStoryboardStudio() {
                 onAcceptCandidate={(generationId) => acceptSceneCandidate(index, generationId)}
                 globalSeed={form.globalSeed}
                 seedPolicy={form.seedPolicy}
+                classic={isClassic}
               />
             ))}
           </section>
         </div>
         <aside className="lf-preview-col">
+          {!isClassic && (
           <section className="lf-panel lf-storyboard-settings">
             <span className="lf-label">Setup</span>
             <h2>Storyboard settings</h2>
@@ -1268,6 +1286,8 @@ export default function LongFormStoryboardStudio() {
               </div>
             </div>
           </section>
+          )}
+          {!isClassic && (
           <section
             className="lf-panel lf-assembly"
             aria-label="Accepted scene assembly"
@@ -1301,6 +1321,8 @@ export default function LongFormStoryboardStudio() {
               </p>
             )}
           </section>
+          )}
+          {!isClassic && (
           <section className="lf-panel lf-bible lf-storyboard-setup">
             <span className="lf-label">Film Bible</span>
             <h2>Continuity</h2>
@@ -1374,6 +1396,8 @@ export default function LongFormStoryboardStudio() {
               </label>
             </div>
           </section>
+          )}
+          {!isClassic && (
           <details className="lf-panel lf-production">
             <summary data-help="Open lower-level rendering controls. Defaults are tuned for reliable storyboard generation, so adjust these only when you need a specific render behavior.">
               <span>
@@ -1551,6 +1575,7 @@ export default function LongFormStoryboardStudio() {
               </div>
             </div>
           </details>
+          )}
           <Preview
             generation={currentGeneration}
             loading={isRendering}
@@ -2017,6 +2042,7 @@ function SceneCard({
   onAcceptCandidate,
   globalSeed,
   seedPolicy,
+  classic,
 }: {
   scene: StoryboardScenePayload;
   index: number;
@@ -2033,6 +2059,7 @@ function SceneCard({
   onAcceptCandidate: (generationId: string) => void;
   globalSeed: number;
   seedPolicy: LongFormGenerationPayload["seedPolicy"];
+  classic?: boolean;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState(index === 0);
@@ -2072,22 +2099,26 @@ function SceneCard({
             }
           />
         </span>
-        <button
-          data-help="Move this scene one position earlier in the film."
-          disabled={index === 0}
-          title="Move scene up"
-          onClick={() => onMove(-1)}
-        >
-          ↑
-        </button>
-        <button
-          data-help="Move this scene one position later in the film."
-          disabled={index === count - 1}
-          title="Move scene down"
-          onClick={() => onMove(1)}
-        >
-          ↓
-        </button>
+        {!classic && (
+          <>
+            <button
+              data-help="Move this scene one position earlier in the film."
+              disabled={index === 0}
+              title="Move scene up"
+              onClick={() => onMove(-1)}
+            >
+              ↑
+            </button>
+            <button
+              data-help="Move this scene one position later in the film."
+              disabled={index === count - 1}
+              title="Move scene down"
+              onClick={() => onMove(1)}
+            >
+              ↓
+            </button>
+          </>
+        )}
         <PromptSuggestion
           label={
             scene.prompt.trim()
@@ -2108,16 +2139,18 @@ function SceneCard({
         >
           Regenerate this shot
         </button>
-        <button
-          className="lf-delete"
-          aria-label={`Delete scene ${index + 1}`}
-          data-help="Permanently remove this scene from the storyboard."
-          disabled={count <= 1}
-          title="Delete scene"
-          onClick={onRemove}
-        >
-          <span aria-hidden="true">🗑</span> Delete
-        </button>
+        {!classic && (
+          <button
+            className="lf-delete"
+            aria-label={`Delete scene ${index + 1}`}
+            data-help="Permanently remove this scene from the storyboard."
+            disabled={count <= 1}
+            title="Delete scene"
+            onClick={onRemove}
+          >
+            <span aria-hidden="true">🗑</span> Delete
+          </button>
+        )}
       </header>
       {expanded ? (
         <>

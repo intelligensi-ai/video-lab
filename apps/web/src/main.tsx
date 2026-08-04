@@ -402,7 +402,7 @@ function Shell() {
                     </main>
                   }
                 >
-                  <LongFormStoryboardStudio />
+                  <LongFormStoryboardStudio variant="classic" />
                 </React.Suspense>
               }
             />
