@@ -2457,40 +2457,23 @@ async function enhanceStoryboard(request: StoryboardEnhancementRequest) {
         ),
       }).enhance(request);
     } catch (error) {
-      log("storyboard_enhancer_fallback", {
+      log("storyboard_enhancer_unavailable", {
         provider: useStableApi ? "intelligensi-api" : "deploy-studio",
         reason: error instanceof Error ? error.message : "unknown",
         shotCount: request.shotCount,
         targeted: request.targetShotNumber !== undefined,
       });
-      return fallbackStoryboardEnhancement(request);
+      throw error;
     }
   }
   if (localAuth || process.env.VIDEO_STORYBOARD_ENHANCER_PROVIDER === "mock") {
-    return fallbackStoryboardEnhancement(request);
+    return mockStoryboardEnhancement(request);
   }
   throw problem(
     503,
     "storyboard_enhancer_unavailable",
     "Prompt enhancement is temporarily unavailable; your original prompts are unchanged",
   );
-}
-
-function fallbackStoryboardEnhancement(
-  request: StoryboardEnhancementRequest,
-): StoryboardEnhancementResponse {
-  const result = mockStoryboardEnhancement(request);
-  const masterPrompt = request.masterPrompt.trim();
-  return {
-    ...result,
-    polishedMasterPrompt: [
-      masterPrompt.replace(/\s+/g, " "),
-      "Keep the subject, location, visual palette, camera language, lighting, material detail and emotional tone consistent throughout the shot.",
-      "Describe a clear beginning, motivated movement and final composition so the runtime has an editable cinematic plan.",
-    ].join(" "),
-    provider: "mock",
-    model: "deterministic-fallback-enhancer",
-  };
 }
 
 export const app: express.Express = express();

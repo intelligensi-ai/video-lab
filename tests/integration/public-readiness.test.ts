@@ -85,10 +85,6 @@ describe("public runtime readiness boundaries", () => {
       })
       .expect(200);
     expect(response.body.provider).toBe("mock");
-    expect(response.body.model).toBe("deterministic-fallback-enhancer");
-    expect(response.body.polishedMasterPrompt).toContain(
-      "Keep the subject, location, visual palette",
-    );
     expect(
       response.body.shots.map(
         (shot: { shotNumber: number }) => shot.shotNumber,
