@@ -44,6 +44,7 @@ const shotKeys = new Set([
   "audioIntent",
   "candidateVariations",
 ]);
+const enhancementProviders = new Set(["ollama", "mock", "vertex-ai", "gemini"]);
 
 function runtimeApiEnhancementRequest(
   request: StoryboardEnhancementRequest,
@@ -193,6 +194,10 @@ export function validateStoryboardEnhancement(
   exactKeys(rawBundle, new Set(["directorVersion", "enhancerVersion", "framePromptVersion", "hash"]), "Instruction bundle");
   const hash = text(rawBundle.hash, "Instruction bundle hash", 64).toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error("Instruction bundle hash is invalid");
+  const provider = text(root.provider, "Enhancer provider", 40);
+  if (!enhancementProviders.has(provider)) {
+    throw new Error("Enhancer provider is unsupported");
+  }
   return {
     polishedMasterPrompt: text(
       root.polishedMasterPrompt,
@@ -203,7 +208,7 @@ export function validateStoryboardEnhancement(
     referenceUsagePlan,
     assumptions,
     shots,
-    provider: root.provider === "mock" ? "mock" : "ollama",
+    provider: provider as StoryboardEnhancementResponse["provider"],
     model: text(root.model, "Enhancer model", 120),
     instructionBundle: {
       directorVersion: text(rawBundle.directorVersion, "Director version", 80),

@@ -709,7 +709,7 @@ export interface components {
             assumptions: string[];
             shots: components["schemas"]["EnhancedStoryboardShot"][];
             /** @enum {string} */
-            provider: "ollama" | "mock";
+            provider: "ollama" | "mock" | "vertex-ai" | "gemini";
             model: string;
             instructionBundle: components["schemas"]["InstructionBundle"];
         };

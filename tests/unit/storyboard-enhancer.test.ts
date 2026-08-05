@@ -154,6 +154,21 @@ describe("storyboard enhancer contract", () => {
     expect(result.shots[0].audioIntent.mode).toBe("silent");
   });
 
+  it("preserves GCP text inference providers from the stable gateway", () => {
+    const enhancement = mockStoryboardEnhancement(request);
+    const result = validateStoryboardEnhancement(
+      {
+        ...enhancement,
+        provider: "vertex-ai",
+        model: "gemini-2.5-flash",
+      },
+      request,
+    );
+
+    expect(result.provider).toBe("vertex-ai");
+    expect(result.model).toBe("gemini-2.5-flash");
+  });
+
   it("uses the authenticated versioned runtime API for LongForm enhancement", async () => {
     vi.stubGlobal(
       "fetch",

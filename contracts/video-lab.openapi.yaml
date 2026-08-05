@@ -1089,7 +1089,7 @@ components:
                 type: array,
                 items: { $ref: "#/components/schemas/EnhancedStoryboardShot" },
               },
-            provider: { type: string, enum: [ollama, mock] },
+            provider: { type: string, enum: [ollama, mock, vertex-ai, gemini] },
             model: { type: string },
             instructionBundle: { $ref: "#/components/schemas/InstructionBundle" },
           },

@@ -227,7 +227,7 @@ export interface StoryboardEnhancementResponse {
   referenceUsagePlan: StoryboardReferenceUsage[];
   assumptions: string[];
   shots: EnhancedStoryboardShot[];
-  provider: "ollama" | "mock";
+  provider: "ollama" | "mock" | "vertex-ai" | "gemini";
   model: string;
   instructionBundle: {
     directorVersion: string;
