@@ -235,7 +235,7 @@ export default function DirectorWorkspace() {
         <div className="vlx-project-actions">
           <span className="vlx-experiment">Connected preview</span>
           <button type="button" className="vlx-quiet" aria-expanded={helpOpen} onClick={() => setHelpOpen((open) => !open)}>Help</button>
-          <Link className="vlx-quiet" to="/storyboard/classic">Classic studio</Link>
+          <Link className="vlx-quiet" to="/videolab">Classic studio</Link>
           <button type="button" className="vlx-export" onClick={() => void downloadCurrent()}>Export film</button>
         </div>
       </header>

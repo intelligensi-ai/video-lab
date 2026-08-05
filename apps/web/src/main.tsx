@@ -306,7 +306,8 @@ function Shell() {
   });
   const isLanding = location.pathname === "/";
   const navItems = [
-    { to: "/storyboard", label: "Storyboard Studio" },
+    { to: "/videolab", label: "VideoLab" },
+    { to: "/storyboard/advanced", label: "Advanced" },
     { to: "/gallery", label: "Gallery" },
     { to: "/account", label: "Account" },
     ...(me.data?.roles.includes("admin")
@@ -373,7 +374,25 @@ function Shell() {
         <Route path="/login" element={<AuthEntry mode="login" />} />
         <Route path="/register" element={<AuthEntry mode="register" />} />
         <Route
-          path="/storyboard"
+          path="/videolab"
+          element={
+            <ProtectedRoute
+              element={
+                <React.Suspense
+                  fallback={
+                    <main className="auth-page">
+                      <p>Opening VideoLab…</p>
+                    </main>
+                  }
+                >
+                  <LongFormStoryboardStudio variant="classic" />
+                </React.Suspense>
+              }
+            />
+          }
+        />
+        <Route
+          path="/storyboard/advanced"
           element={
             <ProtectedRoute
               element={
@@ -391,31 +410,21 @@ function Shell() {
           }
         />
         <Route
+          path="/storyboard"
+          element={<Navigate to="/videolab" replace />}
+        />
+        <Route
           path="/storyboard/classic"
-          element={
-            <ProtectedRoute
-              element={
-                <React.Suspense
-                  fallback={
-                    <main className="auth-page">
-                      <p>Opening the classic storyboard studio...</p>
-                    </main>
-                  }
-                >
-                  <LongFormStoryboardStudio variant="classic" />
-                </React.Suspense>
-              }
-            />
-          }
+          element={<Navigate to="/videolab" replace />}
         />
         <Route
           path="/experimental/director-workspace"
-          element={<Navigate to="/storyboard" replace />}
+          element={<Navigate to="/storyboard/advanced" replace />}
         />
-        <Route path="/studio" element={<Navigate to="/storyboard" replace />} />
+        <Route path="/studio" element={<Navigate to="/videolab" replace />} />
         <Route
           path="/sulphur"
-          element={<Navigate to="/storyboard" replace />}
+          element={<Navigate to="/videolab" replace />}
         />
         <Route
           path="/gallery"
@@ -454,7 +463,7 @@ function AdminRoute() {
       </main>
     );
   if (!me.data?.roles.includes("admin"))
-    return <Navigate to="/storyboard" replace />;
+    return <Navigate to="/videolab" replace />;
   return <Admin />;
 }
 
@@ -504,7 +513,7 @@ function AuthEntry({ mode }: { mode: "login" | "register" }) {
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const requestedPath = (location.state as { from?: string } | null)?.from;
   const destination =
-    mode === "register" ? "/onboarding" : requestedPath || "/storyboard";
+    mode === "register" ? "/onboarding" : requestedPath || "/videolab";
   useEffect(
     () =>
       observeAuth((user) => {
@@ -802,7 +811,7 @@ function Landing() {
             and transition—then carry visual continuity across the whole film.
           </p>
           <div className="home-actions">
-            <Link className="home-primary" to="/storyboard">
+            <Link className="home-primary" to="/videolab">
               Start creating <span>↗</span>
             </Link>
             <Link className="home-secondary" to="/gallery">
@@ -904,7 +913,7 @@ function Landing() {
           <span>Make the film only you can imagine.</span>
           <h2>Ready when you are.</h2>
         </div>
-        <Link className="home-primary" to="/storyboard">
+        <Link className="home-primary" to="/videolab">
           Open Storyboard <span>↗</span>
         </Link>
       </section>
@@ -1209,7 +1218,7 @@ function Detail() {
               <button onClick={() => navigator.clipboard.writeText(g.prompt)}>
                 Copy prompt
               </button>
-              <Link className="button" to="/storyboard">
+              <Link className="button" to="/videolab">
                 Create Variation
               </Link>
               {!["completed", "failed", "cancelled"].includes(g.status) && (
@@ -1297,7 +1306,7 @@ function Registration() {
       await saveRegistrationProfile(completed);
       setProfile(completed);
       setSaved(true);
-      navigate("/storyboard", { replace: true });
+      navigate("/videolab", { replace: true });
     } catch (error) {
       setSaveError(
         error instanceof Error ? error.message : "Could not save registration",

@@ -13,7 +13,7 @@ test("landing page presents the creator entry point", async ({ page }) => {
 test("storyboard exposes editable Gemma and frame controls", async ({
   page,
 }) => {
-  await page.goto("/storyboard/classic");
+  await page.goto("/videolab");
   const brief = page.getByLabel("Overall artistic goal");
   await brief.fill("A musician follows a blue light through a rain-dark city.");
   await expect(
@@ -58,7 +58,7 @@ test("mobile storyboard has no page-level horizontal overflow", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/storyboard/classic");
+  await page.goto("/videolab");
   await expect(page.getByLabel("Overall artistic goal")).toBeVisible();
   const dimensions = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
@@ -70,7 +70,7 @@ test("mobile storyboard has no page-level horizontal overflow", async ({
 test("Director workspace uses real project state and reviewable proposals", async ({
   page,
 }) => {
-  await page.goto("/storyboard");
+  await page.goto("/storyboard/advanced");
   await expect(
     page.getByRole("heading", { name: "What would you like to make?" }),
   ).toBeVisible();
@@ -126,7 +126,7 @@ test("mobile Director workspace switches between the canvas and Director without
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/storyboard");
+  await page.goto("/storyboard/advanced");
   await expect(page.getByRole("button", { name: /Director$/ })).toBeVisible();
   await page.getByRole("button", { name: /Director$/ }).click();
   await expect(page.getByRole("textbox", { name: "Message the Director" })).toBeVisible();

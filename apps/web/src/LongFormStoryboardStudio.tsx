@@ -127,6 +127,96 @@ const transitionOptions: Array<{
   },
 ];
 
+const formatPresets: Array<{
+  key: string;
+  label: string;
+  sublabel: string;
+  resolution: string;
+  fps: number;
+  platform: "youtube" | "tiktok" | "instagram";
+}> = [
+  {
+    key: "landscape",
+    label: "YouTube",
+    sublabel: "Landscape 16:9",
+    resolution: "1280x720",
+    fps: 24,
+    platform: "youtube",
+  },
+  {
+    key: "portrait",
+    label: "TikTok · Reels · Shorts",
+    sublabel: "Portrait 9:16",
+    resolution: "720x1280",
+    fps: 30,
+    platform: "tiktok",
+  },
+  {
+    key: "square",
+    label: "Instagram",
+    sublabel: "Square 1:1",
+    resolution: "1080x1080",
+    fps: 30,
+    platform: "instagram",
+  },
+];
+
+function SocialIcon({
+  platform,
+}: {
+  platform: "youtube" | "tiktok" | "instagram";
+}) {
+  if (platform === "youtube") {
+    return (
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="4.5" width="20" height="15" rx="4.5" fill="#FF0033" />
+        <path d="M10 8.6l6 3.4-6 3.4z" fill="#fff" />
+      </svg>
+    );
+  }
+  if (platform === "tiktok") {
+    return (
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="2" width="20" height="20" rx="6" fill="#0A0A0A" />
+        <path
+          d="M14.6 6.2c.5 1.4 1.6 2.4 3.1 2.6v2.2a5.3 5.3 0 0 1-3.1-1v4.6a4 4 0 1 1-4-4c.2 0 .4 0 .6.03v2.2a1.9 1.9 0 1 0 1.3 1.8V6.2h2.1z"
+          fill="#25F4EE"
+        />
+        <path
+          d="M14.1 6.2c.5 1.4 1.6 2.4 3.1 2.6v2.2a5.3 5.3 0 0 1-3.1-1v4.6a4 4 0 1 1-4-4c.2 0 .4 0 .6.03v2.2a1.9 1.9 0 1 0 1.3 1.8V6.2h2.1z"
+          fill="#FE2C55"
+          opacity="0.75"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="ig-grad" x1="0" y1="24" x2="24" y2="0">
+          <stop offset="0" stopColor="#FEDA75" />
+          <stop offset="0.35" stopColor="#FA7E1E" />
+          <stop offset="0.65" stopColor="#D62976" />
+          <stop offset="1" stopColor="#962FBF" />
+        </linearGradient>
+      </defs>
+      <rect x="2" y="2" width="20" height="20" rx="6" fill="url(#ig-grad)" />
+      <rect
+        x="6.5"
+        y="6.5"
+        width="11"
+        height="11"
+        rx="3.5"
+        stroke="#fff"
+        strokeWidth="1.6"
+        fill="none"
+      />
+      <circle cx="12" cy="12" r="3" stroke="#fff" strokeWidth="1.6" fill="none" />
+      <circle cx="16.3" cy="7.7" r="1" fill="#fff" />
+    </svg>
+  );
+}
+
 const initialScenes: StoryboardScenePayload[] = [
   {
     id: "scene-1",
@@ -159,6 +249,10 @@ const initialScenes: StoryboardScenePayload[] = [
     carryPreviousFrame: true,
   },
 ];
+function seedScenes(isClassic: boolean): StoryboardScenePayload[] {
+  const scenes = initialScenes.slice(0, isClassic ? 1 : initialScenes.length);
+  return isClassic ? scenes.map((scene) => ({ ...scene, title: "" })) : scenes;
+}
 const DEFAULT_SCENE_SEED = 1337;
 const continuityFields = [
   ["characters", "Characters"],
@@ -306,7 +400,10 @@ export default function LongFormStoryboardStudio({
 }) {
   const isClassic = variant === "classic";
   const queryClient = useQueryClient();
-  const [form, setForm] = useState(freshInitialForm);
+  const [form, setForm] = useState(() => ({
+    ...freshInitialForm(),
+    scenes: seedScenes(isClassic),
+  }));
   const [history, setHistory] = useState<Generation[]>([]);
   const [selected, setSelected] = useState<Generation>();
   const [helpMode, setHelpMode] = useState(false);
@@ -487,11 +584,16 @@ export default function LongFormStoryboardStudio({
                   continuityOverrides: scene.continuityOverrides ?? {},
                   seedOverrideEnabled: scene.seedOverrideEnabled === true,
                 }))
-              : initialScenes.slice(0, isClassic ? 1 : initialScenes.length),
+              : seedScenes(isClassic),
             globalSeed: saved.globalSeed ?? DEFAULT_SCENE_SEED,
             seedPolicy: saved.seedPolicy ?? "global_locked",
           } satisfies LongFormGenerationPayload;
           setForm(await hydrateGeneratedFrameFiles(normalized));
+        } else {
+          setForm({
+            ...freshInitialForm(),
+            scenes: seedScenes(isClassic),
+          });
         }
         setSessionReady(true);
         setSessionStatus("saved");
@@ -589,7 +691,7 @@ export default function LongFormStoryboardStudio({
           } satisfies LongFormGenerationPayload)
         : {
             ...freshInitialForm(),
-            scenes: initialScenes.slice(0, isClassic ? 1 : initialScenes.length),
+            scenes: seedScenes(isClassic),
           };
       setForm(await hydrateGeneratedFrameFiles(normalized));
       setProjectId(nextProjectId);
@@ -614,7 +716,7 @@ export default function LongFormStoryboardStudio({
     setProjectError("");
     const nextForm = {
       ...freshInitialForm(),
-      scenes: initialScenes.slice(0, isClassic ? 1 : initialScenes.length),
+      scenes: seedScenes(isClassic),
     };
     try {
       const title = `Untitled film ${projects.length + 1}`;
@@ -857,63 +959,49 @@ export default function LongFormStoryboardStudio({
     <main className={`lf-page ${helpMode ? "help-mode" : ""}`}>
       <header className="lf-hero">
         <div>
-          <div className="lf-kickers">
-            <span data-help="The generation service is connected and ready to accept a storyboard film.">
-              {runtime.data?.status === "healthy"
-                ? "Generator ready"
-                : "Generator unavailable"}
-            </span>
-            <span data-help="Z-Image creates still frame anchors; LTX turns your planned scene into motion.">
-              {isClassic ? "Single scene storyboard" : "Z-Image + LTX Storyboard"}
-            </span>
-            <span
-              className={`lf-session-save ${sessionStatus}`}
-              data-help="Your brief, prompts, titles, settings and uploaded frame images are automatically preserved in this browser."
-            >
-              {sessionStatus === "loading"
-                ? "Loading session"
-                : sessionStatus === "saving"
-                  ? "Saving session"
-                  : sessionStatus === "error"
-                    ? "Session save unavailable"
-                    : "Session saved"}
-            </span>
-            <button
-              type="button"
-              className="lf-help-toggle"
-              aria-pressed={helpMode}
-              onClick={() => setHelpMode((enabled) => !enabled)}
-              data-help="Turn contextual explanations off."
-            >
-              {helpMode ? "✦ Help on" : "? Help"}
-            </button>
-          </div>
           <h1 className="editorial-page-title lf-storyboard-title">
-            {isClassic ? "Classic Storyboard" : "Storyboard Studio"}<span className="editorial-title-stop">.</span>
+            {isClassic ? "VideoLab" : "Storyboard Studio"}<span className="editorial-title-stop">.</span>
           </h1>
           <p>
             {isClassic
-              ? "Create one cinematic scene from a simple overview. Add frame anchors only if they matter; otherwise the runtime handles the opening visual."
+              ? "Describe your scene in plain language and generate a complete cinematic video clip — camera movement, lighting and motion are planned automatically."
               : "Direct a longer film scene by scene. Upload frame anchors where they matter; otherwise the runtime generates the opening and carries each real final frame into the next clip."}
           </p>
         </div>
         <div className="lf-session">
-          <span data-help="Shows whether the remote video-generation runtime is available.">
+          <button
+            type="button"
+            className="lf-help-toggle"
+            aria-pressed={helpMode}
+            onClick={() => setHelpMode((enabled) => !enabled)}
+            data-help="Turn contextual explanations off."
+          >
+            {helpMode ? "✦ Help on" : "? Help"}
+          </button>
+          <span
+            className={
+              runtime.isLoading
+                ? "lf-status-pending"
+                : runtime.data?.status === "healthy"
+                  ? "lf-status-ok"
+                  : "lf-status-down"
+            }
+            data-help="Shows whether the remote video-generation runtime is available."
+          >
             {runtime.isLoading
               ? "Checking generator"
               : runtime.data?.status === "healthy"
                 ? "Generator connected"
                 : "Generator unavailable"}
           </span>
-          <strong data-help="Storyboard sessions and generated films remain private to your signed-in account.">
-            Private session
-          </strong>
-          <Link
-            to="/gallery"
-            data-help="Open all previously generated films and their details."
-          >
-            Gallery
-          </Link>
+          {sessionStatus === "error" && (
+            <span
+              className="lf-session-save error"
+              data-help="Your brief, prompts, titles, settings and uploaded frame images could not be saved in this browser."
+            >
+              Session save unavailable
+            </span>
+          )}
         </div>
       </header>
       <div className="lf-layout">
@@ -922,20 +1010,14 @@ export default function LongFormStoryboardStudio({
             <span className="lf-label">Creative brief</span>
             <div className="prompt-field-heading">
               <h2>Overview</h2>
-              <PromptSuggestion
-                value={form.overallGoal}
-                suggestion="An ancient epic follows a battle-worn voyager across a mythic sea as he struggles to return to his family, while those at home defend a fragile kingdom and their faith in his survival."
-                expansion="Expand this into a coherent film brief with a clear narrative progression, consistent characters and locations, a defined visual palette, lighting and lens language, material detail, emotional tone and continuity rules for every scene."
-                kind="film-brief"
-                onUse={(suggestion) =>
-                  setForm((current) =>
-                    markAcceptedClipsStale(
-                      { ...current, overallGoal: suggestion },
-                      "The film brief changed after this clip was accepted. Render this scene again before assembly.",
-                    ),
-                  )
-                }
-              />
+              <button
+                type="button"
+                className="lf-outline lf-polish-brief"
+                disabled={!form.overallGoal.trim() || enhancement.isPending}
+                onClick={() => enhancement.mutate({ apply: "master" })}
+              >
+                Polish brief
+              </button>
             </div>
             <div
               className="lf-help-target"
@@ -963,31 +1045,6 @@ export default function LongFormStoryboardStudio({
               className="lf-enhancer-actions"
               aria-label="Local Gemma prompt assistance"
             >
-              <button
-                type="button"
-                className="lf-outline"
-                disabled={!form.overallGoal.trim() || enhancement.isPending}
-                onClick={() => enhancement.mutate({ apply: "master" })}
-              >
-                Polish brief
-              </button>
-              <button
-                type="button"
-                className="lf-primary"
-                disabled={!form.overallGoal.trim() || enhancement.isPending}
-                onClick={() => enhancement.mutate({ apply: "all" })}
-              >
-                {enhancement.isPending
-                  ? "Gemma is preparing the storyboard…"
-                  : `Enhance and plan ${form.scenes.length} shot${form.scenes.length === 1 ? "" : "s"}`}
-              </button>
-              <button
-                type="button"
-                className="lf-outline"
-                onClick={() => setProjectDialogOpen(true)}
-              >
-                New project
-              </button>
               {form.originalOverallGoal && (
                 <button
                   type="button"
@@ -1019,14 +1076,116 @@ export default function LongFormStoryboardStudio({
                 </button>
               )}
             </div>
-            <small className="lf-agent-note">
-              Suggestions come from the local Gemma enhancer and stay editable.
-              You can ignore them and use your own prompts.
-            </small>
             {enhancement.error && (
               <p className="lf-error" role="alert">
                 {enhancement.error.message}
               </p>
+            )}
+            {isClassic && (
+              <div
+                className="lf-format-row"
+                data-help="Choose the delivery format. This sets the resolution and frame rate together."
+              >
+                <div className="lf-format-top">
+                  <div className="lf-format-main">
+                    <span className="lf-label lf-format-heading">Format</span>
+                    <div className="lf-format-presets">
+                      {formatPresets.map((preset) => {
+                        const active = form.resolution === preset.resolution;
+                        return (
+                          <button
+                            key={preset.key}
+                            type="button"
+                            aria-pressed={active}
+                            className={`lf-format-preset ${active ? "active" : ""}`}
+                            onClick={() =>
+                              setForm((current) =>
+                                markAcceptedClipsStale(
+                                  {
+                                    ...current,
+                                    resolution: preset.resolution,
+                                    fps: preset.fps,
+                                  },
+                                  "The output format changed after this clip was accepted. Render this scene again before assembly.",
+                                ),
+                              )
+                            }
+                          >
+                            <SocialIcon platform={preset.platform} />
+                            <span>
+                              <strong>{preset.label}</strong>
+                              <small>{preset.sublabel}</small>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {form.scenes[0] && (
+                    <div className="lf-format-duration">
+                      <span className="lf-label lf-format-heading">
+                        Duration
+                        <output className="lf-duration-value">
+                          {form.scenes[0].duration}
+                          <small>s</small>
+                        </output>
+                      </span>
+                      <div
+                        className="lf-duration-dial"
+                        data-help="The full generated and delivered length of this scene."
+                      >
+                        <div className="lf-duration-track">
+                          <input
+                            type="range"
+                            min={1}
+                            max={8}
+                            step={1}
+                            value={form.scenes[0].duration}
+                            onChange={(event) => {
+                              const value = Number(event.target.value);
+                              updateScene(0, {
+                                duration: value,
+                                trimStart: 0,
+                                trimEnd: value,
+                                staleReason: form.scenes[0].acceptedVideoGenerationId
+                                  ? "The scene duration changed after its accepted clip was rendered. Render this scene again before assembly."
+                                  : form.scenes[0].staleReason,
+                              });
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <label className="lf-toggle lf-ultra-toggle">
+                  <input
+                    type="checkbox"
+                    checked={
+                      form.postProcess === "upscale" ||
+                      form.postProcess === "both"
+                    }
+                    onChange={(event) =>
+                      setForm((current) =>
+                        markAcceptedClipsStale(
+                          {
+                            ...current,
+                            postProcess: event.target.checked
+                              ? "upscale"
+                              : "none",
+                          },
+                          "The finishing quality changed after this clip was accepted. Render this scene again before assembly.",
+                        ),
+                      )
+                    }
+                  />
+                  <span />
+                  <div className="lf-toggle-copy">
+                    <strong>Ultra quality</strong>
+                    <small>Adds an upscale pass to the finished clip.</small>
+                  </div>
+                </label>
+              </div>
             )}
           </section>
           {!isClassic && (
@@ -2088,6 +2247,7 @@ function SceneCard({
         >
           <input
             aria-label={`Scene ${index + 1} title`}
+            placeholder="Scene title"
             value={scene.title}
             onChange={(event) =>
               onChange({
@@ -2119,25 +2279,27 @@ function SceneCard({
             </button>
           </>
         )}
-        <PromptSuggestion
-          label={
-            scene.prompt.trim()
-              ? `Expand scene ${index + 1}`
-              : `Show a suggestion for scene ${index + 1}`
-          }
-          value={scene.prompt}
-          suggestion={suggestion}
-          expansion="Develop this scene with one precise subject action, motivated camera movement, lens and framing, lighting progression, continuity from the previous frame and a deliberate final composition that leads into the next scene."
-          kind="storyboard-scene"
-          onUse={(value) => onChange({ prompt: value, promptOrigin: "agent" })}
-        />
+        {!classic && (
+          <PromptSuggestion
+            label={
+              scene.prompt.trim()
+                ? `Expand scene ${index + 1}`
+                : `Show a suggestion for scene ${index + 1}`
+            }
+            value={scene.prompt}
+            suggestion={suggestion}
+            expansion="Develop this scene with one precise subject action, motivated camera movement, lens and framing, lighting progression, continuity from the previous frame and a deliberate final composition that leads into the next scene."
+            kind="storyboard-scene"
+            onUse={(value) => onChange({ prompt: value, promptOrigin: "agent" })}
+          />
+        )}
         <button
           type="button"
           className="lf-regenerate-shot"
           disabled={promptBusy}
           onClick={onRegeneratePrompt}
         >
-          Regenerate this shot
+          Regenerate scene
         </button>
         {!classic && (
           <button
@@ -2156,15 +2318,21 @@ function SceneCard({
         <>
       <div
         className="prompt-field scene-prompt-field"
-        data-help="Describe one story beat: subject action, camera movement, lighting change and the final frame that leads into the following scene."
+        data-help={
+          classic
+            ? "Describe one story beat: subject action, camera movement, lighting change and the final composition."
+            : "Describe one story beat: subject action, camera movement, lighting change and the final frame that leads into the following scene."
+        }
       >
         <div className="prompt-field-heading">
           <span className="lf-label">Scene direction</span>
-          <small>
-            {scene.promptOrigin === "agent"
-              ? "Gemma suggestion"
-              : "Your direction"}
-          </small>
+          {!classic && (
+            <small>
+              {scene.promptOrigin === "agent"
+                ? "Gemma suggestion"
+                : "Your direction"}
+            </small>
+          )}
         </div>
         <textarea
           aria-label={`Scene ${index + 1} direction`}
@@ -2183,142 +2351,148 @@ function SceneCard({
             })
           }
         />
-        <div className="lf-scene-copy-grid">
-          <label>
-            <span>Narrative purpose</span>
-            <textarea
-              aria-label={`Scene ${index + 1} narrative purpose`}
-              value={scene.narrativePurpose ?? ""}
-              placeholder="What changes in the story during this scene?"
-              onChange={(event) =>
-                onChange({ narrativePurpose: event.target.value })
-              }
-            />
-          </label>
-          <label>
-            <span>Continuity handoff summary</span>
-            <textarea
-              aria-label={`Scene ${index + 1} continuity summary`}
-              value={scene.summary ?? ""}
-              placeholder="Briefly describe the ending state that the next scene inherits."
-              onChange={(event) =>
-                onChange({
-                  summary: event.target.value,
-                  staleReason: scene.acceptedVideoGenerationId
-                    ? "The continuity handoff changed after this clip was rendered. Render this scene again before assembly."
-                    : scene.staleReason,
-                })
-              }
-            />
-          </label>
-        </div>
-      </div>
-      <div className="lf-scene-fields">
-        <NumberField
-          label="Duration"
-          help="The full generated and delivered length of this scene."
-          value={scene.duration}
-          min={1}
-          max={8}
-          step={1}
-          onChange={(value) =>
-            onChange({
-              duration: value,
-              trimStart: 0,
-              trimEnd: value,
-              staleReason: scene.acceptedVideoGenerationId
-                ? "The scene duration changed after its accepted clip was rendered. Render this scene again before assembly."
-                : scene.staleReason,
-            })
-          }
-        />
-        {index === 0 ? (
-          <Field
-            label="Transition in"
-            help="The first scene opens the film, so it has no incoming transition."
-          >
-            <div className="lf-disabled">Opening scene</div>
-          </Field>
-        ) : (
-          <Field
-            label="Transition in"
-            help="Choose how the previous scene blends or cuts into this one."
-          >
-            <button
-              className="lf-transition-button"
-              onClick={() => setPickerOpen(true)}
-            >
-              <b>{selectedTransition.glyph}</b>
-              <span>{selectedTransition.label}</span>
-              <i>›</i>
-            </button>
-          </Field>
+        {!classic && (
+          <div className="lf-scene-copy-grid">
+            <label>
+              <span>Narrative purpose</span>
+              <textarea
+                aria-label={`Scene ${index + 1} narrative purpose`}
+                value={scene.narrativePurpose ?? ""}
+                placeholder="What changes in the story during this scene?"
+                onChange={(event) =>
+                  onChange({ narrativePurpose: event.target.value })
+                }
+              />
+            </label>
+            <label>
+              <span>Continuity handoff summary</span>
+              <textarea
+                aria-label={`Scene ${index + 1} continuity summary`}
+                value={scene.summary ?? ""}
+                placeholder="Briefly describe the ending state that the next scene inherits."
+                onChange={(event) =>
+                  onChange({
+                    summary: event.target.value,
+                    staleReason: scene.acceptedVideoGenerationId
+                      ? "The continuity handoff changed after this clip was rendered. Render this scene again before assembly."
+                      : scene.staleReason,
+                  })
+                }
+              />
+            </label>
+          </div>
         )}
       </div>
-      <details className="lf-scene-advanced">
-        <summary>Continuity and seed</summary>
-        <label className="lf-toggle">
-          <input
-            type="checkbox"
-            checked={index > 0 && scene.carryPreviousFrame}
-            disabled={index === 0}
-            onChange={(event) =>
-              onChange({ carryPreviousFrame: event.target.checked })
+      {!classic && (
+        <div className="lf-scene-fields">
+          <NumberField
+            label="Duration"
+            help="The full generated and delivered length of this scene."
+            value={scene.duration}
+            min={1}
+            max={8}
+            step={1}
+            onChange={(value) =>
+              onChange({
+                duration: value,
+                trimStart: 0,
+                trimEnd: value,
+                staleReason: scene.acceptedVideoGenerationId
+                  ? "The scene duration changed after its accepted clip was rendered. Render this scene again before assembly."
+                  : scene.staleReason,
+              })
             }
           />
-          <span />
-          {index === 0
-            ? "Opening scene has no previous frame"
-            : "Use the previous clip’s real last frame during a complete-film render"}
-        </label>
-        <div className="lf-seed-controls">
+          {index === 0 ? (
+            <Field
+              label="Transition in"
+              help="The first scene opens the film, so it has no incoming transition."
+            >
+              <div className="lf-disabled">Opening scene</div>
+            </Field>
+          ) : (
+            <Field
+              label="Transition in"
+              help="Choose how the previous scene blends or cuts into this one."
+            >
+              <button
+                className="lf-transition-button"
+                onClick={() => setPickerOpen(true)}
+              >
+                <b>{selectedTransition.glyph}</b>
+                <span>{selectedTransition.label}</span>
+                <i>›</i>
+              </button>
+            </Field>
+          )}
+        </div>
+      )}
+      {!classic && (
+        <details className="lf-scene-advanced">
+          <summary>Continuity and seed</summary>
           <label className="lf-toggle">
             <input
               type="checkbox"
-              checked={scene.seedOverrideEnabled === true}
-              disabled={seedPolicy !== "scene_overrides"}
+              checked={index > 0 && scene.carryPreviousFrame}
+              disabled={index === 0}
               onChange={(event) =>
-                onChange({ seedOverrideEnabled: event.target.checked })
+                onChange({ carryPreviousFrame: event.target.checked })
               }
             />
-            <span /> Use a different seed for this scene
+            <span />
+            {index === 0
+              ? "Opening scene has no previous frame"
+              : "Use the previous clip’s real last frame during a complete-film render"}
           </label>
-          <NumberField
-            label="Effective scene seed"
-            value={scene.seedOverrideEnabled ? scene.seed : globalSeed}
-            min={0}
-            max={999999999}
-            step={1}
-            onChange={(seed) => onChange({ seed, seedOverrideEnabled: true })}
-          />
-        </div>
-        <details className="lf-continuity-details">
-          <summary>Override continuity for this scene only</summary>
-          <div className="lf-continuity-grid">
-            {continuityFields.map(([key, label]) => (
-              <label key={key}>
-                <span>{label}</span>
-                <textarea
-                  aria-label={`Scene ${index + 1} ${label} override`}
-                  value={scene.continuityOverrides?.[key] ?? ""}
-                  placeholder="Leave blank to inherit the film bible."
-                  onChange={(event) =>
-                    onChange({
-                      continuityOverrides: {
-                        ...(scene.continuityOverrides ?? {}),
-                        [key]: event.target.value,
-                      },
-                      staleReason: scene.acceptedVideoGenerationId
-                        ? "A continuity override changed after this clip was rendered. Render this scene again before assembly."
-                        : scene.staleReason,
-                    })
-                  }
-                />
-              </label>
-            ))}
+          <div className="lf-seed-controls">
+            <label className="lf-toggle">
+              <input
+                type="checkbox"
+                checked={scene.seedOverrideEnabled === true}
+                disabled={seedPolicy !== "scene_overrides"}
+                onChange={(event) =>
+                  onChange({ seedOverrideEnabled: event.target.checked })
+                }
+              />
+              <span /> Use a different seed for this scene
+            </label>
+            <NumberField
+              label="Effective scene seed"
+              value={scene.seedOverrideEnabled ? scene.seed : globalSeed}
+              min={0}
+              max={999999999}
+              step={1}
+              onChange={(seed) => onChange({ seed, seedOverrideEnabled: true })}
+            />
           </div>
+          <details className="lf-continuity-details">
+            <summary>Override continuity for this scene only</summary>
+            <div className="lf-continuity-grid">
+              {continuityFields.map(([key, label]) => (
+                <label key={key}>
+                  <span>{label}</span>
+                  <textarea
+                    aria-label={`Scene ${index + 1} ${label} override`}
+                    value={scene.continuityOverrides?.[key] ?? ""}
+                    placeholder="Leave blank to inherit the film bible."
+                    onChange={(event) =>
+                      onChange({
+                        continuityOverrides: {
+                          ...(scene.continuityOverrides ?? {}),
+                          [key]: event.target.value,
+                        },
+                        staleReason: scene.acceptedVideoGenerationId
+                          ? "A continuity override changed after this clip was rendered. Render this scene again before assembly."
+                          : scene.staleReason,
+                      })
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+          </details>
         </details>
-      </details>
+      )}
       <details className="lf-frame-details">
         <summary>First frame / last frame</summary>
         <div className="lf-frames">
@@ -2360,70 +2534,76 @@ function SceneCard({
           />
         </div>
       </details>
-      <label className="lf-continuity-note">
-        <span>Continuity notes</span>
-        <textarea
-          aria-label={`Scene ${index + 1} continuity notes`}
-          value={scene.continuityNotes ?? ""}
-          placeholder="Record details the next shot should preserve."
-          onChange={(event) =>
-            onChange({ continuityNotes: event.target.value })
-          }
-        />
-      </label>
+      {!classic && (
+        <label className="lf-continuity-note">
+          <span>Continuity notes</span>
+          <textarea
+            aria-label={`Scene ${index + 1} continuity notes`}
+            value={scene.continuityNotes ?? ""}
+            placeholder="Record details the next shot should preserve."
+            onChange={(event) =>
+              onChange({ continuityNotes: event.target.value })
+            }
+          />
+        </label>
+      )}
       {scene.staleReason && (
         <p className="lf-stale-note" role="status">
           {scene.staleReason}
         </p>
       )}
-      <div className="lf-scene-render">
-        <div>
-          <strong>
-            {scene.acceptedVideoGenerationId
-              ? scene.staleReason
-                ? "Accepted clip needs review"
-                : "Accepted clip ready"
-              : "No accepted clip yet"}
-          </strong>
-          <small>
-            Draft candidates render one at a time for queue fairness. Previous
-            versions and the accepted clip remain available.
-          </small>
-        </div>
-        <button
-          type="button"
-          className="lf-primary"
-          disabled={
-            renderState.status === "queued" ||
-            renderState.status === "generating" ||
-            !scene.prompt.trim()
-          }
-          onClick={onRender}
-        >
-          {renderState.status === "queued"
-            ? "Queued…"
-            : renderState.status === "generating"
-              ? "Rendering scene…"
-              : scene.candidateGenerationIds?.length
-                ? "Generate more drafts"
-                : "Generate draft candidates"}
-        </button>
-      </div>
-      {renderState.status === "failed" && (
-        <p className="lf-error" role="alert">
-          {renderState.error} The previous accepted clip is unchanged.
-        </p>
-      )}
-      {scene.acceptedVideoGenerationId && (
-        <SceneAcceptedVideo generationId={scene.acceptedVideoGenerationId} />
-      )}
-      {!!scene.candidateGenerationIds?.length && (
-        <SceneCandidateStack
-          sceneNumber={index + 1}
-          generationIds={scene.candidateGenerationIds}
-          acceptedGenerationId={scene.acceptedVideoGenerationId}
-          onAccept={onAcceptCandidate}
-        />
+      {!classic && (
+        <>
+          <div className="lf-scene-render">
+            <div>
+              <strong>
+                {scene.acceptedVideoGenerationId
+                  ? scene.staleReason
+                    ? "Accepted clip needs review"
+                    : "Accepted clip ready"
+                  : "No accepted clip yet"}
+              </strong>
+              <small>
+                Draft candidates render one at a time for queue fairness. Previous
+                versions and the accepted clip remain available.
+              </small>
+            </div>
+            <button
+              type="button"
+              className="lf-primary"
+              disabled={
+                renderState.status === "queued" ||
+                renderState.status === "generating" ||
+                !scene.prompt.trim()
+              }
+              onClick={onRender}
+            >
+              {renderState.status === "queued"
+                ? "Queued…"
+                : renderState.status === "generating"
+                  ? "Rendering scene…"
+                  : scene.candidateGenerationIds?.length
+                    ? "Generate more drafts"
+                    : "Generate draft candidates"}
+            </button>
+          </div>
+          {renderState.status === "failed" && (
+            <p className="lf-error" role="alert">
+              {renderState.error} The previous accepted clip is unchanged.
+            </p>
+          )}
+          {scene.acceptedVideoGenerationId && (
+            <SceneAcceptedVideo generationId={scene.acceptedVideoGenerationId} />
+          )}
+          {!!scene.candidateGenerationIds?.length && (
+            <SceneCandidateStack
+              sceneNumber={index + 1}
+              generationIds={scene.candidateGenerationIds}
+              acceptedGenerationId={scene.acceptedVideoGenerationId}
+              onAccept={onAcceptCandidate}
+            />
+          )}
+        </>
       )}
       {pickerOpen && (
         <TransitionPicker
@@ -2439,7 +2619,10 @@ function SceneCard({
           className="lf-scene-collapsed-summary"
           onClick={() => setExpanded(true)}
         >
-          {scene.prompt.trim() || "Open this scene to add direction, timing and render controls."}
+          {scene.prompt.trim() ||
+            (classic
+              ? "Open this scene to add direction and frame anchors."
+              : "Open this scene to add direction, timing and render controls.")}
         </button>
       )}
     </article>
@@ -2724,7 +2907,19 @@ function UploadBox({
         {preview && !compact ? (
           <img src={preview} alt={`${label} preview`} />
         ) : (
-          <span aria-hidden="true">▧</span>
+          <span aria-hidden="true" className="lf-upload-icon">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" strokeWidth="1.6" />
+              <circle cx="8.5" cy="9.5" r="1.75" fill="currentColor" />
+              <path
+                d="M4 17l5.2-5.2a1.5 1.5 0 0 1 2.12 0L15 15.4l1.4-1.4a1.5 1.5 0 0 1 2.12 0L21 16.6"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
         )}
         <span className="lf-upload-copy">
           <strong>{label}</strong>
@@ -2946,7 +3141,6 @@ function Preview({
         <div>
           <span className="lf-label">Your creation</span>
           <h2>Cinematic preview</h2>
-          <p>Intelligensi.ai Storyboard Studio</p>
         </div>
         <span
           className="lf-complete"
@@ -3076,13 +3270,15 @@ function Preview({
           {formatElapsed(generation?.createdAt, now)}
         </span>
       </div>
-      <div
-        className="lf-progress"
-        data-help="Approximate runtime progress indicator."
-        aria-label={`${progress}% approximate render progress`}
-      >
-        <span style={{ width: `${progress}%` }} />
-      </div>
+      {generation && (
+        <div
+          className="lf-progress"
+          data-help="Approximate runtime progress indicator."
+          aria-label={`${progress}% approximate render progress`}
+        >
+          <span style={{ width: `${progress}%` }} />
+        </div>
+      )}
     </section>
   );
 }
