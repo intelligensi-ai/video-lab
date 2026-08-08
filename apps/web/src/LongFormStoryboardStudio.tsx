@@ -1240,6 +1240,15 @@ export default function LongFormStoryboardStudio({
                 globalSeed={form.globalSeed}
                 seedPolicy={form.seedPolicy}
                 classic={isClassic}
+                negativePrompt={form.negativePrompt}
+                onNegativePromptChange={(value) =>
+                  setForm((current) =>
+                    markAcceptedClipsStale(
+                      { ...current, negativePrompt: value },
+                      "The shared negative prompt changed after this clip was accepted. Render this scene again before assembly.",
+                    ),
+                  )
+                }
               />
             ))}
           </section>
@@ -2202,6 +2211,8 @@ function SceneCard({
   globalSeed,
   seedPolicy,
   classic,
+  negativePrompt,
+  onNegativePromptChange,
 }: {
   scene: StoryboardScenePayload;
   index: number;
@@ -2219,6 +2230,8 @@ function SceneCard({
   globalSeed: number;
   seedPolicy: LongFormGenerationPayload["seedPolicy"];
   classic?: boolean;
+  negativePrompt?: string;
+  onNegativePromptChange?: (value: string) => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState(index === 0);
@@ -2534,6 +2547,20 @@ function SceneCard({
           />
         </div>
       </details>
+      {classic && (
+        <details className="lf-frame-details lf-negative-details">
+          <summary>Negative prompt</summary>
+          <div className="lf-negative-panel">
+            <textarea
+              className="lf-negative"
+              aria-label="Shared negative prompt"
+              value={negativePrompt ?? ""}
+              placeholder="Describe unwanted styles, artefacts or continuity problems…"
+              onChange={(event) => onNegativePromptChange?.(event.target.value)}
+            />
+          </div>
+        </details>
+      )}
       {!classic && (
         <label className="lf-continuity-note">
           <span>Continuity notes</span>

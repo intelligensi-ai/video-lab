@@ -5232,6 +5232,12 @@ body:not(:has(.home)) textarea:focus::placeholder {
 .lf-frame-details .lf-frames {
   padding: 0 0.7rem 0.7rem;
 }
+.lf-negative-panel {
+  padding: 0 0.7rem 0.7rem;
+}
+.lf-negative-panel .lf-negative {
+  width: 100%;
+}
 .lf-disabled,
 .lf-transition-button {
   border-color: #1112;
