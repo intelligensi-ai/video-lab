@@ -1229,12 +1229,14 @@ export default function LongFormStoryboardStudio({
               </div>
             )}
           </section>
-          <ProjectReferencePanel
-            references={form.projectReferences}
-            sceneIds={form.scenes.map((scene) => scene.id)}
-            evidence={form.referencePlanningEvidence}
-            onChange={(projectReferences) => setForm((current) => ({ ...current, projectReferences }))}
-          />
+          {!isClassic && (
+            <ProjectReferencePanel
+              references={form.projectReferences}
+              sceneIds={form.scenes.map((scene) => scene.id)}
+              evidence={form.referencePlanningEvidence}
+              onChange={(projectReferences) => setForm((current) => ({ ...current, projectReferences }))}
+            />
+          )}
           <section className="lf-scenes">
             <div className="lf-section-head">
               <div>
@@ -1962,7 +1964,6 @@ function ProjectReferencePanel({
   evidence: LongFormGenerationPayload["referencePlanningEvidence"];
   onChange: (references: StoryboardProjectReference[]) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [type, setType] = useState<StoryboardProjectReference["type"]>("character");
   const [label, setLabel] = useState("");
   const [description, setDescription] = useState("");
@@ -2017,73 +2018,67 @@ function ProjectReferencePanel({
     }
   };
   return (
-    <section className="lf-reference-panel">
-      <button type="button" className="lf-reference-summary" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-        <span className="lf-reference-icon">â–§</span>
-        <span><strong>Project references</strong><small>Characters, places, products, style and voice direction Â· {references.length} saved</small></span>
-        <b>{open ? "âŒƒ" : "âŒ„"}</b>
-      </button>
-      {open && (
-        <div className="lf-project-references">
-          <p className="lf-capability-note">
-            Gemma uses these private descriptions as continuity locks. The current LTX workflow supports actual start/end frame conditioning; other reference media remain planning-only until runtime capability evidence is available.
-          </p>
-          <div className="lf-reference-create">
-            <Field label="Reference type">
-              <select value={type} onChange={(event) => setType(event.target.value as StoryboardProjectReference["type"])}>
-                {(["character", "location", "product", "style", "voice", "motion"] as const).map((value) => <option key={value} value={value}>{value}</option>)}
-              </select>
-            </Field>
-            <Field label="Friendly name"><input value={label} maxLength={120} onChange={(event) => setLabel(event.target.value)} /></Field>
-            <Field label="How to use it"><textarea value={description} maxLength={2000} onChange={(event) => setDescription(event.target.value)} /></Field>
-            <Field label="Locked traits" help="Comma-separated details that should not drift."><input value={traits} onChange={(event) => setTraits(event.target.value)} /></Field>
-            <Field label="Optional private image">
-              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => setFile(event.target.files?.[0])} />
-            </Field>
-            <button type="button" className="lf-outline" disabled={busy || !label.trim()} onClick={() => void addReference()}>{busy ? "Savingâ€¦" : "Add reference"}</button>
-          </div>
-          {error && <p className="lf-error" role="alert">{error}</p>}
-          <div className="lf-reference-grid">
-            {references.map((reference) => (
-              <article key={reference.id} className="lf-reference-card has-file">
-                <ProjectReferencePreview reference={reference} />
-                <strong>{reference.label}</strong>
-                <ReferencePlanningStatus reference={reference} sceneIds={sceneIds} evidence={evidence} />
-                <small>{reference.type} Â· version {reference.version}</small>
-                {reference.assetVersionIds.length > 1 && (
-                  <select
-                    aria-label={`${reference.label} media version`}
-                    value={reference.assetId}
-                    onChange={(event) => updateReference(reference.id, {
-                      assetId: event.target.value,
-                      version: reference.assetVersionIds.indexOf(event.target.value) + 1,
-                    })}
-                  >
-                    {reference.assetVersionIds.map((assetId, versionIndex) => (
-                      <option key={assetId} value={assetId}>Media version {versionIndex + 1}</option>
-                    ))}
-                  </select>
-                )}
-                <textarea value={reference.description} aria-label={`${reference.label} usage`} onChange={(event) => updateReference(reference.id, { description: event.target.value })} />
-                <input value={reference.lockedTraits.join(", ")} aria-label={`${reference.label} locked traits`} onChange={(event) => updateReference(reference.id, { lockedTraits: event.target.value.split(",").map((trait) => trait.trim()).filter(Boolean).slice(0, 24) })} />
-                <details>
-                  <summary>Assign to scenes</summary>
-                  {sceneIds.map((sceneId, sceneIndex) => (
-                    <label key={sceneId} className="lf-toggle">
-                      <input type="checkbox" checked={reference.sceneIds.includes(sceneId)} onChange={(event) => updateReference(reference.id, { sceneIds: event.target.checked ? [...reference.sceneIds, sceneId] : reference.sceneIds.filter((id) => id !== sceneId) })} />
-                      <span /> Scene {sceneIndex + 1}
-                    </label>
-                  ))}
-                  <small>No selected scenes means the reference applies project-wide.</small>
-                </details>
-                <label className="lf-outline">Replace image<input hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void replaceFile(reference, event.target.files?.[0])} /></label>
-                <button type="button" onClick={() => onChange(references.filter((item) => item.id !== reference.id))}>Remove from project</button>
-              </article>
-            ))}
-          </div>
+    <details className="lf-frame-details lf-reference-details">
+      <summary>Project references</summary>
+      <div className="lf-project-references">
+        <p className="lf-capability-note">
+          Gemma uses these private descriptions as continuity locks. The current LTX workflow supports actual start/end frame conditioning; other reference media remain planning-only until runtime capability evidence is available.
+        </p>
+        <div className="lf-reference-create">
+          <Field label="Reference type">
+            <select value={type} onChange={(event) => setType(event.target.value as StoryboardProjectReference["type"])}>
+              {(["character", "location", "product", "style", "voice", "motion"] as const).map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </Field>
+          <Field label="Friendly name"><input value={label} maxLength={120} onChange={(event) => setLabel(event.target.value)} /></Field>
+          <Field label="How to use it"><textarea value={description} maxLength={2000} onChange={(event) => setDescription(event.target.value)} /></Field>
+          <Field label="Locked traits" help="Comma-separated details that should not drift."><input value={traits} onChange={(event) => setTraits(event.target.value)} /></Field>
+          <Field label="Optional private image">
+            <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => setFile(event.target.files?.[0])} />
+          </Field>
+          <button type="button" className="lf-outline" disabled={busy || !label.trim()} onClick={() => void addReference()}>{busy ? "Saving…" : "Add reference"}</button>
         </div>
-      )}
-    </section>
+        {error && <p className="lf-error" role="alert">{error}</p>}
+        <div className="lf-reference-grid">
+          {references.map((reference) => (
+            <article key={reference.id} className="lf-reference-card has-file">
+              <ProjectReferencePreview reference={reference} />
+              <strong>{reference.label}</strong>
+              <ReferencePlanningStatus reference={reference} sceneIds={sceneIds} evidence={evidence} />
+              <small>{reference.type} · version {reference.version}</small>
+              {reference.assetVersionIds.length > 1 && (
+                <select
+                  aria-label={`${reference.label} media version`}
+                  value={reference.assetId}
+                  onChange={(event) => updateReference(reference.id, {
+                    assetId: event.target.value,
+                    version: reference.assetVersionIds.indexOf(event.target.value) + 1,
+                  })}
+                >
+                  {reference.assetVersionIds.map((assetId, versionIndex) => (
+                    <option key={assetId} value={assetId}>Media version {versionIndex + 1}</option>
+                  ))}
+                </select>
+              )}
+              <textarea value={reference.description} aria-label={`${reference.label} usage`} onChange={(event) => updateReference(reference.id, { description: event.target.value })} />
+              <input value={reference.lockedTraits.join(", ")} aria-label={`${reference.label} locked traits`} onChange={(event) => updateReference(reference.id, { lockedTraits: event.target.value.split(",").map((trait) => trait.trim()).filter(Boolean).slice(0, 24) })} />
+              <details>
+                <summary>Assign to scenes</summary>
+                {sceneIds.map((sceneId, sceneIndex) => (
+                  <label key={sceneId} className="lf-toggle">
+                    <input type="checkbox" checked={reference.sceneIds.includes(sceneId)} onChange={(event) => updateReference(reference.id, { sceneIds: event.target.checked ? [...reference.sceneIds, sceneId] : reference.sceneIds.filter((id) => id !== sceneId) })} />
+                    <span /> Scene {sceneIndex + 1}
+                  </label>
+                ))}
+                <small>No selected scenes means the reference applies project-wide.</small>
+              </details>
+              <label className="lf-outline">Replace image<input hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void replaceFile(reference, event.target.files?.[0])} /></label>
+              <button type="button" onClick={() => onChange(references.filter((item) => item.id !== reference.id))}>Remove from project</button>
+            </article>
+          ))}
+        </div>
+      </div>
+    </details>
   );
 }
 
