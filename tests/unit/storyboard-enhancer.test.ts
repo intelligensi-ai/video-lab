@@ -7,7 +7,9 @@ import {
 import type { StoryboardEnhancementRequest } from "../../packages/contracts/src/index.js";
 
 const request: StoryboardEnhancementRequest = {
+  contractVersion: "2",
   projectId: "project_12345678",
+  operation: "plan_storyboard",
   masterPrompt: "A founder follows a teal signal through rainy London.",
   shotCount: 2,
   generationMode: "text_to_video",
@@ -29,9 +31,19 @@ const request: StoryboardEnhancementRequest = {
   shots: [1, 2].map((shotNumber) => ({
     shotNumber,
     title: `Shot ${shotNumber}`,
+    narrativePurpose: "",
     prompt: "",
+    firstFramePrompt: "",
+    lastFramePrompt: "",
+    continuityNotes: "",
     durationSeconds: 5,
     generationMode: "text_to_video" as const,
+    referenceIds: ["ref_character_01"],
+    selectedControls: [],
+    audioIntent: { mode: "silent" as const, reason: "" },
+    carryPreviousFrame: shotNumber > 1,
+    firstFrameAvailable: false,
+    lastFrameAvailable: false,
   })),
   aspectRatio: "16:9",
   resolution: "1280x720",
@@ -41,6 +53,8 @@ const request: StoryboardEnhancementRequest = {
     label: "Founder",
     description: "The recurring lead.",
     lockedTraits: ["short dark hair", "charcoal coat"],
+    version: 1,
+    shotNumbers: [1, 2],
   }],
   availableControls: ["start_frame", "end_frame"],
   audioPolicy: {
@@ -127,7 +141,7 @@ describe("storyboard enhancer contract", () => {
     expect(() => validateStoryboardEnhancement(wrongCandidates, request)).toThrow("candidate count");
   });
 
-  it("accepts stable gateway responses without optional Director metadata", () => {
+  it("rejects legacy gateway responses without an explicit contract version", () => {
     const enhancement = mockStoryboardEnhancement(request);
     const stableResponse = {
       polishedMasterPrompt: enhancement.polishedMasterPrompt,
@@ -145,28 +159,19 @@ describe("storyboard enhancer contract", () => {
       model: enhancement.model,
     };
 
-    const result = validateStoryboardEnhancement(stableResponse, request);
-
-    expect(result.referenceUsagePlan).toEqual([]);
-    expect(result.assumptions).toEqual([]);
-    expect(result.instructionBundle.hash).toBe("0".repeat(64));
-    expect(result.shots[0].candidateVariations).toHaveLength(3);
-    expect(result.shots[0].audioIntent.mode).toBe("silent");
+    expect(() => validateStoryboardEnhancement(stableResponse, request)).toThrow("contract version");
   });
 
-  it("preserves GCP text inference providers from the stable gateway", () => {
+  it("rejects paid external inference providers from the stable gateway", () => {
     const enhancement = mockStoryboardEnhancement(request);
-    const result = validateStoryboardEnhancement(
+    expect(() => validateStoryboardEnhancement(
       {
         ...enhancement,
         provider: "vertex-ai",
         model: "gemini-2.5-flash",
       },
       request,
-    );
-
-    expect(result.provider).toBe("vertex-ai");
-    expect(result.model).toBe("gemini-2.5-flash");
+    )).toThrow("unsupported");
   });
 
   it("uses the authenticated versioned runtime API for LongForm enhancement", async () => {
@@ -184,6 +189,8 @@ describe("storyboard enhancer contract", () => {
           (init?.headers as Record<string, string>).authorization,
         ).toBeUndefined();
         expect(JSON.parse(String(init?.body))).toEqual({
+          contractVersion: "2",
+          operation: request.operation,
           masterPrompt: request.masterPrompt,
           shotCount: request.shotCount,
           generationMode: request.generationMode,
@@ -191,12 +198,32 @@ describe("storyboard enhancer contract", () => {
           shots: request.shots.map((shot) => ({
             shotNumber: shot.shotNumber,
             title: shot.title,
+            narrativePurpose: shot.narrativePurpose,
             prompt: shot.prompt,
+            firstFramePrompt: shot.firstFramePrompt,
+            lastFramePrompt: shot.lastFramePrompt,
+            continuityNotes: shot.continuityNotes,
             durationSeconds: shot.durationSeconds,
             generationMode: shot.generationMode,
+            referenceIds: shot.referenceIds,
+            selectedControls: shot.selectedControls,
+            audioIntent: shot.audioIntent,
+            carryPreviousFrame: shot.carryPreviousFrame,
+            firstFrameAvailable: shot.firstFrameAvailable,
+            lastFrameAvailable: shot.lastFrameAvailable,
           })),
+          aspectRatio: request.aspectRatio,
+          resolution: request.resolution,
+          references: request.references,
+          availableControls: request.availableControls,
+          audioPolicy: request.audioPolicy,
+          requestedCandidateCount: request.requestedCandidateCount,
         });
-        return Response.json(mockStoryboardEnhancement(request));
+        return Response.json({
+          ...mockStoryboardEnhancement(request),
+          provider: "ollama",
+          model: "gemma4:e4b",
+        });
       }),
     );
     const client = new DeployStudioStoryboardEnhancerClient({

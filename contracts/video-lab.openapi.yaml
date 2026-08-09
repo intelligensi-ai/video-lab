@@ -924,21 +924,31 @@ components:
       {
         type: object,
         additionalProperties: false,
-        required: [shotNumber, title, prompt, durationSeconds, generationMode],
+        required: [shotNumber, title, narrativePurpose, prompt, firstFramePrompt, lastFramePrompt, continuityNotes, durationSeconds, generationMode, referenceIds, selectedControls, audioIntent, carryPreviousFrame, firstFrameAvailable, lastFrameAvailable],
         properties:
           {
             shotNumber: { type: integer, minimum: 1, maximum: 24 },
             title: { type: string },
+            narrativePurpose: { type: string, maxLength: 1000 },
             prompt: { type: string },
+            firstFramePrompt: { type: string, maxLength: 6000 },
+            lastFramePrompt: { type: string, maxLength: 6000 },
+            continuityNotes: { type: string, maxLength: 2000 },
             durationSeconds: { type: integer, minimum: 1, maximum: 8 },
             generationMode:
               { type: string, enum: [text_to_video, image_to_video, mixed] },
+            referenceIds: { type: array, maxItems: 16, items: { type: string, maxLength: 64 } },
+            selectedControls: { type: array, maxItems: 16, items: { type: string, pattern: "^[a-z][a-z0-9_]{1,63}$" } },
+            audioIntent: { $ref: "#/components/schemas/StoryboardAudioIntent" },
+            carryPreviousFrame: { type: boolean },
+            firstFrameAvailable: { type: boolean },
+            lastFrameAvailable: { type: boolean },
           },
       }
     StoryboardReferenceSummary:
       type: object
       additionalProperties: false
-      required: [id, type, label, description, lockedTraits]
+      required: [id, type, label, description, lockedTraits, version, shotNumbers]
       properties:
         id: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
         type: { type: string, enum: [character, location, product, style, voice, motion] }
@@ -948,6 +958,8 @@ components:
           type: array
           maxItems: 24
           items: { type: string, maxLength: 240 }
+        version: { type: integer, minimum: 1 }
+        shotNumbers: { type: array, uniqueItems: true, items: { type: integer, minimum: 1, maximum: 24 } }
     StoryboardAudioPolicy:
       type: object
       additionalProperties: false
@@ -1009,9 +1021,12 @@ components:
         type: object,
         additionalProperties: false,
         required:
-          [masterPrompt, shotCount, generationMode, continuityBible, shots, aspectRatio, resolution, references, availableControls, audioPolicy, requestedCandidateCount],
+          [contractVersion, operation, masterPrompt, shotCount, generationMode, continuityBible, shots, aspectRatio, resolution, references, availableControls, audioPolicy, requestedCandidateCount],
         properties:
           {
+            contractVersion: { type: string, const: "2" },
+            operation: { type: string, enum: [enhance_master_prompt, plan_storyboard, revise_shot, revise_first_frame, revise_last_frame] },
+            userInstruction: { type: string, minLength: 1, maxLength: 4000 },
             masterPrompt: { type: string, minLength: 3, maxLength: 12000 },
             shotCount: { type: integer, minimum: 1, maximum: 24 },
             generationMode:
@@ -1030,10 +1045,11 @@ components:
               },
             targetShotNumber: { type: integer, minimum: 1, maximum: 24 },
             projectId: { type: string },
+            projectRevision: { type: string, maxLength: 80 },
             aspectRatio: { type: string, enum: ["16:9", "9:16", "1:1"] },
             resolution: { type: string, pattern: "^\\d{3,4}x\\d{3,4}$" },
             references: { type: array, maxItems: 32, items: { $ref: "#/components/schemas/StoryboardReferenceSummary" } },
-            availableControls: { type: array, maxItems: 64, items: { type: string, pattern: "^[a-z][a-z0-9_]{1,63}$" } },
+            availableControls: { type: array, maxItems: 0, items: { type: string } },
             audioPolicy: { $ref: "#/components/schemas/StoryboardAudioPolicy" },
             requestedCandidateCount: { type: integer, minimum: 1, maximum: 4 },
           },
@@ -1076,9 +1092,10 @@ components:
         type: object,
         additionalProperties: false,
         required:
-          [polishedMasterPrompt, continuityBible, referenceUsagePlan, assumptions, shots, provider, model, instructionBundle],
+          [contractVersion, polishedMasterPrompt, continuityBible, referenceUsagePlan, assumptions, shots, provider, model, instructionBundle],
         properties:
           {
+            contractVersion: { type: string, const: "2" },
             polishedMasterPrompt: { type: string },
             continuityBible:
               { $ref: "#/components/schemas/StoryboardContinuityBible" },
@@ -1089,7 +1106,7 @@ components:
                 type: array,
                 items: { $ref: "#/components/schemas/EnhancedStoryboardShot" },
               },
-            provider: { type: string, enum: [ollama, mock, vertex-ai, gemini] },
+            provider: { type: string, enum: [ollama, mock] },
             model: { type: string },
             instructionBundle: { $ref: "#/components/schemas/InstructionBundle" },
           },
@@ -1262,6 +1279,9 @@ components:
         audioPolicyModes:
           type: array
           items: { type: string, enum: [silent, intent_only, directed] }
+        enhancementContractVersion:
+          type: [string, "null"]
+          enum: ["2", null]
         featureStatus:
           type: object
           additionalProperties:

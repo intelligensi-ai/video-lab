@@ -218,6 +218,7 @@ function audioPolicy(form: Record<string, unknown>): StoryboardAudioPolicy {
 }
 
 function projectReferences(form: Record<string, unknown>): StoryboardReferenceSummary[] {
+  const scenes = sceneRecords(form);
   return (Array.isArray(form.projectReferences) ? form.projectReferences : [])
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
     .map((reference) => ({
@@ -226,6 +227,12 @@ function projectReferences(form: Record<string, unknown>): StoryboardReferenceSu
       label: String(reference.label ?? "Reference"),
       description: String(reference.description ?? ""),
       lockedTraits: Array.isArray(reference.lockedTraits) ? reference.lockedTraits.map(String) : [],
+      version: Math.max(1, Math.round(Number(reference.version) || 1)),
+      shotNumbers: Array.isArray(reference.sceneIds)
+        ? reference.sceneIds
+            .map((sceneId) => scenes.findIndex((scene) => String(scene.id) === String(sceneId)) + 1)
+            .filter((shotNumber) => shotNumber > 0)
+        : [],
     }));
 }
 
@@ -270,23 +277,43 @@ export function buildDirectorEnhancementRequest(
     ? selectedIndex + 1
     : undefined;
   const masterPrompt = String(form.overallGoal ?? "").trim();
-  const adjustedMaster = intent.action === "enhance_master_prompt"
-    ? `${masterPrompt}\n\nUser-requested refinement: ${message}`
-    : masterPrompt;
+  const operation = intent.action === "enhance_master_prompt"
+    ? "enhance_master_prompt"
+    : intent.action === "plan_storyboard"
+      ? "plan_storyboard"
+      : intent.action === "propose_frame_prompt_change"
+        ? intent.edge === "end" ? "revise_last_frame" : "revise_first_frame"
+        : "revise_shot";
   return {
+    contractVersion: "2",
     projectId,
-    masterPrompt: adjustedMaster,
+    operation,
+    userInstruction: message.trim().slice(0, 4_000),
+    masterPrompt,
     shotCount: requestedSceneCount,
     generationMode: scenes.some((scene) => scene.startFrameGenerationId || scene.endFrameGenerationId) ? "mixed" : "text_to_video",
     continuityBible: continuityBible(form),
     shots: scenes.map((scene, index) => ({
       shotNumber: index + 1,
       title: String(scene.title ?? `Scene ${index + 1}`),
-      prompt: index === selectedIndex && targetShotNumber
-        ? `${String(scene.prompt ?? "")}\n\nUser-requested directorial adjustment: ${message}`.trim()
-        : String(scene.prompt ?? ""),
+      narrativePurpose: String(scene.narrativePurpose ?? ""),
+      prompt: String(scene.prompt ?? ""),
+      firstFramePrompt: String(scene.firstFramePrompt ?? ""),
+      lastFramePrompt: String(scene.lastFramePrompt ?? ""),
+      continuityNotes: String(scene.continuityNotes ?? ""),
       durationSeconds: Math.min(8, Math.max(1, Math.round(Number(scene.duration) || 5))),
       generationMode: scene.startFrameGenerationId || scene.endFrameGenerationId ? "image_to_video" : "text_to_video",
+      referenceIds: Array.isArray(scene.referenceIds) ? scene.referenceIds.map(String) : [],
+      selectedControls: Array.isArray(scene.recommendedControls) ? scene.recommendedControls.map(String) : [],
+      audioIntent: asRecord(scene.audioIntent).mode
+        ? {
+            mode: String(asRecord(scene.audioIntent).mode) as StoryboardEnhancementRequest["shots"][number]["audioIntent"]["mode"],
+            reason: String(asRecord(scene.audioIntent).reason ?? ""),
+          }
+        : { mode: "silent", reason: "No scene-specific audio direction has been accepted." },
+      carryPreviousFrame: scene.carryPreviousFrame !== false,
+      firstFrameAvailable: Boolean(scene.startFrameGenerationId || scene.startFrame),
+      lastFrameAvailable: Boolean(scene.endFrameGenerationId || scene.endFrame),
     })),
     targetShotNumber,
     aspectRatio: aspectRatio(String(form.resolution ?? "1280x720")),

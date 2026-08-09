@@ -452,7 +452,16 @@ export default function LongFormStoryboardStudio({
   });
   const enhancement = useMutation({
     mutationFn: (action: EnhancementAction) =>
-      enhanceStoryboard(form, action.targetShotNumber, projectId),
+      enhanceStoryboard(
+        form,
+        action.targetShotNumber,
+        projectId,
+        action.apply === "master"
+          ? "enhance_master_prompt"
+          : action.apply === "shot"
+            ? "revise_shot"
+            : "plan_storyboard",
+      ),
     onSuccess: (result, action) => {
       setUndoForm(form);
       setForm((current) => {

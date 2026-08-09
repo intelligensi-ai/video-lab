@@ -57,7 +57,9 @@ describe("Director action boundary", () => {
     const request = buildDirectorEnhancementRequest(form(), "Make this scene more tense.", intent, "scene-2", ["start_frame", "end_frame"], "project_12345678");
     expect(request.shotCount).toBe(2);
     expect(request.targetShotNumber).toBe(2);
-    expect(request.shots[1].prompt).toContain("User-requested directorial adjustment");
+    expect(request.operation).toBe("revise_shot");
+    expect(request.userInstruction).toBe("Make this scene more tense.");
+    expect(request.shots[1].prompt).toBe("She opens the door.");
 
     const plan = buildDirectorEnhancementRequest(form(), "Turn this into five scenes.", classifyDirectorMessage("Turn this into five scenes."), "scene-1", ["start_frame"], "project_12345678");
     expect(plan.shotCount).toBe(5);

@@ -1620,174 +1620,163 @@ const continuityKeys: Array<keyof StoryboardContinuityBible> = [
 ];
 
 function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw problem(
-      400,
-      "invalid_storyboard",
-      "Storyboard enhancement input is required",
-    );
-  }
-  const source = value as Record<string, unknown>;
-  const masterPrompt =
-    typeof source.masterPrompt === "string" ? source.masterPrompt.trim() : "";
-  const shotCount = Number(source.shotCount);
-  if (masterPrompt.length < 3 || masterPrompt.length > 12_000) {
-    throw problem(
-      400,
-      "invalid_master_prompt",
-      "Master prompt must be 3-12000 characters",
-    );
-  }
-  if (
-    !Number.isInteger(shotCount) ||
-    shotCount < 1 ||
-    shotCount > MAX_STORYBOARD_SCENES
-  ) {
-    throw problem(
-      400,
-      "invalid_shot_count",
-      `Shot count must be 1-${MAX_STORYBOARD_SCENES}`,
-    );
-  }
-  const mode = ["text_to_video", "image_to_video", "mixed"].includes(
-    String(source.generationMode),
-  )
-    ? (source.generationMode as StoryboardEnhancementRequest["generationMode"])
-    : "text_to_video";
-  const rawBible =
-    source.continuityBible &&
-    typeof source.continuityBible === "object" &&
-    !Array.isArray(source.continuityBible)
-      ? (source.continuityBible as Record<string, unknown>)
-      : {};
-  const continuityBible = Object.fromEntries(
-    continuityKeys.map((key) => [
-      key,
-      typeof rawBible[key] === "string"
-        ? rawBible[key].trim().slice(0, 4_000)
-        : "",
-    ]),
-  ) as unknown as StoryboardContinuityBible;
-  if (!Array.isArray(source.shots) || source.shots.length !== shotCount) {
-    throw problem(
-      400,
-      "invalid_storyboard",
-      "The shot blueprint must match the selected shot count",
-    );
-  }
-  const shots = source.shots.map((entry, index) => {
-    const shot =
-      entry && typeof entry === "object" && !Array.isArray(entry)
-        ? (entry as Record<string, unknown>)
-        : {};
-    if (Number(shot.shotNumber) !== index + 1) {
-      throw problem(
-        400,
-        "invalid_storyboard",
-        "Shot numbers must be unique, contiguous and ordered",
-      );
+  const invalid = (code: string, detail: string): never => {
+    throw problem(400, code, detail);
+  };
+  const object = (candidate: unknown, label: string): Record<string, unknown> => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      invalid("invalid_storyboard", `${label} must be an object`);
     }
+    return candidate as Record<string, unknown>;
+  };
+  const exact = (candidate: Record<string, unknown>, keys: Set<string>, label: string) => {
+    if (Object.keys(candidate).some((key) => !keys.has(key))) {
+      invalid("invalid_storyboard", `${label} contains unexpected fields`);
+    }
+  };
+  const string = (candidate: unknown, label: string, maximum: number, allowEmpty = false): string => {
+    if (typeof candidate !== "string" || candidate !== candidate.trim() || candidate.length > maximum || (!allowEmpty && !candidate)) {
+      invalid("invalid_storyboard", `${label} is invalid`);
+    }
+    return candidate as string;
+  };
+  const stringList = (candidate: unknown, label: string, maximumItems: number, maximumLength: number): string[] => {
+    if (!Array.isArray(candidate) || candidate.length > maximumItems) invalid("invalid_storyboard", `${label} is invalid`);
+    return (candidate as unknown[]).map((item) => string(item, label, maximumLength));
+  };
+  const source = object(value, "Storyboard enhancement input");
+  exact(source, new Set([
+    "contractVersion", "projectId", "projectRevision", "operation", "userInstruction", "masterPrompt", "shotCount",
+    "generationMode", "continuityBible", "shots", "targetShotNumber", "aspectRatio", "resolution", "references",
+    "availableControls", "audioPolicy", "requestedCandidateCount",
+  ]), "Storyboard enhancement input");
+  if (source.contractVersion !== "2") invalid("incompatible_runtime", "Storyboard enhancement contract version 2 is required");
+  const operations = new Set(["enhance_master_prompt", "plan_storyboard", "revise_shot", "revise_first_frame", "revise_last_frame"]);
+  if (!operations.has(String(source.operation))) invalid("invalid_storyboard", "Storyboard enhancement operation is invalid");
+  const operation = source.operation as StoryboardEnhancementRequest["operation"];
+  const masterPrompt = string(source.masterPrompt, "Master prompt", 12_000);
+  if (masterPrompt.length < 3) invalid("invalid_master_prompt", "Master prompt must be at least 3 characters");
+  const shotCount = source.shotCount;
+  if (!Number.isInteger(shotCount) || Number(shotCount) < 1 || Number(shotCount) > MAX_STORYBOARD_SCENES) {
+    invalid("invalid_shot_count", `Shot count must be 1-${MAX_STORYBOARD_SCENES}`);
+  }
+  const generationModes = new Set(["text_to_video", "image_to_video", "mixed"]);
+  if (!generationModes.has(String(source.generationMode))) invalid("invalid_storyboard", "Generation mode is invalid");
+  const rawBible = object(source.continuityBible, "Continuity bible");
+  exact(rawBible, new Set(continuityKeys), "Continuity bible");
+  const continuityBible = Object.fromEntries(continuityKeys.map((key) => [key, string(rawBible[key], `Continuity ${key}`, 4_000, true)])) as unknown as StoryboardContinuityBible;
+  const rawTarget = source.targetShotNumber;
+  const targetShotNumber = rawTarget === undefined ? undefined : rawTarget as number;
+  if (targetShotNumber !== undefined && (!Number.isInteger(targetShotNumber) || targetShotNumber < 1 || targetShotNumber > Number(shotCount))) {
+    invalid("invalid_target_shot", "Target shot is outside the storyboard");
+  }
+  const targeted = operation.startsWith("revise_");
+  if (targeted !== (targetShotNumber !== undefined)) invalid("invalid_target_shot", "The selected operation and target shot do not match");
+  if (!Array.isArray(source.shots) || source.shots.length !== Number(shotCount)) invalid("invalid_storyboard", "The shot blueprint must match the selected shot count");
+  const rawShots = source.shots as unknown[];
+  const allowedControls = new Set(directorControls());
+  if (!Array.isArray(source.availableControls) || source.availableControls.length !== 0) {
+    invalid("invalid_storyboard", "Available controls are server-owned and must not be supplied by the browser");
+  }
+  const audioIntentModes = new Set(["silent", "dialogue", "ambience", "sound_effects", "music", "mixed"]);
+  const shots = rawShots.map((entry, index) => {
+    const shot = object(entry, `Shot ${index + 1}`);
+    exact(shot, new Set([
+      "shotNumber", "title", "narrativePurpose", "prompt", "firstFramePrompt", "lastFramePrompt", "continuityNotes",
+      "durationSeconds", "generationMode", "referenceIds", "selectedControls", "audioIntent", "carryPreviousFrame",
+      "firstFrameAvailable", "lastFrameAvailable",
+    ]), `Shot ${index + 1}`);
+    if (shot.shotNumber !== index + 1) invalid("invalid_storyboard", "Shot numbers must be unique, contiguous and ordered");
+    if (!Number.isInteger(shot.durationSeconds) || Number(shot.durationSeconds) < 1 || Number(shot.durationSeconds) > 8) invalid("invalid_storyboard", `Shot ${index + 1} duration is invalid`);
+    if (!generationModes.has(String(shot.generationMode))) invalid("invalid_storyboard", `Shot ${index + 1} generation mode is invalid`);
+    const selectedControls = stringList(shot.selectedControls, `Shot ${index + 1} controls`, 16, 64);
+    if (selectedControls.some((control) => !allowedControls.has(control))) invalid("invalid_storyboard", `Shot ${index + 1} contains an unsupported control`);
+    const rawIntent = object(shot.audioIntent, `Shot ${index + 1} audio intent`);
+    exact(rawIntent, new Set(["mode", "reason"]), `Shot ${index + 1} audio intent`);
+    if (!audioIntentModes.has(String(rawIntent.mode))) invalid("invalid_storyboard", `Shot ${index + 1} audio intent is invalid`);
+    if (typeof shot.carryPreviousFrame !== "boolean" || typeof shot.firstFrameAvailable !== "boolean" || typeof shot.lastFrameAvailable !== "boolean") invalid("invalid_storyboard", `Shot ${index + 1} frame state is invalid`);
     return {
       shotNumber: index + 1,
-      title:
-        typeof shot.title === "string"
-          ? shot.title.trim().slice(0, 160)
-          : `Shot ${index + 1}`,
-      prompt:
-        typeof shot.prompt === "string"
-          ? shot.prompt.trim().slice(0, 12_000)
-          : "",
-      durationSeconds: Math.min(
-        8,
-        Math.max(1, Math.round(Number(shot.durationSeconds) || 5)),
-      ),
-      generationMode: ["text_to_video", "image_to_video", "mixed"].includes(
-        String(shot.generationMode),
-      )
-        ? (shot.generationMode as StoryboardEnhancementRequest["generationMode"])
-        : mode,
+      title: string(shot.title, `Shot ${index + 1} title`, 160, true),
+      narrativePurpose: string(shot.narrativePurpose, `Shot ${index + 1} narrative purpose`, 1_000, true),
+      prompt: string(shot.prompt, `Shot ${index + 1} prompt`, 12_000, true),
+      firstFramePrompt: string(shot.firstFramePrompt, `Shot ${index + 1} first-frame prompt`, 6_000, true),
+      lastFramePrompt: string(shot.lastFramePrompt, `Shot ${index + 1} last-frame prompt`, 6_000, true),
+      continuityNotes: string(shot.continuityNotes, `Shot ${index + 1} continuity notes`, 2_000, true),
+      durationSeconds: shot.durationSeconds as number,
+      generationMode: shot.generationMode as StoryboardEnhancementRequest["generationMode"],
+      referenceIds: stringList(shot.referenceIds, `Shot ${index + 1} reference ids`, 16, 64),
+      selectedControls,
+      audioIntent: {
+        mode: rawIntent.mode as StoryboardEnhancementRequest["shots"][number]["audioIntent"]["mode"],
+        reason: string(rawIntent.reason, `Shot ${index + 1} audio reason`, 1_000, true),
+      },
+      carryPreviousFrame: shot.carryPreviousFrame as boolean,
+      firstFrameAvailable: shot.firstFrameAvailable as boolean,
+      lastFrameAvailable: shot.lastFrameAvailable as boolean,
     };
   });
-  const rawTarget = source.targetShotNumber;
-  const targetShotNumber =
-    rawTarget === undefined ? undefined : Number(rawTarget);
-  if (
-    targetShotNumber !== undefined &&
-    (!Number.isInteger(targetShotNumber) ||
-      targetShotNumber < 1 ||
-      targetShotNumber > shotCount)
-  ) {
-    throw problem(
-      400,
-      "invalid_target_shot",
-      "Target shot is outside the storyboard",
-    );
-  }
-  const projectId = typeof source.projectId === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(source.projectId)
-    ? source.projectId
-    : undefined;
-  const aspectRatio = ["16:9", "9:16", "1:1"].includes(String(source.aspectRatio))
-    ? source.aspectRatio as StoryboardEnhancementRequest["aspectRatio"]
-    : "16:9";
-  const resolution = typeof source.resolution === "string" && /^\d{3,4}x\d{3,4}$/.test(source.resolution)
-    ? source.resolution
-    : "1280x720";
+  const projectId = source.projectId === undefined ? undefined : string(source.projectId, "Project id", 64);
+  if (projectId && !/^[A-Za-z0-9_-]{8,64}$/.test(projectId)) invalid("invalid_storyboard", "Project id is invalid");
+  const projectRevision = source.projectRevision === undefined ? undefined : string(source.projectRevision, "Project revision", 80);
+  if (source.userInstruction !== undefined) string(source.userInstruction, "User instruction", 4_000);
+  if (!["16:9", "9:16", "1:1"].includes(String(source.aspectRatio))) invalid("invalid_storyboard", "Aspect ratio is invalid");
+  const resolution = string(source.resolution, "Resolution", 9);
+  if (!/^\d{3,4}x\d{3,4}$/.test(resolution)) invalid("invalid_storyboard", "Resolution is invalid");
   const referenceTypes = new Set(["character", "location", "product", "style", "voice", "motion"]);
+  if (!Array.isArray(source.references) || source.references.length > 32) invalid("invalid_reference", "Project references are invalid");
+  const rawReferences = source.references as unknown[];
   const seenReferences = new Set<string>();
-  const references: StoryboardReferenceSummary[] = Array.isArray(source.references)
-    ? source.references.slice(0, 32).map((entry) => {
-        if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw problem(400, "invalid_reference", "Project reference is invalid");
-        const reference = entry as Record<string, unknown>;
-        const id = typeof reference.id === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(reference.id) ? reference.id : "";
-        const type = String(reference.type);
-        if (!id || seenReferences.has(id) || !referenceTypes.has(type)) throw problem(400, "invalid_reference", "Project reference is invalid");
-        seenReferences.add(id);
-        return {
-          id,
-          type: type as StoryboardReferenceSummary["type"],
-          label: String(reference.label ?? type).trim().slice(0, 120),
-          description: String(reference.description ?? "").trim().slice(0, 2_000),
-          lockedTraits: Array.isArray(reference.lockedTraits)
-            ? reference.lockedTraits.slice(0, 24).map((trait) => String(trait).trim().slice(0, 240)).filter(Boolean)
-            : [],
-        };
-      })
-    : [];
-  if (references.length && !projectId) throw problem(400, "invalid_reference", "Project references require a valid project");
-  const availableControls = Array.isArray(source.availableControls)
-    ? source.availableControls.slice(0, 64).map(String).filter((control) => /^[a-z][a-z0-9_]{1,63}$/.test(control))
-    : [];
-  const rawAudioPolicy = source.audioPolicy && typeof source.audioPolicy === "object" && !Array.isArray(source.audioPolicy)
-    ? source.audioPolicy as Record<string, unknown>
-    : {};
-  const audioMode = ["silent", "intent_only", "directed"].includes(String(rawAudioPolicy.mode))
-    ? rawAudioPolicy.mode as StoryboardAudioPolicy["mode"]
-    : "intent_only";
-  const audioPolicy: StoryboardAudioPolicy = {
-    mode: audioMode,
-    dialogue: ["off", "prompted_only", "on"].includes(String(rawAudioPolicy.dialogue)) ? rawAudioPolicy.dialogue as StoryboardAudioPolicy["dialogue"] : audioMode === "silent" ? "off" : "prompted_only",
-    soundEffects: ["off", "intent_only", "on"].includes(String(rawAudioPolicy.soundEffects)) ? rawAudioPolicy.soundEffects as StoryboardAudioPolicy["soundEffects"] : audioMode === "silent" ? "off" : "intent_only",
-    ambience: ["off", "intent_only", "on"].includes(String(rawAudioPolicy.ambience)) ? rawAudioPolicy.ambience as StoryboardAudioPolicy["ambience"] : audioMode === "silent" ? "off" : "intent_only",
-    music: ["off", "prompted_or_unambiguous_performance", "on"].includes(String(rawAudioPolicy.music)) ? rawAudioPolicy.music as StoryboardAudioPolicy["music"] : audioMode === "silent" ? "off" : "prompted_or_unambiguous_performance",
-    preserveSourceAudio: audioMode !== "silent" && rawAudioPolicy.preserveSourceAudio === true,
-  };
-  const requestedCandidateCount = Number.isInteger(Number(source.requestedCandidateCount))
-    ? Math.min(4, Math.max(1, Number(source.requestedCandidateCount)))
-    : 3;
+  const references: StoryboardReferenceSummary[] = rawReferences.map((entry, index) => {
+    const reference = object(entry, `Reference ${index + 1}`);
+    exact(reference, new Set(["id", "type", "label", "description", "lockedTraits", "version", "shotNumbers"]), `Reference ${index + 1}`);
+    const id = string(reference.id, "Reference id", 64);
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(id) || seenReferences.has(id) || !referenceTypes.has(String(reference.type))) invalid("invalid_reference", "Project reference is invalid");
+    if (!Number.isInteger(reference.version) || Number(reference.version) < 1) invalid("invalid_reference", "Project reference version is invalid");
+    if (!Array.isArray(reference.shotNumbers) || reference.shotNumbers.some((number) => !Number.isInteger(number) || Number(number) < 1 || Number(number) > Number(shotCount))) invalid("invalid_reference", "Project reference scope is invalid");
+    seenReferences.add(id);
+    return {
+      id,
+      type: reference.type as StoryboardReferenceSummary["type"],
+      label: string(reference.label, "Reference label", 120),
+      description: string(reference.description, "Reference description", 2_000, true),
+      lockedTraits: stringList(reference.lockedTraits, "Reference locked traits", 24, 240),
+      version: reference.version as number,
+      shotNumbers: [...new Set(reference.shotNumbers as number[])],
+    };
+  });
+  if (references.length && !projectId) invalid("invalid_reference", "Project references require a valid project");
+  const referenceIds = new Set(references.map((reference) => reference.id));
+  if (shots.some((shot) => shot.referenceIds.some((id) => !referenceIds.has(id)))) invalid("invalid_reference", "A shot contains an unknown project reference");
+  const rawAudioPolicy = object(source.audioPolicy, "Audio policy");
+  exact(rawAudioPolicy, new Set(["mode", "dialogue", "soundEffects", "ambience", "music", "preserveSourceAudio"]), "Audio policy");
+  if (!["silent", "intent_only", "directed"].includes(String(rawAudioPolicy.mode))
+    || !["off", "prompted_only", "on"].includes(String(rawAudioPolicy.dialogue))
+    || !["off", "intent_only", "on"].includes(String(rawAudioPolicy.soundEffects))
+    || !["off", "intent_only", "on"].includes(String(rawAudioPolicy.ambience))
+    || !["off", "prompted_or_unambiguous_performance", "on"].includes(String(rawAudioPolicy.music))
+    || typeof rawAudioPolicy.preserveSourceAudio !== "boolean") invalid("invalid_storyboard", "Audio policy is invalid");
+  const audioPolicy = rawAudioPolicy as unknown as StoryboardAudioPolicy;
+  if (audioPolicy.mode === "silent" && (audioPolicy.dialogue !== "off" || audioPolicy.soundEffects !== "off" || audioPolicy.ambience !== "off" || audioPolicy.music !== "off" || audioPolicy.preserveSourceAudio)) invalid("invalid_storyboard", "Silent audio policy contains enabled audio");
+  if (!Number.isInteger(source.requestedCandidateCount) || Number(source.requestedCandidateCount) < 1 || Number(source.requestedCandidateCount) > 4) invalid("invalid_storyboard", "Candidate count is invalid");
   return {
+    contractVersion: "2",
     projectId,
+    projectRevision,
+    operation,
+    ...(source.userInstruction === undefined ? {} : { userInstruction: source.userInstruction as string }),
     masterPrompt,
-    shotCount,
-    generationMode: mode,
+    shotCount: shotCount as number,
+    generationMode: source.generationMode as StoryboardEnhancementRequest["generationMode"],
     continuityBible,
     shots,
     targetShotNumber,
-    aspectRatio,
+    aspectRatio: source.aspectRatio as StoryboardEnhancementRequest["aspectRatio"],
     resolution,
     references,
-    availableControls,
+    availableControls: [...allowedControls],
     audioPolicy,
-    requestedCandidateCount,
+    requestedCandidateCount: source.requestedCandidateCount as number,
   };
 }
 
@@ -2649,12 +2638,20 @@ app.post(
   rateLimit({ name: "storyboard-enhance", limit: 12 }),
   async (req, res, next) => {
     try {
+      if (Buffer.byteLength(JSON.stringify(req.body ?? {}), "utf8") > 512 * 1024) {
+        throw problem(413, "storyboard_enhancement_request_too_large", "Storyboard enhancement input exceeds the 512 KiB text-only limit");
+      }
       const request = enhancementRequest(req.body);
-      if (request.references.length) {
+      res.setHeader("Cache-Control", "private, no-store");
+      if (request.projectId) {
         const project = await findStoryboardProject(
           res.locals.principal.uid,
           String(request.projectId),
         );
+        if (!project) throw problem(404, "project_not_found", "Storyboard project not found");
+        if (request.projectRevision && request.projectRevision !== project.updatedAt) {
+          throw problem(409, "stale_project_revision", "The project changed before enhancement started; refresh and try again");
+        }
         const storedReferences = Array.isArray(project?.form.projectReferences)
           ? project.form.projectReferences as Array<Record<string, unknown>>
           : [];

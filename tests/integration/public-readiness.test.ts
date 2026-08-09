@@ -51,6 +51,42 @@ const projectForm = (sceneCount = 2) => ({
   })),
 });
 
+const enhancementBody = (masterPrompt: string, shotCount: number, targetShotNumber?: number) => ({
+  contractVersion: "2",
+  operation: targetShotNumber ? "revise_shot" : "plan_storyboard",
+  masterPrompt,
+  shotCount,
+  generationMode: "text_to_video",
+  continuityBible: emptyBible,
+  shots: Array.from({ length: shotCount }, (_, index) => ({
+    shotNumber: index + 1,
+    title: `Shot ${index + 1}`,
+    narrativePurpose: "",
+    prompt: `Direction ${index + 1}`,
+    firstFramePrompt: "",
+    lastFramePrompt: "",
+    continuityNotes: "",
+    durationSeconds: 5,
+    generationMode: "text_to_video",
+    referenceIds: [],
+    selectedControls: [],
+    audioIntent: { mode: "silent", reason: "" },
+    carryPreviousFrame: index > 0,
+    firstFrameAvailable: false,
+    lastFrameAvailable: false,
+  })),
+  ...(targetShotNumber ? { targetShotNumber } : {}),
+  aspectRatio: "16:9",
+  resolution: "1280x720",
+  references: [],
+  availableControls: [],
+  audioPolicy: {
+    mode: "intent_only", dialogue: "prompted_only", soundEffects: "intent_only", ambience: "intent_only",
+    music: "prompted_or_unambiguous_performance", preserveSourceAudio: false,
+  },
+  requestedCandidateCount: 3,
+});
+
 describe("public runtime readiness boundaries", () => {
   it("bounds distributed dispatcher concurrency", () => {
     expect(workerConcurrencyLimit({ VIDEO_LAB_WORKER_CONCURRENCY: "2" } as NodeJS.ProcessEnv)).toBe(2);
@@ -70,19 +106,7 @@ describe("public runtime readiness boundaries", () => {
     const response = await request(app)
       .post("/v1/storyboards/enhance")
       .set("authorization", "Bearer enhancer-user")
-      .send({
-        masterPrompt: "A founder follows a teal signal through rainy London.",
-        shotCount: 2,
-        generationMode: "text_to_video",
-        continuityBible: emptyBible,
-        shots: [1, 2].map((shotNumber) => ({
-          shotNumber,
-          title: `Shot ${shotNumber}`,
-          prompt: "",
-          durationSeconds: 5,
-          generationMode: "text_to_video",
-        })),
-      })
+      .send(enhancementBody("A founder follows a teal signal through rainy London.", 2))
       .expect(200);
     expect(response.body.provider).toBe("mock");
     expect(
@@ -102,20 +126,7 @@ describe("public runtime readiness boundaries", () => {
     const response = await request(app)
       .post("/v1/storyboards/enhance")
       .set("authorization", "Bearer targeted-enhancer-user")
-      .send({
-        masterPrompt: "An intimate two-shot conversation in a quiet workshop.",
-        shotCount: 3,
-        generationMode: "text_to_video",
-        continuityBible: emptyBible,
-        shots: [1, 2, 3].map((shotNumber) => ({
-          shotNumber,
-          title: `Shot ${shotNumber}`,
-          prompt: `Direction ${shotNumber}`,
-          durationSeconds: 5,
-          generationMode: "text_to_video",
-        })),
-        targetShotNumber: 2,
-      })
+      .send(enhancementBody("An intimate two-shot conversation in a quiet workshop.", 3, 2))
       .expect(200);
     expect(response.body.shots).toHaveLength(1);
     expect(response.body.shots[0].shotNumber).toBe(2);
@@ -125,19 +136,7 @@ describe("public runtime readiness boundaries", () => {
     const response = await request(app)
       .post("/v1/storyboards/enhance")
       .set("authorization", "Bearer long-story-owner")
-      .send({
-        masterPrompt: "A generational science-fiction journey across one city.",
-        shotCount: 24,
-        generationMode: "text_to_video",
-        continuityBible: emptyBible,
-        shots: Array.from({ length: 24 }, (_, index) => ({
-          shotNumber: index + 1,
-          title: `Shot ${index + 1}`,
-          prompt: `Story beat ${index + 1}`,
-          durationSeconds: 4,
-          generationMode: "text_to_video",
-        })),
-      })
+      .send(enhancementBody("A generational science-fiction journey across one city.", 24))
       .expect(200);
     expect(response.body.shots).toHaveLength(24);
     expect(response.body.shots[23].shotNumber).toBe(24);
