@@ -2992,7 +2992,11 @@ app.post(
       }
       if (
         error instanceof Error &&
-        error.message === "storyboard_enhancement_failed"
+        [
+          "storyboard_enhancement_failed",
+          "storyboard_enhancement_request_rejected",
+          "storyboard_enhancement_contract_incompatible",
+        ].includes(error.message)
       ) {
         next(
           problem(

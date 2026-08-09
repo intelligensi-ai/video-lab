@@ -403,6 +403,10 @@ export class DeployStudioStoryboardEnhancerClient {
       throw new Error(
         response.status === 413
           ? "storyboard_context_budget_exceeded"
+          : response.status === 400
+          ? "storyboard_enhancement_request_rejected"
+          : response.status === 404 || response.status === 409
+          ? "storyboard_enhancement_contract_incompatible"
           : response.status === 503
           ? "storyboard_enhancer_unavailable"
           : "storyboard_enhancement_failed",
