@@ -615,10 +615,20 @@ export interface components {
         StoryboardEnhancementShotInput: {
             shotNumber: number;
             title: string;
+            narrativePurpose: string;
             prompt: string;
+            firstFramePrompt: string;
+            lastFramePrompt: string;
+            continuityNotes: string;
             durationSeconds: number;
             /** @enum {string} */
             generationMode: "text_to_video" | "image_to_video" | "mixed";
+            referenceIds: string[];
+            selectedControls: string[];
+            audioIntent: components["schemas"]["StoryboardAudioIntent"];
+            carryPreviousFrame: boolean;
+            firstFrameAvailable: boolean;
+            lastFrameAvailable: boolean;
         };
         StoryboardReferenceSummary: {
             id: string;
@@ -627,6 +637,8 @@ export interface components {
             label: string;
             description: string;
             lockedTraits: string[];
+            version: number;
+            shotNumbers: number[];
         };
         StoryboardAudioPolicy: {
             /** @enum {string} */
@@ -673,6 +685,11 @@ export interface components {
             }[];
         };
         StoryboardEnhancementRequest: {
+            /** @constant */
+            contractVersion: "2";
+            /** @enum {string} */
+            operation: "enhance_master_prompt" | "plan_storyboard" | "revise_shot" | "revise_first_frame" | "revise_last_frame";
+            userInstruction?: string;
             masterPrompt: string;
             shotCount: number;
             /** @enum {string} */
@@ -681,6 +698,7 @@ export interface components {
             shots: components["schemas"]["StoryboardEnhancementShotInput"][];
             targetShotNumber?: number;
             projectId?: string;
+            projectRevision?: string;
             /** @enum {string} */
             aspectRatio: "16:9" | "9:16" | "1:1";
             resolution: string;
@@ -703,15 +721,32 @@ export interface components {
             candidateVariations: string[];
         };
         StoryboardEnhancementResponse: {
+            /** @constant */
+            contractVersion: "2";
             polishedMasterPrompt: string;
             continuityBible: components["schemas"]["StoryboardContinuityBible"];
             referenceUsagePlan: components["schemas"]["StoryboardReferenceUsage"][];
             assumptions: string[];
             shots: components["schemas"]["EnhancedStoryboardShot"][];
+            visualReferenceAnalyses: components["schemas"]["StoryboardVisualReferenceAnalysis"][];
+            vision: components["schemas"]["StoryboardVisionSummary"];
             /** @enum {string} */
-            provider: "ollama" | "mock" | "vertex-ai" | "gemini";
+            provider: "ollama" | "mock";
             model: string;
             instructionBundle: components["schemas"]["InstructionBundle"];
+        };
+        StoryboardVisualReferenceAnalysis: {
+            referenceId: string;
+            referenceVersion: number;
+            observedTraits: string[];
+            continuityGuidance: string;
+            declaredVisibleConflicts: string[];
+        };
+        StoryboardVisionSummary: {
+            /** @enum {string} */
+            mode: "planning_only";
+            attachedReferenceIds: string[];
+            textOnlyReferenceIds: string[];
         };
         /** @enum {string} */
         DirectorActionType: "answer_project_question" | "suggest_creative_direction" | "enhance_master_prompt" | "plan_storyboard" | "propose_scene_change" | "propose_frame_prompt_change" | "restore_original_prompt" | "undo_prompt_change" | "assign_project_reference" | "remove_project_reference" | "set_audio_policy" | "generate_first_frame" | "generate_last_frame" | "regenerate_frame" | "restore_frame_version" | "generate_scene_candidates" | "accept_candidate" | "restore_candidate" | "generate_scene_video" | "generate_unfinished_scenes" | "cancel_job" | "retry_job" | "explain_failure" | "prepare_finishing" | "assemble_project" | "export_project";
@@ -792,6 +827,8 @@ export interface components {
             styleReference: boolean;
             subjectReference: boolean;
             audioPolicyModes?: ("silent" | "intent_only" | "directed")[];
+            /** @enum {string|null} */
+            enhancementContractVersion?: "2" | null;
             featureStatus?: {
                 [key: string]: "supported" | "partial" | "unavailable" | "client_managed";
             };

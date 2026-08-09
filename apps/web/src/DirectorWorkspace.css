@@ -610,6 +610,35 @@ body:has(.vlx-shell) > #root > .site-nav {
   color: var(--ink);
   padding: 0.65rem;
 }
+.vlx-reference-evidence {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.65rem 0;
+  padding: 0.75rem;
+  border: 1px solid rgba(38, 190, 203, 0.28);
+  border-radius: 0.8rem;
+  background: rgba(38, 190, 203, 0.07);
+}
+.vlx-reference-evidence > b {
+  color: #087f89;
+  font-size: 0.7rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.vlx-reference-evidence > p,
+.vlx-reference-evidence > small,
+.vlx-reference-evidence > em {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.vlx-reference-evidence > em,
+.vlx-reference-evidence.stale > b {
+  color: #9d4b28;
+}
+.vlx-reference-evidence.muted {
+  color: var(--muted);
+}
 .vlx-reference-hero {
   height: 128px;
   border-radius: 11px;

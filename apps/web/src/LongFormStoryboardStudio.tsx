@@ -4,6 +4,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
 import type {
   Generation,
+  StoryboardEnhancementResponse,
   StoryboardProjectSummary,
 } from "@video-lab/contracts";
 import {
@@ -387,6 +388,25 @@ type EnhancementAction = {
   apply: "all" | "master" | "shot";
   targetShotNumber?: number;
 };
+
+function referencePlanningEvidence(
+  result: StoryboardEnhancementResponse,
+  form: LongFormGenerationPayload,
+) {
+  return {
+    visualReferenceAnalyses: result.visualReferenceAnalyses,
+    vision: result.vision,
+    referenceStates: form.projectReferences.map((reference) => ({
+      referenceId: reference.id,
+      version: reference.version,
+      shotNumbers: reference.sceneIds
+        .map((sceneId) => form.scenes.findIndex((scene) => scene.id === sceneId) + 1)
+        .filter((shotNumber) => shotNumber > 0),
+    })),
+    instructionBundle: result.instructionBundle,
+    generatedAt: new Date().toISOString(),
+  };
+}
 type FrameState = {
   status: "idle" | "queued" | "generating" | "failed";
   error?: string;
@@ -452,7 +472,16 @@ export default function LongFormStoryboardStudio({
   });
   const enhancement = useMutation({
     mutationFn: (action: EnhancementAction) =>
-      enhanceStoryboard(form, action.targetShotNumber, projectId),
+      enhanceStoryboard(
+        form,
+        action.targetShotNumber,
+        projectId,
+        action.apply === "master"
+          ? "enhance_master_prompt"
+          : action.apply === "shot"
+            ? "revise_shot"
+            : "plan_storyboard",
+      ),
     onSuccess: (result, action) => {
       setUndoForm(form);
       setForm((current) => {
@@ -466,6 +495,7 @@ export default function LongFormStoryboardStudio({
               continuityBible: result.continuityBible,
               directorAssumptions: result.assumptions,
               instructionBundle: result.instructionBundle,
+              referencePlanningEvidence: referencePlanningEvidence(result, current),
             },
             "The film brief or continuity bible changed after this clip was accepted. Render this scene again before assembly.",
           );
@@ -474,6 +504,7 @@ export default function LongFormStoryboardStudio({
           const enhanced = result.shots[0];
           return {
             ...current,
+            referencePlanningEvidence: referencePlanningEvidence(result, current),
             scenes: current.scenes.map((scene, index) =>
               index + 1 === action.targetShotNumber
                 ? {
@@ -508,6 +539,7 @@ export default function LongFormStoryboardStudio({
           continuityBible: result.continuityBible,
           directorAssumptions: result.assumptions,
           instructionBundle: result.instructionBundle,
+          referencePlanningEvidence: referencePlanningEvidence(result, current),
           scenes: current.scenes.map((scene, index) => {
             const enhanced = result.shots[index];
             return {
@@ -1197,13 +1229,12 @@ export default function LongFormStoryboardStudio({
               </div>
             )}
           </section>
-          {!isClassic && (
-            <ProjectReferencePanel
-              references={form.projectReferences}
-              sceneIds={form.scenes.map((scene) => scene.id)}
-              onChange={(projectReferences) => setForm((current) => ({ ...current, projectReferences }))}
-            />
-          )}
+          <ProjectReferencePanel
+            references={form.projectReferences}
+            sceneIds={form.scenes.map((scene) => scene.id)}
+            evidence={form.referencePlanningEvidence}
+            onChange={(projectReferences) => setForm((current) => ({ ...current, projectReferences }))}
+          />
           <section className="lf-scenes">
             <div className="lf-section-head">
               <div>
@@ -1263,6 +1294,7 @@ export default function LongFormStoryboardStudio({
                 onProjectReferencesChange={(projectReferences) =>
                   setForm((current) => ({ ...current, projectReferences }))
                 }
+                referencePlanningEvidence={form.referencePlanningEvidence}
               />
             ))}
           </section>
@@ -1922,10 +1954,12 @@ function Range({
 function ProjectReferencePanel({
   references,
   sceneIds,
+  evidence,
   onChange,
 }: {
   references: StoryboardProjectReference[];
   sceneIds: string[];
+  evidence: LongFormGenerationPayload["referencePlanningEvidence"];
   onChange: (references: StoryboardProjectReference[]) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -2014,6 +2048,7 @@ function ProjectReferencePanel({
               <article key={reference.id} className="lf-reference-card has-file">
                 <ProjectReferencePreview reference={reference} />
                 <strong>{reference.label}</strong>
+                <ReferencePlanningStatus reference={reference} sceneIds={sceneIds} evidence={evidence} />
                 <small>{reference.type} Â· version {reference.version}</small>
                 {reference.assetVersionIds.length > 1 && (
                   <select
@@ -2049,6 +2084,59 @@ function ProjectReferencePanel({
         </div>
       )}
     </section>
+  );
+}
+
+function ReferencePlanningStatus({
+  reference,
+  sceneIds,
+  evidence,
+}: {
+  reference: StoryboardProjectReference;
+  sceneIds: string[];
+  evidence: LongFormGenerationPayload["referencePlanningEvidence"];
+}) {
+  if (!evidence) return <p className="lf-reference-evidence muted">Not analysed by the Director yet.</p>;
+  const state = evidence.referenceStates.find((item) => item.referenceId === reference.id);
+  const shotNumbers = reference.sceneIds
+    .map((sceneId) => sceneIds.indexOf(sceneId) + 1)
+    .filter((shotNumber) => shotNumber > 0);
+  const stale =
+    !state ||
+    state.version !== reference.version ||
+    JSON.stringify(state.shotNumbers) !== JSON.stringify(shotNumbers);
+  const analysis = evidence.visualReferenceAnalyses.find(
+    (item) => item.referenceId === reference.id,
+  );
+  const visuallyAttached = evidence.vision.attachedReferenceIds.includes(reference.id);
+  const textOnly = evidence.vision.textOnlyReferenceIds.includes(reference.id);
+  const status = stale
+    ? "Stale analysis"
+    : visuallyAttached
+      ? "Visual used"
+      : textOnly
+        ? "Text only"
+        : "Not used";
+  return (
+    <div className={`lf-reference-evidence ${stale ? "stale" : ""}`}>
+      <b>{status}</b>
+      {stale && (
+        <small>
+          The reference version or scene scope changed. Ask the Director again to refresh this evidence.
+        </small>
+      )}
+      {!stale && analysis && (
+        <>
+          {analysis.observedTraits.length > 0 && (
+            <p>{analysis.observedTraits.join(" · ")}</p>
+          )}
+          <small>{analysis.continuityGuidance}</small>
+          {analysis.declaredVisibleConflicts.map((conflict) => (
+            <em key={conflict}>{conflict}</em>
+          ))}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -2230,6 +2318,7 @@ function SceneCard({
   projectReferences,
   sceneIds,
   onProjectReferencesChange,
+  referencePlanningEvidence,
 }: {
   scene: StoryboardScenePayload;
   index: number;
@@ -2252,6 +2341,7 @@ function SceneCard({
   projectReferences?: StoryboardProjectReference[];
   sceneIds?: string[];
   onProjectReferencesChange?: (references: StoryboardProjectReference[]) => void;
+  referencePlanningEvidence: LongFormGenerationPayload["referencePlanningEvidence"];
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState(index === 0);
@@ -2585,6 +2675,7 @@ function SceneCard({
         <ProjectReferencePanel
           references={projectReferences ?? []}
           sceneIds={sceneIds ?? []}
+          evidence={referencePlanningEvidence}
           onChange={(references) => onProjectReferencesChange?.(references)}
         />
       )}

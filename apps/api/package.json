@@ -20,6 +20,7 @@
     "firebase-admin": "13.10.0",
     "firebase-functions": "7.2.5",
     "nanoid": "6.0.0",
+    "sharp": "0.35.3",
     "swagger-ui-express": "5.0.1",
     "yaml": "2.9.0"
   },

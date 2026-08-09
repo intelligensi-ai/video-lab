@@ -17,41 +17,25 @@ test("storyboard exposes editable Gemma and frame controls", async ({
   const brief = page.getByLabel("Overall artistic goal");
   await brief.fill("A musician follows a blue light through a rain-dark city.");
   await expect(
-    page.getByRole("button", { name: /Enhance and plan 2 shots/ }),
+    page.getByRole("button", { name: "Polish brief" }),
   ).toBeEnabled();
-  await expect(
-    page.getByText(/Suggestions come from the local Gemma enhancer/),
-  ).toBeVisible();
   await page.getByText("First frame / last frame", { exact: true }).click();
-  await page.getByRole("button", { name: "Expand scene 2" }).click();
-  await page.getByText("First frame / last frame", { exact: true }).nth(1).click();
   const firstFrameButtons = page.getByRole("button", {
     name: "Generate first frame",
   });
   const lastFrameButtons = page.getByRole("button", {
     name: "Generate last frame",
   });
-  await expect(firstFrameButtons).toHaveCount(2);
+  await expect(firstFrameButtons).toHaveCount(1);
   await expect(firstFrameButtons.first()).toBeVisible();
-  await expect(lastFrameButtons).toHaveCount(2);
+  await expect(lastFrameButtons).toHaveCount(1);
   await expect(lastFrameButtons.first()).toBeVisible();
-  await page.getByRole("button", { name: /Add scene/ }).click();
-  await expect(
-    page.getByRole("button", { name: /Enhance and plan 3 shots/ }),
-  ).toBeVisible();
-  await expect(page.getByText("3/24")).toBeVisible();
-  await page.getByRole("button", { name: "New project" }).first().click();
-  await expect(page.getByLabel("Open storyboard project")).toBeVisible();
-  await expect(page.getByLabel("Project title")).toBeEditable();
-  await page.getByRole("button", { name: "Close project dialog" }).click();
   await expect(
     page.getByRole("button", { name: /Project references/ }),
   ).toBeVisible();
-  await expect(page.getByLabel("Sound behaviour")).toHaveValue("intent_only");
-  await expect(page.getByLabel("Drafts per scene")).toHaveValue("3");
   await expect(
-    page.getByRole("button", { name: "Assemble accepted clips" }),
-  ).toBeDisabled();
+    page.getByRole("link", { name: /Advanced/ }),
+  ).toHaveAttribute("href", "/storyboard/advanced");
 });
 
 test("mobile storyboard has no page-level horizontal overflow", async ({
@@ -101,7 +85,7 @@ test("Director workspace uses real project state and reviewable proposals", asyn
   await expect(
     page
       .locator(".vlx-diff p")
-      .filter({ hasText: "User-requested directorial adjustment" }),
+      .filter({ hasText: "Directed revision for scene 1" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Discard" }).click();
   await expect(page.getByText("Discarded", { exact: true })).toBeVisible();

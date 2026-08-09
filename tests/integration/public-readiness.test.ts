@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import request from "supertest";
 import { app, processOne, workerConcurrencyLimit } from "../../apps/api/src/index.js";
 
+const onePixelPng = () => Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
+
 const emptyBible = {
   characters: "",
   wardrobe: "",
@@ -51,6 +56,42 @@ const projectForm = (sceneCount = 2) => ({
   })),
 });
 
+const enhancementBody = (masterPrompt: string, shotCount: number, targetShotNumber?: number) => ({
+  contractVersion: "2",
+  operation: targetShotNumber ? "revise_shot" : "plan_storyboard",
+  masterPrompt,
+  shotCount,
+  generationMode: "text_to_video",
+  continuityBible: emptyBible,
+  shots: Array.from({ length: shotCount }, (_, index) => ({
+    shotNumber: index + 1,
+    title: `Shot ${index + 1}`,
+    narrativePurpose: "",
+    prompt: `Direction ${index + 1}`,
+    firstFramePrompt: "",
+    lastFramePrompt: "",
+    continuityNotes: "",
+    durationSeconds: 5,
+    generationMode: "text_to_video",
+    referenceIds: [],
+    selectedControls: [],
+    audioIntent: { mode: "silent", reason: "" },
+    carryPreviousFrame: index > 0,
+    firstFrameAvailable: false,
+    lastFrameAvailable: false,
+  })),
+  ...(targetShotNumber ? { targetShotNumber } : {}),
+  aspectRatio: "16:9",
+  resolution: "1280x720",
+  references: [],
+  availableControls: [],
+  audioPolicy: {
+    mode: "intent_only", dialogue: "prompted_only", soundEffects: "intent_only", ambience: "intent_only",
+    music: "prompted_or_unambiguous_performance", preserveSourceAudio: false,
+  },
+  requestedCandidateCount: 3,
+});
+
 describe("public runtime readiness boundaries", () => {
   it("bounds distributed dispatcher concurrency", () => {
     expect(workerConcurrencyLimit({ VIDEO_LAB_WORKER_CONCURRENCY: "2" } as NodeJS.ProcessEnv)).toBe(2);
@@ -70,19 +111,7 @@ describe("public runtime readiness boundaries", () => {
     const response = await request(app)
       .post("/v1/storyboards/enhance")
       .set("authorization", "Bearer enhancer-user")
-      .send({
-        masterPrompt: "A founder follows a teal signal through rainy London.",
-        shotCount: 2,
-        generationMode: "text_to_video",
-        continuityBible: emptyBible,
-        shots: [1, 2].map((shotNumber) => ({
-          shotNumber,
-          title: `Shot ${shotNumber}`,
-          prompt: "",
-          durationSeconds: 5,
-          generationMode: "text_to_video",
-        })),
-      })
+      .send(enhancementBody("A founder follows a teal signal through rainy London.", 2))
       .expect(200);
     expect(response.body.provider).toBe("mock");
     expect(
@@ -102,20 +131,7 @@ describe("public runtime readiness boundaries", () => {
     const response = await request(app)
       .post("/v1/storyboards/enhance")
       .set("authorization", "Bearer targeted-enhancer-user")
-      .send({
-        masterPrompt: "An intimate two-shot conversation in a quiet workshop.",
-        shotCount: 3,
-        generationMode: "text_to_video",
-        continuityBible: emptyBible,
-        shots: [1, 2, 3].map((shotNumber) => ({
-          shotNumber,
-          title: `Shot ${shotNumber}`,
-          prompt: `Direction ${shotNumber}`,
-          durationSeconds: 5,
-          generationMode: "text_to_video",
-        })),
-        targetShotNumber: 2,
-      })
+      .send(enhancementBody("An intimate two-shot conversation in a quiet workshop.", 3, 2))
       .expect(200);
     expect(response.body.shots).toHaveLength(1);
     expect(response.body.shots[0].shotNumber).toBe(2);
@@ -125,19 +141,7 @@ describe("public runtime readiness boundaries", () => {
     const response = await request(app)
       .post("/v1/storyboards/enhance")
       .set("authorization", "Bearer long-story-owner")
-      .send({
-        masterPrompt: "A generational science-fiction journey across one city.",
-        shotCount: 24,
-        generationMode: "text_to_video",
-        continuityBible: emptyBible,
-        shots: Array.from({ length: 24 }, (_, index) => ({
-          shotNumber: index + 1,
-          title: `Shot ${index + 1}`,
-          prompt: `Story beat ${index + 1}`,
-          durationSeconds: 4,
-          generationMode: "text_to_video",
-        })),
-      })
+      .send(enhancementBody("A generational science-fiction journey across one city.", 24))
       .expect(200);
     expect(response.body.shots).toHaveLength(24);
     expect(response.body.shots[23].shotNumber).toBe(24);
@@ -223,7 +227,7 @@ describe("public runtime readiness boundaries", () => {
   });
 
   it("uploads frames through a same-origin Video Lab path", async () => {
-    const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const bytes = onePixelPng();
     const target = await request(app)
       .post("/v1/assets/upload-url")
       .set("authorization", "Bearer upload-owner")
@@ -246,7 +250,7 @@ describe("public runtime readiness boundaries", () => {
   });
 
   it("serves project references only to their owner through the same origin", async () => {
-    const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const bytes = onePixelPng();
     const target = await request(app)
       .post("/v1/assets/upload-url")
       .set("authorization", "Bearer reference-owner")
@@ -276,7 +280,7 @@ describe("public runtime readiness boundaries", () => {
   });
 
   it("rejects another user's asset hidden in a reference version history", async () => {
-    const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const bytes = onePixelPng();
     const target = await request(app)
       .post("/v1/assets/upload-url")
       .set("authorization", "Bearer reference-history-other")
@@ -334,6 +338,114 @@ describe("public runtime readiness boundaries", () => {
       .send(bytes)
       .expect(400);
     expect(response.body.code).toBe("invalid_asset");
+  });
+
+  it("resolves the canonical owner-scoped reference and keeps image bytes server-side", async () => {
+    const owner = "visual-director-owner";
+    const bytes = onePixelPng();
+    const upload = await request(app)
+      .post("/v1/assets/upload-url")
+      .set("authorization", `Bearer ${owner}`)
+      .send({ fileName: "lead.png", contentType: "image/png", sizeBytes: bytes.length, purpose: "reference" })
+      .expect(201);
+    await request(app)
+      .put(upload.body.uploadUrl)
+      .set("authorization", `Bearer ${owner}`)
+      .set("content-type", "image/png")
+      .send(bytes)
+      .expect(204);
+    const form = {
+      ...projectForm(1),
+      projectReferences: [{
+        id: "reference-lead-01",
+        type: "character",
+        label: "Canonical lead",
+        description: "A recurring illustrated explorer.",
+        lockedTraits: ["teal coat"],
+        sceneIds: [],
+        assetId: upload.body.assetId,
+        assetVersionIds: [upload.body.assetId],
+        version: 1,
+      }],
+    };
+    const project = await request(app)
+      .post("/v1/storyboards/projects")
+      .set("authorization", `Bearer ${owner}`)
+      .send({ title: "Visual planning", form })
+      .expect(201);
+    const response = await request(app)
+      .post("/v1/storyboards/enhance")
+      .set("authorization", `Bearer ${owner}`)
+      .send({
+        contractVersion: "2",
+        projectId: project.body.id,
+        projectRevision: project.body.updatedAt,
+        operation: "plan_storyboard",
+        masterPrompt: form.overallGoal,
+        shotCount: 1,
+        generationMode: "text_to_video",
+        continuityBible: emptyBible,
+        shots: [{
+          shotNumber: 1,
+          title: "Scene 1",
+          narrativePurpose: "",
+          prompt: "A complete cinematic scene.",
+          firstFramePrompt: "",
+          lastFramePrompt: "",
+          continuityNotes: "",
+          durationSeconds: 5,
+          generationMode: "text_to_video",
+          referenceIds: ["reference-lead-01"],
+          selectedControls: [],
+          audioIntent: { mode: "silent", reason: "" },
+          carryPreviousFrame: true,
+          firstFrameAvailable: false,
+          lastFrameAvailable: false,
+        }],
+        aspectRatio: "16:9",
+        resolution: "1280x720",
+        references: [{
+          id: "reference-lead-01",
+          type: "character",
+          label: "FORGED BROWSER LABEL",
+          description: "FORGED BROWSER DESCRIPTION",
+          lockedTraits: [],
+          version: 1,
+          shotNumbers: [],
+        }],
+        availableControls: [],
+        audioPolicy: {
+          mode: "intent_only",
+          dialogue: "prompted_only",
+          soundEffects: "intent_only",
+          ambience: "intent_only",
+          music: "prompted_or_unambiguous_performance",
+          preserveSourceAudio: false,
+        },
+        requestedCandidateCount: 3,
+      })
+      .expect(200);
+    expect(response.body.vision).toEqual({
+      mode: "planning_only",
+      attachedReferenceIds: ["reference-lead-01"],
+      textOnlyReferenceIds: [],
+    });
+    expect(response.body.visualReferenceAnalyses[0]).toMatchObject({
+      referenceId: "reference-lead-01",
+      referenceVersion: 1,
+    });
+    expect(response.body.visualReferenceAnalyses[0].observedTraits.join(" ")).toContain("Canonical lead");
+    expect(JSON.stringify(response.body)).not.toContain(bytes.toString("base64"));
+    expect(JSON.stringify(response.body)).not.toContain(upload.body.assetId);
+  });
+
+  it("rejects browser-supplied visual envelopes", async () => {
+    const response = await request(app)
+      .post("/v1/storyboards/enhance")
+      .set("authorization", "Bearer visual-injection-owner")
+      .send({ visualReferences: [{ base64: "AAAA" }] })
+      .expect(400);
+    expect(response.body.code).toBe("invalid_storyboard");
   });
 
   it("returns an independently generated frame through the private output route", async () => {

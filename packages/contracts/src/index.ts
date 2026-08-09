@@ -102,6 +102,7 @@ export interface RuntimeStatus {
     styleReference: boolean;
     subjectReference: boolean;
     audioPolicyModes?: Array<"silent" | "intent_only" | "directed">;
+    enhancementContractVersion?: "2" | null;
     featureStatus?: Record<string, "supported" | "partial" | "unavailable" | "client_managed">;
     instructionBundle?: {
       directorVersion: string;
@@ -150,10 +151,27 @@ export interface StoryboardContinuityBible {
 export interface StoryboardEnhancementShotInput {
   shotNumber: number;
   title: string;
+  narrativePurpose: string;
   prompt: string;
+  firstFramePrompt: string;
+  lastFramePrompt: string;
+  continuityNotes: string;
   durationSeconds: number;
   generationMode: "text_to_video" | "image_to_video" | "mixed";
+  referenceIds: string[];
+  selectedControls: string[];
+  audioIntent: StoryboardAudioIntent;
+  carryPreviousFrame: boolean;
+  firstFrameAvailable: boolean;
+  lastFrameAvailable: boolean;
 }
+
+export type StoryboardEnhancementOperation =
+  | "enhance_master_prompt"
+  | "plan_storyboard"
+  | "revise_shot"
+  | "revise_first_frame"
+  | "revise_last_frame";
 
 export type StoryboardReferenceType =
   | "character"
@@ -169,6 +187,34 @@ export interface StoryboardReferenceSummary {
   label: string;
   description: string;
   lockedTraits: string[];
+  version: number;
+  shotNumbers: number[];
+}
+
+/**
+ * Server-to-runtime visual input. This envelope is assembled only after the
+ * Video Lab API has reloaded the project and authorised the selected asset.
+ * It is deliberately absent from the browser-facing enhancement request.
+ */
+export interface StoryboardVisualReferenceEnvelope {
+  referenceId: string;
+  referenceType: Exclude<StoryboardReferenceType, "voice">;
+  label: string;
+  version: number;
+  shotNumbers: number[];
+  mimeType: "image/jpeg";
+  base64: string;
+  byteLength: number;
+  sha256: string;
+  width: number;
+  height: number;
+  pixelCount: number;
+}
+
+export interface StoryboardEnhancementRuntimeContext {
+  correlationId: string;
+  visualReferences: StoryboardVisualReferenceEnvelope[];
+  textOnlyReferenceIds: string[];
 }
 
 export interface StoryboardAudioPolicy {
@@ -192,7 +238,11 @@ export interface StoryboardReferenceUsage {
 }
 
 export interface StoryboardEnhancementRequest {
+  contractVersion: "2";
   projectId?: string;
+  projectRevision?: string;
+  operation: StoryboardEnhancementOperation;
+  userInstruction?: string;
   masterPrompt: string;
   shotCount: number;
   generationMode: "text_to_video" | "image_to_video" | "mixed";
@@ -221,13 +271,42 @@ export interface EnhancedStoryboardShot {
   candidateVariations: string[];
 }
 
+export interface StoryboardVisualReferenceAnalysis {
+  referenceId: string;
+  referenceVersion: number;
+  observedTraits: string[];
+  continuityGuidance: string;
+  declaredVisibleConflicts: string[];
+}
+
+export interface StoryboardVisionSummary {
+  mode: "planning_only";
+  attachedReferenceIds: string[];
+  textOnlyReferenceIds: string[];
+}
+
+export interface StoryboardReferencePlanningEvidence {
+  visualReferenceAnalyses: StoryboardVisualReferenceAnalysis[];
+  vision: StoryboardVisionSummary;
+  referenceStates: Array<{
+    referenceId: string;
+    version: number;
+    shotNumbers: number[];
+  }>;
+  instructionBundle: StoryboardEnhancementResponse["instructionBundle"];
+  generatedAt: string;
+}
+
 export interface StoryboardEnhancementResponse {
+  contractVersion: "2";
   polishedMasterPrompt: string;
   continuityBible: StoryboardContinuityBible;
   referenceUsagePlan: StoryboardReferenceUsage[];
   assumptions: string[];
   shots: EnhancedStoryboardShot[];
-  provider: "ollama" | "mock" | "vertex-ai" | "gemini";
+  visualReferenceAnalyses: StoryboardVisualReferenceAnalysis[];
+  vision: StoryboardVisionSummary;
+  provider: "ollama" | "mock";
   model: string;
   instructionBundle: {
     directorVersion: string;

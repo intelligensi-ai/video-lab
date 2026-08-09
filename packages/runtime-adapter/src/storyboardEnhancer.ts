@@ -1,8 +1,11 @@
+import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
 import type {
   EnhancedStoryboardShot,
   StoryboardAudioIntent,
   StoryboardContinuityBible,
   StoryboardEnhancementRequest,
+  StoryboardEnhancementRuntimeContext,
   StoryboardEnhancementResponse,
 } from "@video-lab/contracts";
 
@@ -22,11 +25,14 @@ const continuityKeys: Array<keyof StoryboardContinuityBible> = [
   "audio",
 ];
 const responseKeys = new Set([
+  "contractVersion",
   "polishedMasterPrompt",
   "continuityBible",
   "referenceUsagePlan",
   "assumptions",
   "shots",
+  "visualReferenceAnalyses",
+  "vision",
   "provider",
   "model",
   "instructionBundle",
@@ -44,12 +50,50 @@ const shotKeys = new Set([
   "audioIntent",
   "candidateVariations",
 ]);
-const enhancementProviders = new Set(["ollama", "mock", "vertex-ai", "gemini"]);
+const enhancementProviders = new Set(["ollama", "mock"]);
+const MAX_ENHANCEMENT_REQUEST_BYTES = 8 * 1024 * 1024;
+const MAX_ENHANCEMENT_RESPONSE_BYTES = 2 * 1024 * 1024;
+const DIRECTOR_CONTEXT_TOKENS = 32_768;
+const DIRECTOR_SYSTEM_TOKEN_RESERVE = 6_000;
+const DIRECTOR_CONTEXT_SAFETY_TOKENS = 1_024;
+const DIRECTOR_VISUAL_TOKEN_RESERVE = 1_024;
+
+export function assertStoryboardEnhancementContextBudget(
+  request: StoryboardEnhancementRequest,
+  runtimeContext?: StoryboardEnhancementRuntimeContext,
+): void {
+  const internal = runtimeApiEnhancementRequest(request, runtimeContext);
+  const textEnvelope = {
+    ...internal,
+    visualReferences: (runtimeContext?.visualReferences ?? []).map((reference) => ({ ...reference, base64: "" })),
+  };
+  const inputTokens = Math.ceil(Buffer.byteLength(JSON.stringify(textEnvelope), "utf8") / 3) + DIRECTOR_SYSTEM_TOKEN_RESERVE;
+  const responseShotCount = request.targetShotNumber ? 1 : request.shotCount;
+  const outputTokens = Math.min(16_000, Math.max(3_200, responseShotCount * 850));
+  const visualTokens = (runtimeContext?.visualReferences.length ?? 0) * DIRECTOR_VISUAL_TOKEN_RESERVE;
+  if (inputTokens + outputTokens + visualTokens + DIRECTOR_CONTEXT_SAFETY_TOKENS > DIRECTOR_CONTEXT_TOKENS) {
+    throw new Error("storyboard_context_budget_exceeded");
+  }
+}
+
+async function boundedJson(response: Response): Promise<unknown> {
+  const declaredLength = Number(response.headers.get("content-length") ?? 0);
+  if (declaredLength > MAX_ENHANCEMENT_RESPONSE_BYTES) throw new Error("response_too_large");
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength > MAX_ENHANCEMENT_RESPONSE_BYTES) throw new Error("response_too_large");
+  return JSON.parse(Buffer.from(bytes).toString("utf8"));
+}
 
 function runtimeApiEnhancementRequest(
   request: StoryboardEnhancementRequest,
+  runtimeContext?: StoryboardEnhancementRuntimeContext,
 ): Record<string, unknown> {
   return {
+    contractVersion: request.contractVersion,
+    operation: request.operation,
+    ...(request.userInstruction === undefined
+      ? {}
+      : { userInstruction: request.userInstruction }),
     masterPrompt: request.masterPrompt,
     shotCount: request.shotCount,
     generationMode: request.generationMode,
@@ -57,13 +101,32 @@ function runtimeApiEnhancementRequest(
     shots: request.shots.map((shot) => ({
       shotNumber: shot.shotNumber,
       title: shot.title,
+      narrativePurpose: shot.narrativePurpose,
       prompt: shot.prompt,
+      firstFramePrompt: shot.firstFramePrompt,
+      lastFramePrompt: shot.lastFramePrompt,
+      continuityNotes: shot.continuityNotes,
       durationSeconds: shot.durationSeconds,
       generationMode: shot.generationMode,
+      referenceIds: shot.referenceIds,
+      selectedControls: shot.selectedControls,
+      audioIntent: shot.audioIntent,
+      carryPreviousFrame: shot.carryPreviousFrame,
+      firstFrameAvailable: shot.firstFrameAvailable,
+      lastFrameAvailable: shot.lastFrameAvailable,
     })),
     ...(request.targetShotNumber === undefined
       ? {}
       : { targetShotNumber: request.targetShotNumber }),
+    aspectRatio: request.aspectRatio,
+    resolution: request.resolution,
+    references: request.references,
+    availableControls: request.availableControls,
+    audioPolicy: request.audioPolicy,
+    requestedCandidateCount: request.requestedCandidateCount,
+    correlationId: runtimeContext?.correlationId ?? randomUUID(),
+    visualReferences: runtimeContext?.visualReferences ?? [],
+    textOnlyReferenceIds: runtimeContext?.textOnlyReferenceIds ?? [],
   };
 }
 
@@ -81,6 +144,9 @@ function exactKeys(
 ) {
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw new Error(`${label} contains unexpected fields`);
+  }
+  if ([...allowed].some((key) => !Object.prototype.hasOwnProperty.call(value, key))) {
+    throw new Error(`${label} is missing required fields`);
   }
 }
 
@@ -105,8 +171,12 @@ function stringList(value: unknown, label: string, maximumItems: number, maximum
 export function validateStoryboardEnhancement(
   value: unknown,
   request: StoryboardEnhancementRequest,
+  runtimeContext?: StoryboardEnhancementRuntimeContext,
 ): StoryboardEnhancementResponse {
   const root = object(value, "Storyboard enhancement");
+  if (root.contractVersion !== "2") {
+    throw new Error("Storyboard enhancement contract version is incompatible");
+  }
   exactKeys(root, responseKeys, "Storyboard enhancement");
   const bible = object(root.continuityBible, "Continuity bible");
   exactKeys(bible, new Set(continuityKeys), "Continuity bible");
@@ -118,7 +188,7 @@ export function validateStoryboardEnhancement(
   ) as unknown as StoryboardContinuityBible;
   const allowedReferenceIds = new Set((request.references ?? []).map((reference) => reference.id));
   const allowedControls = new Set(request.availableControls ?? []);
-  const rawReferenceUsagePlan = root.referenceUsagePlan ?? [];
+  const rawReferenceUsagePlan = root.referenceUsagePlan;
   if (!Array.isArray(rawReferenceUsagePlan)) throw new Error("Reference usage plan is invalid");
   const referenceUsagePlan = rawReferenceUsagePlan.map((entry, index) => {
     const usage = object(entry, `Reference usage ${index + 1}`);
@@ -130,9 +200,50 @@ export function validateStoryboardEnhancement(
     }
     return { referenceId, shotNumbers: [...new Set(usage.shotNumbers as number[])], purpose: text(usage.purpose, "Reference purpose", 1_000) };
   });
-  const assumptions = root.assumptions === undefined
-    ? []
-    : stringList(root.assumptions, "Director assumption", 24, 1_000);
+  const assumptions = stringList(root.assumptions, "Director assumption", 24, 1_000);
+  const expectedVisuals = runtimeContext?.visualReferences ?? [];
+  if (!Array.isArray(root.visualReferenceAnalyses) || root.visualReferenceAnalyses.length !== expectedVisuals.length) {
+    throw new Error("Visual reference analyses do not match the attached references");
+  }
+  const visualReferenceAnalyses = root.visualReferenceAnalyses.map((entry, index) => {
+    const analysis = object(entry, `Visual reference analysis ${index + 1}`);
+    exactKeys(
+      analysis,
+      new Set([
+        "referenceId",
+        "referenceVersion",
+        "observedTraits",
+        "continuityGuidance",
+        "declaredVisibleConflicts",
+      ]),
+      `Visual reference analysis ${index + 1}`,
+    );
+    const expected = expectedVisuals[index];
+    if (
+      analysis.referenceId !== expected.referenceId ||
+      analysis.referenceVersion !== expected.version
+    ) {
+      throw new Error("Visual reference analysis order or version is invalid");
+    }
+    return {
+      referenceId: expected.referenceId,
+      referenceVersion: expected.version,
+      observedTraits: stringList(analysis.observedTraits, "Observed visual trait", 24, 500),
+      continuityGuidance: text(analysis.continuityGuidance, "Visual continuity guidance", 2_000),
+      declaredVisibleConflicts: stringList(analysis.declaredVisibleConflicts, "Visual reference conflict", 16, 500),
+    };
+  });
+  const rawVision = object(root.vision, "Vision summary");
+  exactKeys(rawVision, new Set(["mode", "attachedReferenceIds", "textOnlyReferenceIds"]), "Vision summary");
+  if (rawVision.mode !== "planning_only") throw new Error("Vision mode is invalid");
+  const attachedReferenceIds = stringList(rawVision.attachedReferenceIds, "Attached reference id", 6, 64);
+  const textOnlyReferenceIds = stringList(rawVision.textOnlyReferenceIds, "Text-only reference id", 32, 64);
+  if (
+    JSON.stringify(attachedReferenceIds) !== JSON.stringify(expectedVisuals.map((reference) => reference.referenceId)) ||
+    JSON.stringify(textOnlyReferenceIds) !== JSON.stringify(runtimeContext?.textOnlyReferenceIds ?? [])
+  ) {
+    throw new Error("Vision reference accounting is invalid");
+  }
   if (!Array.isArray(root.shots))
     throw new Error("Storyboard shots are invalid");
   const expectedNumbers = request.targetShotNumber
@@ -147,23 +258,15 @@ export function validateStoryboardEnhancement(
     if (shot.shotNumber !== expectedNumbers[index]) {
       throw new Error("Storyboard shot order does not match the request");
     }
-    const referenceIds = shot.referenceIds === undefined
-      ? []
-      : stringList(shot.referenceIds, "Shot reference id", 16, 64);
+    const referenceIds = stringList(shot.referenceIds, "Shot reference id", 16, 64);
     if (referenceIds.some((id) => !allowedReferenceIds.has(id))) throw new Error("Shot contains an unknown reference id");
-    const recommendedControls = shot.recommendedControls === undefined
-      ? []
-      : stringList(shot.recommendedControls, "Shot control", 16, 64);
+    const recommendedControls = stringList(shot.recommendedControls, "Shot control", 16, 64);
     if (recommendedControls.some((control) => !allowedControls.has(control))) throw new Error("Shot contains an unsupported control");
-    const rawAudioIntent = shot.audioIntent === undefined
-      ? { mode: "silent", reason: "No explicit audio direction was returned by the runtime." }
-      : object(shot.audioIntent, "Shot audio intent");
+    const rawAudioIntent = object(shot.audioIntent, "Shot audio intent");
     exactKeys(rawAudioIntent, new Set(["mode", "reason"]), "Shot audio intent");
     const audioMode = String(rawAudioIntent.mode) as StoryboardAudioIntent["mode"];
     if (!["silent", "dialogue", "ambience", "sound_effects", "music", "mixed"].includes(audioMode)) throw new Error("Shot audio intent is invalid");
-    const candidateVariations = shot.candidateVariations === undefined
-      ? Array.from({ length: request.requestedCandidateCount ?? 3 }, () => text(shot.prompt, "Shot prompt", 12_000))
-      : stringList(shot.candidateVariations, "Candidate variation", 4, 2_000);
+    const candidateVariations = stringList(shot.candidateVariations, "Candidate variation", 4, 2_000);
     if (candidateVariations.length !== (request.requestedCandidateCount ?? 3)) throw new Error("Shot candidate count does not match the request");
     return {
       shotNumber: expectedNumbers[index],
@@ -183,14 +286,7 @@ export function validateStoryboardEnhancement(
       candidateVariations,
     };
   });
-  const rawBundle = root.instructionBundle === undefined
-    ? {
-        directorVersion: "legacy-runtime-api",
-        enhancerVersion: "legacy-runtime-api",
-        framePromptVersion: "legacy-runtime-api",
-        hash: "0".repeat(64),
-      }
-    : object(root.instructionBundle, "Instruction bundle");
+  const rawBundle = object(root.instructionBundle, "Instruction bundle");
   exactKeys(rawBundle, new Set(["directorVersion", "enhancerVersion", "framePromptVersion", "hash"]), "Instruction bundle");
   const hash = text(rawBundle.hash, "Instruction bundle hash", 64).toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error("Instruction bundle hash is invalid");
@@ -199,6 +295,7 @@ export function validateStoryboardEnhancement(
     throw new Error("Enhancer provider is unsupported");
   }
   return {
+    contractVersion: "2",
     polishedMasterPrompt: text(
       root.polishedMasterPrompt,
       "Polished master prompt",
@@ -208,6 +305,8 @@ export function validateStoryboardEnhancement(
     referenceUsagePlan,
     assumptions,
     shots,
+    visualReferenceAnalyses,
+    vision: { mode: "planning_only", attachedReferenceIds, textOnlyReferenceIds },
     provider: provider as StoryboardEnhancementResponse["provider"],
     model: text(root.model, "Enhancer model", 120),
     instructionBundle: {
@@ -252,7 +351,9 @@ export class DeployStudioStoryboardEnhancerClient {
 
   async enhance(
     request: StoryboardEnhancementRequest,
+    runtimeContext?: StoryboardEnhancementRuntimeContext,
   ): Promise<StoryboardEnhancementResponse> {
+    assertStoryboardEnhancementContextBudget(request, runtimeContext);
     const runtimeApi = Boolean(this.config.runtimeId);
     const path =
       this.config.path ??
@@ -273,6 +374,17 @@ export class DeployStudioStoryboardEnhancerClient {
         ? this.config.token
         : `${authScheme} ${this.config.token}`;
     let response: Response;
+    const body = JSON.stringify(
+      runtimeApi ? runtimeApiEnhancementRequest(request, runtimeContext) : {
+        ...request,
+        correlationId: runtimeContext?.correlationId ?? randomUUID(),
+        visualReferences: runtimeContext?.visualReferences ?? [],
+        textOnlyReferenceIds: runtimeContext?.textOnlyReferenceIds ?? [],
+      },
+    );
+    if (new TextEncoder().encode(body).byteLength > MAX_ENHANCEMENT_REQUEST_BYTES) {
+      throw new Error("storyboard_enhancement_request_too_large");
+    }
     try {
       response = await fetch(new URL(path, `${this.origin}/`), {
         method: "POST",
@@ -281,10 +393,8 @@ export class DeployStudioStoryboardEnhancerClient {
           "content-type": "application/json",
           [headerName]: authentication,
         },
-        body: JSON.stringify(
-          runtimeApi ? runtimeApiEnhancementRequest(request) : request,
-        ),
-        signal: AbortSignal.timeout(this.config.timeoutMs ?? 100_000),
+        body,
+        signal: AbortSignal.timeout(this.config.timeoutMs ?? 250_000),
       });
     } catch (cause) {
       throw new Error("storyboard_enhancer_unavailable", { cause });
@@ -292,14 +402,20 @@ export class DeployStudioStoryboardEnhancerClient {
     if (!response.ok) {
       const bodyText = await response.text().catch(() => "");
       throw new Error(
-        response.status === 503
+        response.status === 413
+          ? "storyboard_context_budget_exceeded"
+          : response.status === 503
           ? "storyboard_enhancer_unavailable"
           : "storyboard_enhancement_failed",
         { cause: `HTTP ${response.status} ${response.statusText}: ${bodyText.slice(0, 500)}` },
       );
     }
     try {
-      return validateStoryboardEnhancement(await response.json(), request);
+      const result = validateStoryboardEnhancement(await boundedJson(response), request, runtimeContext);
+      if (runtimeApi && result.provider !== "ollama") {
+        throw new Error("stable_runtime_provider_invalid");
+      }
+      return result;
     } catch (cause) {
       throw new Error("storyboard_enhancement_failed", { cause });
     }
@@ -308,6 +424,7 @@ export class DeployStudioStoryboardEnhancerClient {
 
 export function mockStoryboardEnhancement(
   request: StoryboardEnhancementRequest,
+  runtimeContext?: StoryboardEnhancementRuntimeContext,
 ): StoryboardEnhancementResponse {
   const references = request.references ?? [];
   const availableControls = request.availableControls ?? [];
@@ -316,6 +433,7 @@ export function mockStoryboardEnhancement(
     ? [request.targetShotNumber]
     : Array.from({ length: request.shotCount }, (_, index) => index + 1);
   return {
+    contractVersion: "2",
     polishedMasterPrompt: request.masterPrompt,
     continuityBible: request.continuityBible,
     referenceUsagePlan: references.map((reference) => ({
@@ -324,6 +442,18 @@ export function mockStoryboardEnhancement(
       purpose: `Keep ${reference.label} consistent across the selected shots.`,
     })),
     assumptions: [],
+    visualReferenceAnalyses: (runtimeContext?.visualReferences ?? []).map((reference) => ({
+      referenceId: reference.referenceId,
+      referenceVersion: reference.version,
+      observedTraits: [`Visual reference supplied for ${reference.label}.`],
+      continuityGuidance: `Preserve the visible identity and composition cues from ${reference.label}.`,
+      declaredVisibleConflicts: [],
+    })),
+    vision: {
+      mode: "planning_only",
+      attachedReferenceIds: (runtimeContext?.visualReferences ?? []).map((reference) => reference.referenceId),
+      textOnlyReferenceIds: runtimeContext?.textOnlyReferenceIds ?? [],
+    },
     shots: numbers.map((shotNumber) => {
       const source = request.shots[shotNumber - 1];
       return {
@@ -331,8 +461,9 @@ export function mockStoryboardEnhancement(
         title: source?.title || `Shot ${shotNumber}`,
         narrativePurpose: `Advance the story through shot ${shotNumber}.`,
         prompt:
-          source?.prompt ||
-          `${request.masterPrompt} Shot ${shotNumber} of ${request.shotCount}.`,
+          request.userInstruction
+            ? `Directed revision for scene ${shotNumber}: ${request.userInstruction} ${source?.prompt ?? ""}`.trim()
+            : source?.prompt || `${request.masterPrompt} Shot ${shotNumber} of ${request.shotCount}.`,
         firstFramePrompt: `Opening composition for shot ${shotNumber}, preserving established continuity.`,
         lastFramePrompt: `Closing composition for shot ${shotNumber}, leading naturally into the next shot.`,
         continuityNotes:

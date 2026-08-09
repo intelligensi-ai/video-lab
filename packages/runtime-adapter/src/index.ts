@@ -120,6 +120,7 @@ export interface RuntimeHealth {
     styleReference: boolean;
     subjectReference: boolean;
     audioPolicyModes?: Array<"silent" | "intent_only" | "directed">;
+    enhancementContractVersion?: "2" | null;
     featureStatus?: Record<string, "supported" | "partial" | "unavailable" | "client_managed">;
     instructionBundle?: { directorVersion: string; enhancerVersion: string; framePromptVersion: string; hash: string };
   };

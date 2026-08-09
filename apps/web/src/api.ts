@@ -11,8 +11,10 @@ import type {
   StoryboardAudioPolicy,
   StoryboardContinuityBible,
   StoryboardEnhancementRequest,
+  StoryboardEnhancementOperation,
   StoryboardEnhancementResponse,
   StoryboardReferenceType,
+  StoryboardReferencePlanningEvidence,
 } from "@video-lab/contracts";
 import { getApiToken } from "./auth.js";
 
@@ -301,6 +303,7 @@ export interface LongFormGenerationPayload {
   projectReferences: StoryboardProjectReference[];
   directorAssumptions?: string[];
   instructionBundle?: StoryboardEnhancementResponse["instructionBundle"];
+  referencePlanningEvidence?: StoryboardReferencePlanningEvidence;
 }
 
 export async function generateLongFormVideo(
@@ -420,12 +423,17 @@ export function storyboardEnhancementRequest(
   payload: LongFormGenerationPayload,
   targetShotNumber?: number,
   projectId?: string,
+  operation: StoryboardEnhancementOperation = targetShotNumber
+    ? "revise_shot"
+    : "plan_storyboard",
 ): StoryboardEnhancementRequest {
   const aspectRatio = payload.resolution.startsWith("576x") || payload.resolution.startsWith("720x1280")
     ? "9:16"
     : payload.resolution.startsWith("1080x1080") ? "1:1" : "16:9";
   return {
+    contractVersion: "2",
     projectId,
+    operation,
     masterPrompt: payload.overallGoal,
     shotCount: payload.scenes.length,
     generationMode: payload.scenes.some(
@@ -436,23 +444,41 @@ export function storyboardEnhancementRequest(
     continuityBible: payload.continuityBible,
     aspectRatio,
     resolution: payload.resolution,
-    references: payload.projectReferences.map(({ id, type, label, description, lockedTraits }) => ({
+    references: payload.projectReferences.map(({ id, type, label, description, lockedTraits, version, sceneIds }) => ({
       id,
       type,
       label,
       description,
       lockedTraits,
+      version,
+      shotNumbers: sceneIds
+        .map((sceneId) => payload.scenes.findIndex((scene) => scene.id === sceneId) + 1)
+        .filter((shotNumber) => shotNumber > 0),
     })),
-    availableControls: ["start_frame", "end_frame"],
+    // The API replaces this with its server-owned capability allow-list.
+    availableControls: [],
     audioPolicy: payload.audioPolicy,
     requestedCandidateCount: payload.candidateCount,
     shots: payload.scenes.map((scene, index) => ({
       shotNumber: index + 1,
       title: scene.title,
+      narrativePurpose: scene.narrativePurpose ?? "",
       prompt: scene.prompt,
+      firstFramePrompt: scene.firstFramePrompt ?? "",
+      lastFramePrompt: scene.lastFramePrompt ?? "",
+      continuityNotes: scene.continuityNotes ?? "",
       durationSeconds: scene.duration,
       generationMode:
         scene.startFrame || scene.endFrame ? "image_to_video" : "text_to_video",
+      referenceIds: scene.referenceIds ?? [],
+      selectedControls: scene.recommendedControls ?? [],
+      audioIntent: scene.audioIntent ?? {
+        mode: "silent",
+        reason: "No scene-specific audio direction has been accepted.",
+      },
+      carryPreviousFrame: scene.carryPreviousFrame,
+      firstFrameAvailable: Boolean(scene.startFrame || scene.startFrameGenerationId),
+      lastFrameAvailable: Boolean(scene.endFrame || scene.endFrameGenerationId),
     })),
     targetShotNumber,
   };
@@ -462,11 +488,12 @@ export const enhanceStoryboard = (
   payload: LongFormGenerationPayload,
   targetShotNumber?: number,
   projectId?: string,
+  operation?: StoryboardEnhancementOperation,
 ) =>
   api<StoryboardEnhancementResponse>("/v1/storyboards/enhance", {
     method: "POST",
     body: JSON.stringify(
-      storyboardEnhancementRequest(payload, targetShotNumber, projectId),
+      storyboardEnhancementRequest(payload, targetShotNumber, projectId, operation),
     ),
   });
 
