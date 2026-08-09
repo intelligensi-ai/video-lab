@@ -240,8 +240,8 @@ describe("storyboard enhancer contract", () => {
         });
         return Response.json({
           ...mockStoryboardEnhancement(request),
-          provider: "ollama",
-          model: "gemma4:e4b",
+          provider: "llama_cpp",
+          model: "Bonsai-27B-Q1_0",
         });
       }),
     );
@@ -252,6 +252,8 @@ describe("storyboard enhancer contract", () => {
     });
 
     await expect(client.enhance(request, runtimeContext)).resolves.toMatchObject({
+      provider: "llama_cpp",
+      model: "Bonsai-27B-Q1_0",
       shots: [{ shotNumber: 1 }, { shotNumber: 2 }],
     });
   });

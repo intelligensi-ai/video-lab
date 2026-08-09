@@ -50,7 +50,7 @@ const shotKeys = new Set([
   "audioIntent",
   "candidateVariations",
 ]);
-const enhancementProviders = new Set(["ollama", "mock"]);
+const enhancementProviders = new Set(["ollama", "llama_cpp", "mock"]);
 const MAX_ENHANCEMENT_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_ENHANCEMENT_RESPONSE_BYTES = 2 * 1024 * 1024;
 const DIRECTOR_CONTEXT_TOKENS = 32_768;
@@ -410,7 +410,7 @@ export class DeployStudioStoryboardEnhancerClient {
     }
     try {
       const result = validateStoryboardEnhancement(await boundedJson(response), request, runtimeContext);
-      if (runtimeApi && result.provider !== "ollama") {
+      if (runtimeApi && result.provider === "mock") {
         throw new Error("stable_runtime_provider_invalid");
       }
       return result;

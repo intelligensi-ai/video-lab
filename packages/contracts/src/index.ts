@@ -306,7 +306,7 @@ export interface StoryboardEnhancementResponse {
   shots: EnhancedStoryboardShot[];
   visualReferenceAnalyses: StoryboardVisualReferenceAnalysis[];
   vision: StoryboardVisionSummary;
-  provider: "ollama" | "mock";
+  provider: "ollama" | "llama_cpp" | "mock";
   model: string;
   instructionBundle: {
     directorVersion: string;
