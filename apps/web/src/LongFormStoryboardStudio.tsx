@@ -231,7 +231,7 @@ const initialScenes: StoryboardScenePayload[] = [
     continuityOverrides: {},
     transition: "cut",
     transitionDuration: 0.75,
-    carryPreviousFrame: true,
+    carryPreviousFrame: false,
   },
   {
     id: "scene-2",
@@ -1021,12 +1021,20 @@ export default function LongFormStoryboardStudio({
             </div>
             <div
               className="lf-help-target"
-              data-help="The master brief for the entire film: story progression, recurring characters, locations, palette, lens language and continuity rules."
+              data-help={
+                isClassic
+                  ? "Sets the visual world for this scene: characters, wardrobe, palette, lighting and lens language. What happens in the scene goes in Scene direction below."
+                  : "The master brief for the entire film: story progression, recurring characters, locations, palette, lens language and continuity rules."
+              }
             >
               <textarea
                 aria-label="Overall artistic goal"
                 value={form.overallGoal}
-                placeholder="Describe the story, subject, visual language and continuity for the whole film…"
+                placeholder={
+                  isClassic
+                    ? "Describe the visual style, characters and world — subject, wardrobe, palette, lighting and lens language…"
+                    : "Describe the story, subject, visual language and continuity for the whole film…"
+                }
                 onChange={(event) =>
                   setForm((current) =>
                     markAcceptedClipsStale(
@@ -1038,8 +1046,9 @@ export default function LongFormStoryboardStudio({
               />
             </div>
             <p>
-              Set the visual and narrative rules for the whole film. Each scene
-              then contributes one clear action and camera beat.
+              {isClassic
+                ? "Set the visual style, characters and palette here. What happens in the shot — the action, camera and beat — goes in Scene direction below."
+                : "Set the visual and narrative rules for the whole film. Each scene then contributes one clear action and camera beat."}
             </p>
             <div
               className="lf-enhancer-actions"
@@ -1248,6 +1257,11 @@ export default function LongFormStoryboardStudio({
                       "The shared negative prompt changed after this clip was accepted. Render this scene again before assembly.",
                     ),
                   )
+                }
+                projectReferences={form.projectReferences}
+                sceneIds={form.scenes.map((sceneItem) => sceneItem.id)}
+                onProjectReferencesChange={(projectReferences) =>
+                  setForm((current) => ({ ...current, projectReferences }))
                 }
               />
             ))}
@@ -2213,6 +2227,9 @@ function SceneCard({
   classic,
   negativePrompt,
   onNegativePromptChange,
+  projectReferences,
+  sceneIds,
+  onProjectReferencesChange,
 }: {
   scene: StoryboardScenePayload;
   index: number;
@@ -2232,6 +2249,9 @@ function SceneCard({
   classic?: boolean;
   negativePrompt?: string;
   onNegativePromptChange?: (value: string) => void;
+  projectReferences?: StoryboardProjectReference[];
+  sceneIds?: string[];
+  onProjectReferencesChange?: (references: StoryboardProjectReference[]) => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState(index === 0);
@@ -2560,6 +2580,13 @@ function SceneCard({
             />
           </div>
         </details>
+      )}
+      {classic && (
+        <ProjectReferencePanel
+          references={projectReferences ?? []}
+          sceneIds={sceneIds ?? []}
+          onChange={(references) => onProjectReferencesChange?.(references)}
+        />
       )}
       {!classic && (
         <label className="lf-continuity-note">

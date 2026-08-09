@@ -347,6 +347,7 @@ export async function generateLongFormVideo(
         endFrameAssetId,
         seed: scene.seedOverrideEnabled ? scene.seed : payload.globalSeed,
         seedOverride: scene.seedOverrideEnabled === true,
+        carryPreviousFrame: index > 0 && scene.carryPreviousFrame,
       };
     }),
   );

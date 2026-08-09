@@ -1140,10 +1140,14 @@ function GalleryArtifact({ generation }: { generation: Generation }) {
 
   if (thumbnail) {
     return (
-      <div className="gallery-media gallery-thumbnail">
+      <Link
+        to={`/generations/${generation.id}`}
+        className="gallery-media gallery-thumbnail"
+        aria-label="Play video"
+      >
         <img src={thumbnail} alt="Video thumbnail" />
         <span aria-hidden="true" />
-      </div>
+      </Link>
     );
   }
   if (video.error) {
@@ -1154,9 +1158,12 @@ function GalleryArtifact({ generation }: { generation: Generation }) {
     );
   }
   return (
-    <div className="thumb gallery-media">
+    <Link
+      to={`/generations/${generation.id}`}
+      className="thumb gallery-media"
+    >
       {generation.output?.downloadUrl ? "Retrieving video…" : generation.status}
-    </div>
+    </Link>
   );
 }
 function Detail() {

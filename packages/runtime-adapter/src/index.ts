@@ -455,7 +455,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
                 seed: settings.seed ?? 1337,
                 transition: "cut",
                 transitionDuration: 0.75,
-                carryPreviousFrame: true,
+                carryPreviousFrame: false,
                 ...(settings.seedFrameBase64
                   ? { startFrameBase64: settings.seedFrameBase64 }
                   : {}),

@@ -286,20 +286,22 @@ export class DeployStudioStoryboardEnhancerClient {
         ),
         signal: AbortSignal.timeout(this.config.timeoutMs ?? 100_000),
       });
-    } catch {
-      throw new Error("storyboard_enhancer_unavailable");
+    } catch (cause) {
+      throw new Error("storyboard_enhancer_unavailable", { cause });
     }
     if (!response.ok) {
+      const bodyText = await response.text().catch(() => "");
       throw new Error(
         response.status === 503
           ? "storyboard_enhancer_unavailable"
           : "storyboard_enhancement_failed",
+        { cause: `HTTP ${response.status} ${response.statusText}: ${bodyText.slice(0, 500)}` },
       );
     }
     try {
       return validateStoryboardEnhancement(await response.json(), request);
-    } catch {
-      throw new Error("storyboard_enhancement_failed");
+    } catch (cause) {
+      throw new Error("storyboard_enhancement_failed", { cause });
     }
   }
 }

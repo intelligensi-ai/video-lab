@@ -2460,6 +2460,13 @@ async function enhanceStoryboard(request: StoryboardEnhancementRequest) {
       log("storyboard_enhancer_unavailable", {
         provider: useStableApi ? "intelligensi-api" : "deploy-studio",
         reason: error instanceof Error ? error.message : "unknown",
+        cause:
+          error instanceof Error && error.cause !== undefined
+            ? error.cause instanceof Error
+              ? error.cause.message
+              : String(error.cause)
+            : undefined,
+        baseUrl,
         shotCount: request.shotCount,
         targeted: request.targetShotNumber !== undefined,
       });
