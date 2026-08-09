@@ -1220,14 +1220,12 @@ export default function LongFormStoryboardStudio({
               </div>
             )}
           </section>
-          {!isClassic && (
-            <ProjectReferencePanel
-              references={form.projectReferences}
-              sceneIds={form.scenes.map((scene) => scene.id)}
-              evidence={form.referencePlanningEvidence}
-              onChange={(projectReferences) => setForm((current) => ({ ...current, projectReferences }))}
-            />
-          )}
+          <ProjectReferencePanel
+            references={form.projectReferences}
+            sceneIds={form.scenes.map((scene) => scene.id)}
+            evidence={form.referencePlanningEvidence}
+            onChange={(projectReferences) => setForm((current) => ({ ...current, projectReferences }))}
+          />
           <section className="lf-scenes">
             <div className="lf-section-head">
               <div>

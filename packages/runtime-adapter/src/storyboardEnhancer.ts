@@ -53,6 +53,28 @@ const shotKeys = new Set([
 const enhancementProviders = new Set(["ollama", "mock"]);
 const MAX_ENHANCEMENT_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_ENHANCEMENT_RESPONSE_BYTES = 2 * 1024 * 1024;
+const DIRECTOR_CONTEXT_TOKENS = 32_768;
+const DIRECTOR_SYSTEM_TOKEN_RESERVE = 6_000;
+const DIRECTOR_CONTEXT_SAFETY_TOKENS = 1_024;
+const DIRECTOR_VISUAL_TOKEN_RESERVE = 1_024;
+
+export function assertStoryboardEnhancementContextBudget(
+  request: StoryboardEnhancementRequest,
+  runtimeContext?: StoryboardEnhancementRuntimeContext,
+): void {
+  const internal = runtimeApiEnhancementRequest(request, runtimeContext);
+  const textEnvelope = {
+    ...internal,
+    visualReferences: (runtimeContext?.visualReferences ?? []).map((reference) => ({ ...reference, base64: "" })),
+  };
+  const inputTokens = Math.ceil(Buffer.byteLength(JSON.stringify(textEnvelope), "utf8") / 3) + DIRECTOR_SYSTEM_TOKEN_RESERVE;
+  const responseShotCount = request.targetShotNumber ? 1 : request.shotCount;
+  const outputTokens = Math.min(16_000, Math.max(3_200, responseShotCount * 850));
+  const visualTokens = (runtimeContext?.visualReferences.length ?? 0) * DIRECTOR_VISUAL_TOKEN_RESERVE;
+  if (inputTokens + outputTokens + visualTokens + DIRECTOR_CONTEXT_SAFETY_TOKENS > DIRECTOR_CONTEXT_TOKENS) {
+    throw new Error("storyboard_context_budget_exceeded");
+  }
+}
 
 async function boundedJson(response: Response): Promise<unknown> {
   const declaredLength = Number(response.headers.get("content-length") ?? 0);
@@ -331,6 +353,7 @@ export class DeployStudioStoryboardEnhancerClient {
     request: StoryboardEnhancementRequest,
     runtimeContext?: StoryboardEnhancementRuntimeContext,
   ): Promise<StoryboardEnhancementResponse> {
+    assertStoryboardEnhancementContextBudget(request, runtimeContext);
     const runtimeApi = Boolean(this.config.runtimeId);
     const path =
       this.config.path ??
@@ -378,7 +401,9 @@ export class DeployStudioStoryboardEnhancerClient {
     }
     if (!response.ok) {
       throw new Error(
-        response.status === 503
+        response.status === 413
+          ? "storyboard_context_budget_exceeded"
+          : response.status === 503
           ? "storyboard_enhancer_unavailable"
           : "storyboard_enhancement_failed",
       );

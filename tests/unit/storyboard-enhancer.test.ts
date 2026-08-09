@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DeployStudioStoryboardEnhancerClient,
+  assertStoryboardEnhancementContextBudget,
   mockStoryboardEnhancement,
   validateStoryboardEnhancement,
 } from "../../packages/runtime-adapter/src/storyboardEnhancer.js";
@@ -165,6 +166,16 @@ describe("storyboard enhancer contract", () => {
     };
 
     expect(() => validateStoryboardEnhancement(stableResponse, request)).toThrow("contract version");
+  });
+
+  it("rejects enhancement context that cannot fit without truncation", () => {
+    expect(() => assertStoryboardEnhancementContextBudget(request, runtimeContext)).not.toThrow();
+    expect(() => assertStoryboardEnhancementContextBudget({
+      ...request,
+      masterPrompt: "x".repeat(90_000),
+      shotCount: 24,
+      shots: Array.from({ length: 24 }, (_, index) => ({ ...request.shots[0], shotNumber: index + 1 })),
+    }, runtimeContext)).toThrow("storyboard_context_budget_exceeded");
   });
 
   it("rejects paid external inference providers from the stable gateway", () => {

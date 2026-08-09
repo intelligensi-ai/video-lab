@@ -2966,6 +2966,19 @@ app.post(
     } catch (error) {
       if (
         error instanceof Error &&
+        error.message === "storyboard_context_budget_exceeded"
+      ) {
+        next(
+          problem(
+            413,
+            "storyboard_context_budget_exceeded",
+            "This storyboard is too detailed to enhance safely in one request. Reduce the scene detail or enhance one scene at a time; your original prompts are unchanged",
+          ),
+        );
+        return;
+      }
+      if (
+        error instanceof Error &&
         error.message === "storyboard_enhancer_unavailable"
       ) {
         next(
@@ -3031,6 +3044,19 @@ app.post(
       });
       res.status(201).json(proposal);
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "storyboard_context_budget_exceeded"
+      ) {
+        next(
+          problem(
+            413,
+            "storyboard_context_budget_exceeded",
+            "This Director request is too detailed to process safely at once. Target one scene or shorten the request; your project is unchanged",
+          ),
+        );
+        return;
+      }
       if (
         error instanceof Error &&
         error.message === "storyboard_enhancer_unavailable"
