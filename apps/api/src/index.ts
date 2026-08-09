@@ -2733,7 +2733,7 @@ async function enhanceStoryboard(
           ? process.env.VIDEO_RUNTIME_AUTH_SCHEME
           : undefined,
         timeoutMs: Number(
-          process.env.VIDEO_STORYBOARD_ENHANCER_TIMEOUT_MS ?? 100_000,
+          process.env.VIDEO_STORYBOARD_ENHANCER_TIMEOUT_MS ?? 250_000,
         ),
       }).enhance(request, runtimeContext);
     } catch (error) {

@@ -371,7 +371,7 @@ export class DeployStudioStoryboardEnhancerClient {
           [headerName]: authentication,
         },
         body,
-        signal: AbortSignal.timeout(this.config.timeoutMs ?? 100_000),
+        signal: AbortSignal.timeout(this.config.timeoutMs ?? 250_000),
       });
     } catch {
       throw new Error("storyboard_enhancer_unavailable");
