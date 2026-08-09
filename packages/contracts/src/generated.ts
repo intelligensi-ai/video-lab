@@ -728,10 +728,25 @@ export interface components {
             referenceUsagePlan: components["schemas"]["StoryboardReferenceUsage"][];
             assumptions: string[];
             shots: components["schemas"]["EnhancedStoryboardShot"][];
+            visualReferenceAnalyses: components["schemas"]["StoryboardVisualReferenceAnalysis"][];
+            vision: components["schemas"]["StoryboardVisionSummary"];
             /** @enum {string} */
             provider: "ollama" | "mock";
             model: string;
             instructionBundle: components["schemas"]["InstructionBundle"];
+        };
+        StoryboardVisualReferenceAnalysis: {
+            referenceId: string;
+            referenceVersion: number;
+            observedTraits: string[];
+            continuityGuidance: string;
+            declaredVisibleConflicts: string[];
+        };
+        StoryboardVisionSummary: {
+            /** @enum {string} */
+            mode: "planning_only";
+            attachedReferenceIds: string[];
+            textOnlyReferenceIds: string[];
         };
         /** @enum {string} */
         DirectorActionType: "answer_project_question" | "suggest_creative_direction" | "enhance_master_prompt" | "plan_storyboard" | "propose_scene_change" | "propose_frame_prompt_change" | "restore_original_prompt" | "undo_prompt_change" | "assign_project_reference" | "remove_project_reference" | "set_audio_policy" | "generate_first_frame" | "generate_last_frame" | "regenerate_frame" | "restore_frame_version" | "generate_scene_candidates" | "accept_candidate" | "restore_candidate" | "generate_scene_video" | "generate_unfinished_scenes" | "cancel_job" | "retry_job" | "explain_failure" | "prepare_finishing" | "assemble_project" | "export_project";

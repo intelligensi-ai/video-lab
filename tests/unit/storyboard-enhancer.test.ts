@@ -4,7 +4,7 @@ import {
   mockStoryboardEnhancement,
   validateStoryboardEnhancement,
 } from "../../packages/runtime-adapter/src/storyboardEnhancer.js";
-import type { StoryboardEnhancementRequest } from "../../packages/contracts/src/index.js";
+import type { StoryboardEnhancementRequest, StoryboardEnhancementRuntimeContext } from "../../packages/contracts/src/index.js";
 
 const request: StoryboardEnhancementRequest = {
   contractVersion: "2",
@@ -66,6 +66,11 @@ const request: StoryboardEnhancementRequest = {
     preserveSourceAudio: false,
   },
   requestedCandidateCount: 3,
+};
+const runtimeContext: StoryboardEnhancementRuntimeContext = {
+  correlationId: "test-correlation-0001",
+  visualReferences: [],
+  textOnlyReferenceIds: [],
 };
 
 describe("storyboard enhancer contract", () => {
@@ -218,6 +223,9 @@ describe("storyboard enhancer contract", () => {
           availableControls: request.availableControls,
           audioPolicy: request.audioPolicy,
           requestedCandidateCount: request.requestedCandidateCount,
+          correlationId: runtimeContext.correlationId,
+          visualReferences: [],
+          textOnlyReferenceIds: [],
         });
         return Response.json({
           ...mockStoryboardEnhancement(request),
@@ -232,7 +240,7 @@ describe("storyboard enhancer contract", () => {
       runtimeId: "longform-ltx-storyboard-studio",
     });
 
-    await expect(client.enhance(request)).resolves.toMatchObject({
+    await expect(client.enhance(request, runtimeContext)).resolves.toMatchObject({
       shots: [{ shotNumber: 1 }, { shotNumber: 2 }],
     });
   });

@@ -1,9 +1,11 @@
 import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
 import type {
   EnhancedStoryboardShot,
   StoryboardAudioIntent,
   StoryboardContinuityBible,
   StoryboardEnhancementRequest,
+  StoryboardEnhancementRuntimeContext,
   StoryboardEnhancementResponse,
 } from "@video-lab/contracts";
 
@@ -29,6 +31,8 @@ const responseKeys = new Set([
   "referenceUsagePlan",
   "assumptions",
   "shots",
+  "visualReferenceAnalyses",
+  "vision",
   "provider",
   "model",
   "instructionBundle",
@@ -47,7 +51,7 @@ const shotKeys = new Set([
   "candidateVariations",
 ]);
 const enhancementProviders = new Set(["ollama", "mock"]);
-const MAX_ENHANCEMENT_REQUEST_BYTES = 512 * 1024;
+const MAX_ENHANCEMENT_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_ENHANCEMENT_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 async function boundedJson(response: Response): Promise<unknown> {
@@ -60,6 +64,7 @@ async function boundedJson(response: Response): Promise<unknown> {
 
 function runtimeApiEnhancementRequest(
   request: StoryboardEnhancementRequest,
+  runtimeContext?: StoryboardEnhancementRuntimeContext,
 ): Record<string, unknown> {
   return {
     contractVersion: request.contractVersion,
@@ -97,6 +102,9 @@ function runtimeApiEnhancementRequest(
     availableControls: request.availableControls,
     audioPolicy: request.audioPolicy,
     requestedCandidateCount: request.requestedCandidateCount,
+    correlationId: runtimeContext?.correlationId ?? randomUUID(),
+    visualReferences: runtimeContext?.visualReferences ?? [],
+    textOnlyReferenceIds: runtimeContext?.textOnlyReferenceIds ?? [],
   };
 }
 
@@ -141,6 +149,7 @@ function stringList(value: unknown, label: string, maximumItems: number, maximum
 export function validateStoryboardEnhancement(
   value: unknown,
   request: StoryboardEnhancementRequest,
+  runtimeContext?: StoryboardEnhancementRuntimeContext,
 ): StoryboardEnhancementResponse {
   const root = object(value, "Storyboard enhancement");
   if (root.contractVersion !== "2") {
@@ -170,6 +179,49 @@ export function validateStoryboardEnhancement(
     return { referenceId, shotNumbers: [...new Set(usage.shotNumbers as number[])], purpose: text(usage.purpose, "Reference purpose", 1_000) };
   });
   const assumptions = stringList(root.assumptions, "Director assumption", 24, 1_000);
+  const expectedVisuals = runtimeContext?.visualReferences ?? [];
+  if (!Array.isArray(root.visualReferenceAnalyses) || root.visualReferenceAnalyses.length !== expectedVisuals.length) {
+    throw new Error("Visual reference analyses do not match the attached references");
+  }
+  const visualReferenceAnalyses = root.visualReferenceAnalyses.map((entry, index) => {
+    const analysis = object(entry, `Visual reference analysis ${index + 1}`);
+    exactKeys(
+      analysis,
+      new Set([
+        "referenceId",
+        "referenceVersion",
+        "observedTraits",
+        "continuityGuidance",
+        "declaredVisibleConflicts",
+      ]),
+      `Visual reference analysis ${index + 1}`,
+    );
+    const expected = expectedVisuals[index];
+    if (
+      analysis.referenceId !== expected.referenceId ||
+      analysis.referenceVersion !== expected.version
+    ) {
+      throw new Error("Visual reference analysis order or version is invalid");
+    }
+    return {
+      referenceId: expected.referenceId,
+      referenceVersion: expected.version,
+      observedTraits: stringList(analysis.observedTraits, "Observed visual trait", 24, 500),
+      continuityGuidance: text(analysis.continuityGuidance, "Visual continuity guidance", 2_000),
+      declaredVisibleConflicts: stringList(analysis.declaredVisibleConflicts, "Visual reference conflict", 16, 500),
+    };
+  });
+  const rawVision = object(root.vision, "Vision summary");
+  exactKeys(rawVision, new Set(["mode", "attachedReferenceIds", "textOnlyReferenceIds"]), "Vision summary");
+  if (rawVision.mode !== "planning_only") throw new Error("Vision mode is invalid");
+  const attachedReferenceIds = stringList(rawVision.attachedReferenceIds, "Attached reference id", 6, 64);
+  const textOnlyReferenceIds = stringList(rawVision.textOnlyReferenceIds, "Text-only reference id", 32, 64);
+  if (
+    JSON.stringify(attachedReferenceIds) !== JSON.stringify(expectedVisuals.map((reference) => reference.referenceId)) ||
+    JSON.stringify(textOnlyReferenceIds) !== JSON.stringify(runtimeContext?.textOnlyReferenceIds ?? [])
+  ) {
+    throw new Error("Vision reference accounting is invalid");
+  }
   if (!Array.isArray(root.shots))
     throw new Error("Storyboard shots are invalid");
   const expectedNumbers = request.targetShotNumber
@@ -231,6 +283,8 @@ export function validateStoryboardEnhancement(
     referenceUsagePlan,
     assumptions,
     shots,
+    visualReferenceAnalyses,
+    vision: { mode: "planning_only", attachedReferenceIds, textOnlyReferenceIds },
     provider: provider as StoryboardEnhancementResponse["provider"],
     model: text(root.model, "Enhancer model", 120),
     instructionBundle: {
@@ -275,6 +329,7 @@ export class DeployStudioStoryboardEnhancerClient {
 
   async enhance(
     request: StoryboardEnhancementRequest,
+    runtimeContext?: StoryboardEnhancementRuntimeContext,
   ): Promise<StoryboardEnhancementResponse> {
     const runtimeApi = Boolean(this.config.runtimeId);
     const path =
@@ -297,7 +352,12 @@ export class DeployStudioStoryboardEnhancerClient {
         : `${authScheme} ${this.config.token}`;
     let response: Response;
     const body = JSON.stringify(
-      runtimeApi ? runtimeApiEnhancementRequest(request) : request,
+      runtimeApi ? runtimeApiEnhancementRequest(request, runtimeContext) : {
+        ...request,
+        correlationId: runtimeContext?.correlationId ?? randomUUID(),
+        visualReferences: runtimeContext?.visualReferences ?? [],
+        textOnlyReferenceIds: runtimeContext?.textOnlyReferenceIds ?? [],
+      },
     );
     if (new TextEncoder().encode(body).byteLength > MAX_ENHANCEMENT_REQUEST_BYTES) {
       throw new Error("storyboard_enhancement_request_too_large");
@@ -324,7 +384,7 @@ export class DeployStudioStoryboardEnhancerClient {
       );
     }
     try {
-      const result = validateStoryboardEnhancement(await boundedJson(response), request);
+      const result = validateStoryboardEnhancement(await boundedJson(response), request, runtimeContext);
       if (runtimeApi && result.provider !== "ollama") {
         throw new Error("stable_runtime_provider_invalid");
       }
@@ -337,6 +397,7 @@ export class DeployStudioStoryboardEnhancerClient {
 
 export function mockStoryboardEnhancement(
   request: StoryboardEnhancementRequest,
+  runtimeContext?: StoryboardEnhancementRuntimeContext,
 ): StoryboardEnhancementResponse {
   const references = request.references ?? [];
   const availableControls = request.availableControls ?? [];
@@ -354,6 +415,18 @@ export function mockStoryboardEnhancement(
       purpose: `Keep ${reference.label} consistent across the selected shots.`,
     })),
     assumptions: [],
+    visualReferenceAnalyses: (runtimeContext?.visualReferences ?? []).map((reference) => ({
+      referenceId: reference.referenceId,
+      referenceVersion: reference.version,
+      observedTraits: [`Visual reference supplied for ${reference.label}.`],
+      continuityGuidance: `Preserve the visible identity and composition cues from ${reference.label}.`,
+      declaredVisibleConflicts: [],
+    })),
+    vision: {
+      mode: "planning_only",
+      attachedReferenceIds: (runtimeContext?.visualReferences ?? []).map((reference) => reference.referenceId),
+      textOnlyReferenceIds: runtimeContext?.textOnlyReferenceIds ?? [],
+    },
     shots: numbers.map((shotNumber) => {
       const source = request.shots[shotNumber - 1];
       return {

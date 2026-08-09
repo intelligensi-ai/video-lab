@@ -407,6 +407,9 @@ export function applyDirectorProposal(form: Record<string, unknown>, proposal: D
   const payload = proposal.payload;
   const enhancement = payload.enhancement as StoryboardEnhancementResponse | undefined;
   const scenes = sceneRecords(next);
+  if (enhancement && payload.referencePlanningEvidence) {
+    next.referencePlanningEvidence = payload.referencePlanningEvidence;
+  }
   if (proposal.action === "set_audio_policy") {
     const mode = String(payload.audioMode) as StoryboardAudioPolicy["mode"];
     next.audioPolicy = {

@@ -191,6 +191,32 @@ export interface StoryboardReferenceSummary {
   shotNumbers: number[];
 }
 
+/**
+ * Server-to-runtime visual input. This envelope is assembled only after the
+ * Video Lab API has reloaded the project and authorised the selected asset.
+ * It is deliberately absent from the browser-facing enhancement request.
+ */
+export interface StoryboardVisualReferenceEnvelope {
+  referenceId: string;
+  referenceType: Exclude<StoryboardReferenceType, "voice">;
+  label: string;
+  version: number;
+  shotNumbers: number[];
+  mimeType: "image/jpeg";
+  base64: string;
+  byteLength: number;
+  sha256: string;
+  width: number;
+  height: number;
+  pixelCount: number;
+}
+
+export interface StoryboardEnhancementRuntimeContext {
+  correlationId: string;
+  visualReferences: StoryboardVisualReferenceEnvelope[];
+  textOnlyReferenceIds: string[];
+}
+
 export interface StoryboardAudioPolicy {
   mode: "silent" | "intent_only" | "directed";
   dialogue: "off" | "prompted_only" | "on";
@@ -245,6 +271,32 @@ export interface EnhancedStoryboardShot {
   candidateVariations: string[];
 }
 
+export interface StoryboardVisualReferenceAnalysis {
+  referenceId: string;
+  referenceVersion: number;
+  observedTraits: string[];
+  continuityGuidance: string;
+  declaredVisibleConflicts: string[];
+}
+
+export interface StoryboardVisionSummary {
+  mode: "planning_only";
+  attachedReferenceIds: string[];
+  textOnlyReferenceIds: string[];
+}
+
+export interface StoryboardReferencePlanningEvidence {
+  visualReferenceAnalyses: StoryboardVisualReferenceAnalysis[];
+  vision: StoryboardVisionSummary;
+  referenceStates: Array<{
+    referenceId: string;
+    version: number;
+    shotNumbers: number[];
+  }>;
+  instructionBundle: StoryboardEnhancementResponse["instructionBundle"];
+  generatedAt: string;
+}
+
 export interface StoryboardEnhancementResponse {
   contractVersion: "2";
   polishedMasterPrompt: string;
@@ -252,6 +304,8 @@ export interface StoryboardEnhancementResponse {
   referenceUsagePlan: StoryboardReferenceUsage[];
   assumptions: string[];
   shots: EnhancedStoryboardShot[];
+  visualReferenceAnalyses: StoryboardVisualReferenceAnalysis[];
+  vision: StoryboardVisionSummary;
   provider: "ollama" | "mock";
   model: string;
   instructionBundle: {

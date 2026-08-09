@@ -1092,7 +1092,7 @@ components:
         type: object,
         additionalProperties: false,
         required:
-          [contractVersion, polishedMasterPrompt, continuityBible, referenceUsagePlan, assumptions, shots, provider, model, instructionBundle],
+          [contractVersion, polishedMasterPrompt, continuityBible, referenceUsagePlan, assumptions, shots, visualReferenceAnalyses, vision, provider, model, instructionBundle],
         properties:
           {
             contractVersion: { type: string, const: "2" },
@@ -1106,11 +1106,36 @@ components:
                 type: array,
                 items: { $ref: "#/components/schemas/EnhancedStoryboardShot" },
               },
+            visualReferenceAnalyses:
+              {
+                type: array,
+                maxItems: 6,
+                items: { $ref: "#/components/schemas/StoryboardVisualReferenceAnalysis" },
+              },
+            vision: { $ref: "#/components/schemas/StoryboardVisionSummary" },
             provider: { type: string, enum: [ollama, mock] },
             model: { type: string },
             instructionBundle: { $ref: "#/components/schemas/InstructionBundle" },
           },
       }
+    StoryboardVisualReferenceAnalysis:
+      type: object
+      additionalProperties: false
+      required: [referenceId, referenceVersion, observedTraits, continuityGuidance, declaredVisibleConflicts]
+      properties:
+        referenceId: { type: string, maxLength: 64 }
+        referenceVersion: { type: integer, minimum: 1, maximum: 1000 }
+        observedTraits: { type: array, maxItems: 24, items: { type: string, maxLength: 500 } }
+        continuityGuidance: { type: string, maxLength: 2000 }
+        declaredVisibleConflicts: { type: array, maxItems: 16, items: { type: string, maxLength: 500 } }
+    StoryboardVisionSummary:
+      type: object
+      additionalProperties: false
+      required: [mode, attachedReferenceIds, textOnlyReferenceIds]
+      properties:
+        mode: { type: string, enum: [planning_only] }
+        attachedReferenceIds: { type: array, maxItems: 6, items: { type: string, maxLength: 64 } }
+        textOnlyReferenceIds: { type: array, maxItems: 32, items: { type: string, maxLength: 64 } }
     DirectorActionType:
       type: string
       enum:

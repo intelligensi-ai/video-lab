@@ -22,7 +22,10 @@ import type {
   StoryboardContinuityBible,
   StoryboardEnhancementRequest,
   StoryboardEnhancementResponse,
+  StoryboardEnhancementRuntimeContext,
   StoryboardReferenceSummary,
+  StoryboardReferenceType,
+  StoryboardVisualReferenceEnvelope,
 } from "@video-lab/contracts";
 import {
   chargeCredits,
@@ -55,6 +58,13 @@ import {
   classifyDirectorMessage,
   proposalCopy,
 } from "./director.js";
+import {
+  MAX_DIRECTOR_VISUAL_BYTES,
+  MAX_DIRECTOR_VISUAL_REFERENCES,
+  normalizeVisualReference,
+  sha256,
+  type SupportedReferenceContentType,
+} from "./visualReferences.js";
 type Principal = { uid: string; email: string; admin: boolean };
 let runtime = createRuntimeFromEnv();
 type StoredGeneration = Generation & {
@@ -73,8 +83,14 @@ type StoredAsset = {
   contentType: string;
   expectedSize: number;
   createdAt: string;
-  expiresAt: string;
+  uploadExpiresAt?: string;
+  /** @deprecated Legacy upload-session expiry. It is not asset retention. */
+  expiresAt?: string;
   uploadedAt?: string;
+  sourceSha256?: string;
+  sourceWidth?: number;
+  sourceHeight?: number;
+  sourcePixelCount?: number;
   bytes?: Uint8Array;
 };
 type StoredStoryboardProject = {
@@ -257,6 +273,56 @@ function imageSignatureMatches(bytes: Buffer, contentType: string) {
       bytes.subarray(8, 12).toString("ascii") === "WEBP"
     );
   return false;
+}
+
+function assetUploadExpiresAt(asset: StoredAsset) {
+  return asset.uploadExpiresAt ?? asset.expiresAt ?? asset.createdAt;
+}
+
+async function readStoredAssetBytes(asset: StoredAsset) {
+  let bytes: Buffer;
+  if (localAuth) {
+    if (!asset.bytes) throw problem(404, "asset_not_found", "Private reference was not found");
+    bytes = Buffer.from(asset.bytes);
+  } else {
+    adminApp();
+    [bytes] = await getStorage().bucket().file(asset.objectPath).download();
+  }
+  if (
+    bytes.byteLength !== asset.expectedSize ||
+    !imageSignatureMatches(bytes, asset.contentType) ||
+    (asset.sourceSha256 && sha256(bytes) !== asset.sourceSha256)
+  ) {
+    throw problem(500, "asset_corrupt", "Private reference could not be read safely");
+  }
+  return bytes;
+}
+
+async function ensureNormalizedReference(asset: StoredAsset) {
+  const source = await readStoredAssetBytes(asset);
+  let normalized: Awaited<ReturnType<typeof normalizeVisualReference>>;
+  try {
+    normalized = await normalizeVisualReference(
+      source,
+      asset.contentType as SupportedReferenceContentType,
+    );
+  } catch {
+    throw problem(400, "reference_image_invalid", "The project reference is not a supported still image");
+  }
+  asset.sourceSha256 = normalized.sourceSha256;
+  asset.sourceWidth = normalized.sourceWidth;
+  asset.sourceHeight = normalized.sourceHeight;
+  asset.sourcePixelCount = normalized.sourcePixelCount;
+  await persistAsset(asset);
+  return {
+    bytes: normalized.bytes,
+    contentType: normalized.contentType,
+    byteLength: normalized.byteLength,
+    sha256: normalized.sha256,
+    width: normalized.width,
+    height: normalized.height,
+    pixelCount: normalized.pixelCount,
+  } as const;
 }
 async function uploadedAssetDataUrl(objectPath: string, uid: string) {
   if (!isOwnedUploadPath(objectPath, uid))
@@ -1802,6 +1868,7 @@ const draftKeys = new Set([
   "projectReferences",
   "directorAssumptions",
   "instructionBundle",
+  "referencePlanningEvidence",
   "scenes",
 ]);
 const draftSceneKeys = new Set([
@@ -1833,6 +1900,70 @@ const draftSceneKeys = new Set([
   "promptOrigin",
   "staleReason",
 ]);
+
+function sanitizeReferencePlanningEvidence(value: unknown) {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw problem(400, "invalid_reference_evidence", "Director reference evidence is invalid");
+  }
+  const source = value as Record<string, unknown>;
+  if (Object.keys(source).some((key) => !["visualReferenceAnalyses", "vision", "referenceStates", "instructionBundle", "generatedAt"].includes(key))) {
+    throw problem(400, "invalid_reference_evidence", "Director reference evidence contains unsupported fields");
+  }
+  const requiredText = (entry: unknown, maximum: number) => {
+    if (typeof entry !== "string" || entry.length < 1 || entry.length > maximum) {
+      throw problem(400, "invalid_reference_evidence", "Director reference evidence contains invalid text");
+    }
+    return entry;
+  };
+  if (!Array.isArray(source.visualReferenceAnalyses) || source.visualReferenceAnalyses.length > 6) {
+    throw problem(400, "invalid_reference_evidence", "Director visual analyses are invalid");
+  }
+  const visualReferenceAnalyses = source.visualReferenceAnalyses.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw problem(400, "invalid_reference_evidence", "Director visual analysis is invalid");
+    const analysis = entry as Record<string, unknown>;
+    if (Object.keys(analysis).some((key) => !["referenceId", "referenceVersion", "observedTraits", "continuityGuidance", "declaredVisibleConflicts"].includes(key))) throw problem(400, "invalid_reference_evidence", "Director visual analysis contains unsupported fields");
+    if (!Array.isArray(analysis.observedTraits) || analysis.observedTraits.length > 24 || !Array.isArray(analysis.declaredVisibleConflicts) || analysis.declaredVisibleConflicts.length > 16 || !Number.isInteger(analysis.referenceVersion) || Number(analysis.referenceVersion) < 1 || Number(analysis.referenceVersion) > 1_000) throw problem(400, "invalid_reference_evidence", "Director visual analysis is invalid");
+    return {
+      referenceId: requiredText(analysis.referenceId, 64),
+      referenceVersion: analysis.referenceVersion,
+      observedTraits: analysis.observedTraits.map((item) => requiredText(item, 500)),
+      continuityGuidance: requiredText(analysis.continuityGuidance, 2_000),
+      declaredVisibleConflicts: analysis.declaredVisibleConflicts.map((item) => requiredText(item, 500)),
+    };
+  });
+  const vision = source.vision as Record<string, unknown> | undefined;
+  if (!vision || Array.isArray(vision) || Object.keys(vision).some((key) => !["mode", "attachedReferenceIds", "textOnlyReferenceIds"].includes(key)) || vision.mode !== "planning_only" || !Array.isArray(vision.attachedReferenceIds) || vision.attachedReferenceIds.length > 6 || !Array.isArray(vision.textOnlyReferenceIds) || vision.textOnlyReferenceIds.length > 32) throw problem(400, "invalid_reference_evidence", "Director vision accounting is invalid");
+  const referenceIds = (entries: unknown[]) => entries.map((item) => requiredText(item, 64));
+  const attachedReferenceIds = referenceIds(vision.attachedReferenceIds);
+  const textOnlyReferenceIds = referenceIds(vision.textOnlyReferenceIds);
+  if (new Set([...attachedReferenceIds, ...textOnlyReferenceIds]).size !== attachedReferenceIds.length + textOnlyReferenceIds.length) throw problem(400, "invalid_reference_evidence", "Director vision accounting contains duplicate references");
+  if (!Array.isArray(source.referenceStates) || source.referenceStates.length > 32) throw problem(400, "invalid_reference_evidence", "Director reference states are invalid");
+  const referenceStates = source.referenceStates.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw problem(400, "invalid_reference_evidence", "Director reference state is invalid");
+    const state = entry as Record<string, unknown>;
+    if (Object.keys(state).some((key) => !["referenceId", "version", "shotNumbers"].includes(key)) || !Number.isInteger(state.version) || Number(state.version) < 1 || Number(state.version) > 1_000 || !Array.isArray(state.shotNumbers) || state.shotNumbers.some((shot) => !Number.isInteger(shot) || Number(shot) < 1 || Number(shot) > MAX_STORYBOARD_SCENES)) throw problem(400, "invalid_reference_evidence", "Director reference state is invalid");
+    return { referenceId: requiredText(state.referenceId, 64), version: state.version, shotNumbers: [...new Set(state.shotNumbers as number[])] };
+  });
+  const bundle = source.instructionBundle as Record<string, unknown> | undefined;
+  if (!bundle || Array.isArray(bundle) || Object.keys(bundle).some((key) => !["directorVersion", "enhancerVersion", "framePromptVersion", "hash"].includes(key))) throw problem(400, "invalid_reference_evidence", "Director instruction bundle is invalid");
+  const hash = requiredText(bundle.hash, 64).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(hash)) throw problem(400, "invalid_reference_evidence", "Director instruction bundle hash is invalid");
+  const generatedAt = requiredText(source.generatedAt, 40);
+  if (!Number.isFinite(Date.parse(generatedAt))) throw problem(400, "invalid_reference_evidence", "Director evidence timestamp is invalid");
+  return {
+    visualReferenceAnalyses,
+    vision: { mode: "planning_only", attachedReferenceIds, textOnlyReferenceIds },
+    referenceStates,
+    instructionBundle: {
+      directorVersion: requiredText(bundle.directorVersion, 80),
+      enhancerVersion: requiredText(bundle.enhancerVersion, 80),
+      framePromptVersion: requiredText(bundle.framePromptVersion, 80),
+      hash,
+    },
+    generatedAt,
+  };
+}
 
 function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -1961,6 +2092,9 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
         };
       })
     : [];
+  draft.referencePlanningEvidence = sanitizeReferencePlanningEvidence(
+    draft.referencePlanningEvidence,
+  );
   const encoded = JSON.stringify(draft);
   if (
     Buffer.byteLength(encoded, "utf8") > 512_000 ||
@@ -1993,6 +2127,141 @@ async function validateStoryboardReferenceAssets(form: Record<string, unknown>, 
       }
     }
   }
+}
+
+function canonicalReferenceSummary(
+  reference: Record<string, unknown>,
+  scenes: Array<Record<string, unknown>>,
+): StoryboardReferenceSummary {
+  const sceneIds = Array.isArray(reference.sceneIds)
+    ? new Set(reference.sceneIds.map(String))
+    : new Set<string>();
+  return {
+    id: String(reference.id),
+    type: String(reference.type) as StoryboardReferenceType,
+    label: String(reference.label ?? reference.type),
+    description: String(reference.description ?? ""),
+    lockedTraits: Array.isArray(reference.lockedTraits)
+      ? reference.lockedTraits.map(String)
+      : [],
+    version: Math.min(1_000, Math.max(1, Math.round(Number(reference.version) || 1))),
+    shotNumbers: scenes
+      .map((scene, index) => (sceneIds.has(String(scene.id)) ? index + 1 : 0))
+      .filter((shotNumber) => shotNumber > 0),
+  };
+}
+
+async function resolveEnhancementRuntimeContext(
+  uid: string,
+  project: StoredStoryboardProject,
+  request: StoryboardEnhancementRequest,
+): Promise<{
+  request: StoryboardEnhancementRequest;
+  runtimeContext: StoryboardEnhancementRuntimeContext;
+}> {
+  if (request.projectRevision && request.projectRevision !== project.updatedAt) {
+    throw problem(
+      409,
+      "stale_project_revision",
+      "The project changed before enhancement started; refresh and try again",
+    );
+  }
+  const rawReferences = Array.isArray(project.form.projectReferences)
+    ? (project.form.projectReferences as Array<Record<string, unknown>>)
+    : [];
+  const scenes = directorSceneRecords(project.form);
+  const requestedIds = new Set(request.references.map((reference) => reference.id));
+  const canonicalById = new Map(
+    rawReferences.map((reference) => [
+      String(reference.id),
+      {
+        raw: reference,
+        summary: canonicalReferenceSummary(reference, scenes),
+      },
+    ]),
+  );
+  if ([...requestedIds].some((referenceId) => !canonicalById.has(referenceId))) {
+    throw problem(403, "reference_forbidden", "A project reference is not owned by this project");
+  }
+  const references = rawReferences
+    .map((reference) => canonicalById.get(String(reference.id)))
+    .filter(
+      (entry): entry is NonNullable<typeof entry> =>
+        Boolean(entry) && requestedIds.has(entry.summary.id),
+    );
+  const targetNumbers = new Set(
+    request.targetShotNumber
+      ? [request.targetShotNumber]
+      : Array.from({ length: request.shotCount }, (_, index) => index + 1),
+  );
+  const correlationId = nanoid(20);
+  const visualReferences: StoryboardVisualReferenceEnvelope[] = [];
+  const textOnlyReferenceIds: string[] = [];
+  let totalVisualBytes = 0;
+
+  for (const { raw, summary } of references) {
+    const appliesToRequest =
+      summary.shotNumbers.length === 0 ||
+      summary.shotNumbers.some((shotNumber) => targetNumbers.has(shotNumber));
+    const selectedAssetId = typeof raw.assetId === "string" ? raw.assetId : "";
+    if (
+      !appliesToRequest ||
+      summary.type === "voice" ||
+      !selectedAssetId ||
+      visualReferences.length >= MAX_DIRECTOR_VISUAL_REFERENCES
+    ) {
+      textOnlyReferenceIds.push(summary.id);
+      continue;
+    }
+    const asset = await findAsset(selectedAssetId);
+    if (
+      !asset ||
+      asset.uid !== uid ||
+      !asset.uploadedAt ||
+      asset.purpose !== "reference"
+    ) {
+      throw problem(403, "reference_forbidden", "A project reference asset is not owned by the caller");
+    }
+    const normalized = await ensureNormalizedReference(asset);
+    if (totalVisualBytes + normalized.byteLength > MAX_DIRECTOR_VISUAL_BYTES) {
+      textOnlyReferenceIds.push(summary.id);
+      continue;
+    }
+    totalVisualBytes += normalized.byteLength;
+    visualReferences.push({
+      referenceId: summary.id,
+      referenceType: summary.type as Exclude<StoryboardReferenceType, "voice">,
+      label: summary.label,
+      version: summary.version,
+      shotNumbers: summary.shotNumbers,
+      mimeType: normalized.contentType,
+      base64: normalized.bytes.toString("base64"),
+      byteLength: normalized.byteLength,
+      sha256: normalized.sha256,
+      width: normalized.width,
+      height: normalized.height,
+      pixelCount: normalized.pixelCount,
+    });
+  }
+
+  const canonicalRequest: StoryboardEnhancementRequest = {
+    ...request,
+    projectId: project.id,
+    projectRevision: project.updatedAt,
+    references: references.map(({ summary }) => summary),
+    shots: request.shots.map((shot) => ({
+      ...shot,
+      referenceIds: shot.referenceIds.filter((referenceId) => requestedIds.has(referenceId)),
+    })),
+  };
+  return {
+    request: canonicalRequest,
+    runtimeContext: {
+      correlationId,
+      visualReferences,
+      textOnlyReferenceIds: [...new Set(textOnlyReferenceIds)],
+    },
+  };
 }
 
 async function readStoryboardDraft(uid: string) {
@@ -2362,16 +2631,35 @@ async function createDirectorProposal(
     if (!String(project.form.overallGoal ?? "").trim()) {
       throw problem(400, "missing_creative_brief", "Add a creative brief before asking the Director to rewrite it");
     }
-    payload.enhancement = await enhanceStoryboard(
-      buildDirectorEnhancementRequest(
+    const enhancementRequest = buildDirectorEnhancementRequest(
         project.form,
         message,
         intent,
         resolvedSceneId,
         directorControls(),
         project.id,
-      ),
+      );
+    const resolved = await resolveEnhancementRuntimeContext(
+      uid,
+      project,
+      enhancementRequest,
     );
+    const enhancement = await enhanceStoryboard(
+      resolved.request,
+      resolved.runtimeContext,
+    );
+    payload.enhancement = enhancement;
+    payload.referencePlanningEvidence = {
+      visualReferenceAnalyses: enhancement.visualReferenceAnalyses,
+      vision: enhancement.vision,
+      referenceStates: resolved.request.references.map((reference) => ({
+        referenceId: reference.id,
+        version: reference.version,
+        shotNumbers: reference.shotNumbers,
+      })),
+      instructionBundle: enhancement.instructionBundle,
+      generatedAt: nowIso(),
+    };
   }
   const copy = proposalCopy(intent, project.form, resolvedSceneId);
   const now = nowIso();
@@ -2410,7 +2698,10 @@ async function createDirectorProposal(
   return persistDirectorProposal(proposal);
 }
 
-async function enhanceStoryboard(request: StoryboardEnhancementRequest) {
+async function enhanceStoryboard(
+  request: StoryboardEnhancementRequest,
+  runtimeContext?: StoryboardEnhancementRuntimeContext,
+) {
   const useStableApi = usesIntelligensiRuntimeApi;
   const baseUrl = useStableApi
     ? normalizeRuntimeBaseUrl(process.env.VIDEO_RUNTIME_BASE_URL)
@@ -2444,7 +2735,7 @@ async function enhanceStoryboard(request: StoryboardEnhancementRequest) {
         timeoutMs: Number(
           process.env.VIDEO_STORYBOARD_ENHANCER_TIMEOUT_MS ?? 100_000,
         ),
-      }).enhance(request);
+      }).enhance(request, runtimeContext);
     } catch (error) {
       log("storyboard_enhancer_unavailable", {
         provider: useStableApi ? "intelligensi-api" : "deploy-studio",
@@ -2456,7 +2747,7 @@ async function enhanceStoryboard(request: StoryboardEnhancementRequest) {
     }
   }
   if (localAuth || process.env.VIDEO_STORYBOARD_ENHANCER_PROVIDER === "mock") {
-    return mockStoryboardEnhancement(request);
+    return mockStoryboardEnhancement(request, runtimeContext);
   }
   throw problem(
     503,
@@ -2641,32 +2932,35 @@ app.post(
       if (Buffer.byteLength(JSON.stringify(req.body ?? {}), "utf8") > 512 * 1024) {
         throw problem(413, "storyboard_enhancement_request_too_large", "Storyboard enhancement input exceeds the 512 KiB text-only limit");
       }
-      const request = enhancementRequest(req.body);
+      let enhancement = enhancementRequest(req.body);
+      let runtimeContext: StoryboardEnhancementRuntimeContext | undefined;
       res.setHeader("Cache-Control", "private, no-store");
-      if (request.projectId) {
+      if (enhancement.projectId) {
         const project = await findStoryboardProject(
           res.locals.principal.uid,
-          String(request.projectId),
+          String(enhancement.projectId),
         );
         if (!project) throw problem(404, "project_not_found", "Storyboard project not found");
-        if (request.projectRevision && request.projectRevision !== project.updatedAt) {
-          throw problem(409, "stale_project_revision", "The project changed before enhancement started; refresh and try again");
-        }
-        const storedReferences = Array.isArray(project?.form.projectReferences)
-          ? project.form.projectReferences as Array<Record<string, unknown>>
-          : [];
-        const ownedIds = new Set(storedReferences.map((reference) => String(reference.id ?? "")));
-        if (request.references.some((reference) => !ownedIds.has(reference.id))) {
-          throw problem(403, "reference_forbidden", "A project reference is not owned by this project");
-        }
+        const resolved = await resolveEnhancementRuntimeContext(
+          res.locals.principal.uid,
+          project,
+          enhancement,
+        );
+        enhancement = resolved.request;
+        runtimeContext = resolved.runtimeContext;
+      } else if (enhancement.references.length) {
+        throw problem(
+          400,
+          "project_required",
+          "Project references require a saved project",
+        );
       }
-      const result = await enhanceStoryboard(request);
+      const result = await enhanceStoryboard(enhancement, runtimeContext);
       log("storyboard_enhanced", {
-        uid: res.locals.principal.uid,
-        shotCount: request.shotCount,
-        targeted: request.targetShotNumber !== undefined,
-        provider: result.provider,
-        model: result.model,
+        correlationId: runtimeContext?.correlationId ?? nanoid(20),
+        shotCount: enhancement.shotCount,
+        targeted: enhancement.targetShotNumber !== undefined,
+        visualReferenceCount: runtimeContext?.visualReferences.length ?? 0,
       });
       res.json(result);
     } catch (error) {
@@ -2880,7 +3174,7 @@ app.post("/v1/assets/upload-url", auth, async (req, res, next) => {
       throw problem(400, "invalid_asset_purpose", "Unsupported asset purpose");
     }
     const assetId = nanoid();
-    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    const uploadExpiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
     const objectPath = `users/${res.locals.principal.uid}/uploads/${assetId}-${String(fileName).replace(/[^\w.-]/g, "_")}`;
     await persistAsset({
       id: assetId,
@@ -2890,13 +3184,13 @@ app.post("/v1/assets/upload-url", auth, async (req, res, next) => {
       contentType,
       expectedSize: sizeBytes,
       createdAt: nowIso(),
-      expiresAt,
+      uploadExpiresAt,
     });
     res.status(201).json({
       assetId,
       uploadUrl: `/v1/assets/${assetId}/content`,
       method: "PUT",
-      expiresAt,
+      expiresAt: uploadExpiresAt,
     });
   } catch (e) {
     next(e);
@@ -2920,7 +3214,7 @@ app.put(
         );
       }
       if (
-        new Date(asset.expiresAt).getTime() <= Date.now() ||
+        new Date(assetUploadExpiresAt(asset)).getTime() <= Date.now() ||
         asset.uploadedAt
       ) {
         throw problem(
@@ -2942,25 +3236,45 @@ app.put(
           "Uploaded asset does not match the declared type or size",
         );
       }
+      let normalized: Awaited<ReturnType<typeof normalizeVisualReference>>;
+      try {
+        normalized = await normalizeVisualReference(
+          body,
+          asset.contentType as SupportedReferenceContentType,
+        );
+      } catch (error) {
+        const animated =
+          error instanceof Error && error.message === "reference_image_animated";
+        throw problem(
+          400,
+          animated ? "animated_asset_unsupported" : "invalid_asset",
+          animated
+            ? "Animated images are not supported for storyboard frames or references"
+            : "Uploaded asset is not a valid supported still image",
+        );
+      }
       asset.uploadedAt = nowIso();
-      if (localAuth) asset.bytes = body;
+      asset.sourceSha256 = normalized.sourceSha256;
+      asset.sourceWidth = normalized.sourceWidth;
+      asset.sourceHeight = normalized.sourceHeight;
+      asset.sourcePixelCount = normalized.sourcePixelCount;
+      if (localAuth) {
+        asset.bytes = body;
+      }
       else {
         adminApp();
-        await getStorage()
-          .bucket()
-          .file(asset.objectPath)
-          .save(body, {
+        await getStorage().bucket().file(asset.objectPath).save(body, {
             resumable: false,
             contentType: asset.contentType,
             metadata: { cacheControl: "private,no-store" },
           });
-        await persistAsset(asset);
       }
+      await persistAsset(asset);
       log("asset_uploaded", {
-        uid: asset.uid,
-        assetId: req.params.id,
+        correlationId: nanoid(20),
         purpose: asset.purpose,
         sizeBytes: body.length,
+        normalizedSizeBytes: normalized.byteLength,
       });
       res.status(204).end();
     } catch (error) {
@@ -2974,17 +3288,7 @@ app.get("/v1/assets/:id/content", auth, async (req, res, next) => {
     if (!asset || asset.uid !== res.locals.principal.uid || !asset.uploadedAt) {
       throw problem(404, "asset_not_found", "Private reference was not found");
     }
-    let bytes: Buffer;
-    if (localAuth) {
-      if (!asset.bytes) throw problem(404, "asset_not_found", "Private reference was not found");
-      bytes = Buffer.from(asset.bytes);
-    } else {
-      adminApp();
-      [bytes] = await getStorage().bucket().file(asset.objectPath).download();
-    }
-    if (bytes.byteLength !== asset.expectedSize || !imageSignatureMatches(bytes, asset.contentType)) {
-      throw problem(500, "asset_corrupt", "Private reference could not be read safely");
-    }
+    const bytes = await readStoredAssetBytes(asset);
     res.set({
       "Content-Type": asset.contentType,
       "Content-Length": String(bytes.byteLength),

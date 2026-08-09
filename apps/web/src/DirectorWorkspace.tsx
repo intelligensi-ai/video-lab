@@ -368,6 +368,11 @@ export default function DirectorWorkspace() {
                     <label><span>Name</span><input value={reference.label} onChange={(event) => workspace.updateReference(reference.id, { label: event.target.value })} /></label>
                     <label><span>Visible continuity details</span><textarea value={reference.description} onChange={(event) => workspace.updateReference(reference.id, { description: event.target.value })} /></label>
                     <small>{reference.sceneIds.length ? `Assigned to ${reference.sceneIds.length} scenes` : "Available project-wide"}</small>
+                    <DirectorReferenceEvidence
+                      reference={reference}
+                      sceneIds={scenes.map((scene) => scene.id)}
+                      evidence={workspace.form.referencePlanningEvidence}
+                    />
                     <button type="button" className="vlx-secondary" onClick={() => workspace.removeReference(reference.id)}>Remove</button>
                   </article>
                 ))}
@@ -459,6 +464,42 @@ function FrameCard({ edge, prompt, file, state, position, onPrompt, onRegenerate
   const url = objectUrl(file);
   const busy = state.status === "queued" || state.status === "generating";
   return <article className={`vlx-frame-card ${position}`}><div className="vlx-frame-image">{url ? <img src={url} alt={`${edge} private preview`} /> : <div className="vlx-frame-empty">No approved frame yet</div>}<span>{busy ? "Replacement in progress" : edge}</span>{busy && <i className="vlx-frame-loading" />}</div><div className="vlx-frame-copy"><label><span>{edge} prompt · Z-Image Turbo</span><textarea value={prompt} onChange={(event) => onPrompt(event.target.value)} /></label><button type="button" disabled={busy || prompt.trim().length < 8} onClick={onRegenerate}>{busy ? state.status === "queued" ? "Queued…" : "Generating…" : file ? "Review regeneration" : "Review generation"}</button>{state.status === "failed" && <p className="vlx-error" role="alert">{state.error} The previous frame is unchanged.</p>}</div></article>;
+}
+
+function DirectorReferenceEvidence({
+  reference,
+  sceneIds,
+  evidence,
+}: {
+  reference: StoryboardProjectReference;
+  sceneIds: string[];
+  evidence: ReturnType<typeof useDirectorWorkspace>["form"]["referencePlanningEvidence"];
+}) {
+  if (!evidence) return <div className="vlx-reference-evidence muted"><b>Not analysed</b><small>Ask the Director to use this reference.</small></div>;
+  const state = evidence.referenceStates.find((item) => item.referenceId === reference.id);
+  const currentScope = reference.sceneIds.map((sceneId) => sceneIds.indexOf(sceneId) + 1).filter((number) => number > 0);
+  const stale = !state || state.version !== reference.version || JSON.stringify(state.shotNumbers) !== JSON.stringify(currentScope);
+  const analysis = evidence.visualReferenceAnalyses.find((item) => item.referenceId === reference.id);
+  const status = stale
+    ? "Stale analysis"
+    : evidence.vision.attachedReferenceIds.includes(reference.id)
+      ? "Visual used"
+      : evidence.vision.textOnlyReferenceIds.includes(reference.id)
+        ? "Text only"
+        : "Not used";
+  return (
+    <div className={`vlx-reference-evidence ${stale ? "stale" : ""}`}>
+      <b>{status}</b>
+      {stale && <small>The media version or scene scope changed. Ask the Director again to refresh it.</small>}
+      {!stale && analysis && (
+        <>
+          {analysis.observedTraits.length > 0 && <p>{analysis.observedTraits.join(" · ")}</p>}
+          <small>{analysis.continuityGuidance}</small>
+          {analysis.declaredVisibleConflicts.map((conflict) => <em key={conflict}>{conflict}</em>)}
+        </>
+      )}
+    </div>
+  );
 }
 
 function PrivateReferenceArt({ reference, hero = false }: { reference: StoryboardProjectReference; hero?: boolean }) {

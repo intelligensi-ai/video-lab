@@ -14,6 +14,7 @@ import type {
   StoryboardEnhancementOperation,
   StoryboardEnhancementResponse,
   StoryboardReferenceType,
+  StoryboardReferencePlanningEvidence,
 } from "@video-lab/contracts";
 import { getApiToken } from "./auth.js";
 
@@ -302,6 +303,7 @@ export interface LongFormGenerationPayload {
   projectReferences: StoryboardProjectReference[];
   directorAssumptions?: string[];
   instructionBundle?: StoryboardEnhancementResponse["instructionBundle"];
+  referencePlanningEvidence?: StoryboardReferencePlanningEvidence;
 }
 
 export async function generateLongFormVideo(
