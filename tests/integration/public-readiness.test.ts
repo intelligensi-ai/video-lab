@@ -249,6 +249,100 @@ describe("public runtime readiness boundaries", () => {
       .expect(204);
   });
 
+  it("persists only owner-scoped intermediate frame identifiers and timing metadata", async () => {
+    const owner = "temporal-anchor-owner";
+    const bytes = onePixelPng();
+    const target = await request(app)
+      .post("/v1/assets/upload-url")
+      .set("authorization", `Bearer ${owner}`)
+      .send({
+        fileName: "middle.png",
+        contentType: "image/png",
+        sizeBytes: bytes.length,
+        purpose: "reference",
+      })
+      .expect(201);
+    await request(app)
+      .put(target.body.uploadUrl)
+      .set("authorization", `Bearer ${owner}`)
+      .set("content-type", "image/png")
+      .send(bytes)
+      .expect(204);
+    const form = projectForm(1);
+    (form.scenes[0] as Record<string, unknown>).keyframes = [{
+      id: "middle-anchor",
+      timeSeconds: 2,
+      strength: 0.85,
+      frameAssetId: target.body.assetId,
+    }];
+    (form.scenes[0] as Record<string, unknown>).recommendedControls = ["multi_keyframe"];
+    const created = await request(app)
+      .post("/v1/storyboards/projects")
+      .set("authorization", `Bearer ${owner}`)
+      .send({ title: "Temporal anchors", form })
+      .expect(201);
+    const reopened = await request(app)
+      .get(`/v1/storyboards/projects/${created.body.id}`)
+      .set("authorization", `Bearer ${owner}`)
+      .expect(200);
+    expect(reopened.body.form.scenes[0].keyframes).toEqual([{
+      id: "middle-anchor",
+      timeSeconds: 2,
+      strength: 0.85,
+      frameAssetId: target.body.assetId,
+    }]);
+    expect(reopened.body.form.scenes[0].recommendedControls).toContain("multi_keyframe");
+    expect(JSON.stringify(reopened.body)).not.toMatch(/ObjectPath|Base64|data:image/i);
+  });
+
+  it("rejects cross-user and malformed intermediate frame anchors", async () => {
+    const bytes = onePixelPng();
+    const target = await request(app)
+      .post("/v1/assets/upload-url")
+      .set("authorization", "Bearer temporal-anchor-other")
+      .send({
+        fileName: "private-middle.png",
+        contentType: "image/png",
+        sizeBytes: bytes.length,
+        purpose: "reference",
+      })
+      .expect(201);
+    await request(app)
+      .put(target.body.uploadUrl)
+      .set("authorization", "Bearer temporal-anchor-other")
+      .set("content-type", "image/png")
+      .send(bytes)
+      .expect(204);
+    const crossUser = projectForm(1);
+    (crossUser.scenes[0] as Record<string, unknown>).keyframes = [{
+      id: "private-anchor",
+      timeSeconds: 2,
+      strength: 1,
+      frameAssetId: target.body.assetId,
+    }];
+    const forbidden = await request(app)
+      .post("/v1/storyboards/projects")
+      .set("authorization", "Bearer temporal-anchor-owner-two")
+      .send({ title: "Forbidden temporal anchor", form: crossUser })
+      .expect(403);
+    expect(forbidden.body.code).toBe("asset_forbidden");
+
+    const malformed = projectForm(1);
+    (malformed.scenes[0] as Record<string, unknown>).keyframes = [{
+      id: "unsafe-anchor",
+      timeSeconds: 2,
+      strength: 1,
+      frameAssetId: target.body.assetId,
+      workflow: "arbitrary.json",
+    }];
+    const rejected = await request(app)
+      .post("/v1/storyboards/projects")
+      .set("authorization", "Bearer temporal-anchor-other")
+      .send({ title: "Malformed temporal anchor", form: malformed })
+      .expect(400);
+    expect(rejected.body.code).toBe("invalid_storyboard_draft");
+  });
+
   it("serves project references only to their owner through the same origin", async () => {
     const bytes = onePixelPng();
     const target = await request(app)

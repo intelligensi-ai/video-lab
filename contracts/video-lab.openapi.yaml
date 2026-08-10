@@ -1277,7 +1277,7 @@ components:
         workflowModes:
           {
             type: array,
-            items: { type: string, enum: [text, start, start_end] },
+            items: { type: string, enum: [text, start, start_end, multi_keyframe] },
           }
         operationScopes:
           {
@@ -1295,6 +1295,8 @@ components:
           }
         startFrame: { type: boolean }
         endFrame: { type: boolean }
+        intermediateKeyframes: { type: boolean }
+        maxIntermediateKeyframes: { type: integer, minimum: 0, maximum: 6 }
         generatedOpeningFrame: { type: boolean }
         previousFrameContinuity: { type: boolean }
         sceneAssembly: { type: boolean }

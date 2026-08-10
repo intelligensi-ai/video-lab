@@ -101,6 +101,15 @@ describe("SulphurLtxRuntimeAdapter", () => {
             ok: true,
             ready: true,
             worker: "longform-ltx-storyboard-studio",
+            capabilities: {
+              workflow_modes: ["text", "start", "start_end", "multi_keyframe"],
+            },
+            advanced_video_controls: {
+              start_frame_supported: true,
+              end_frame_supported: true,
+              intermediate_keyframes_supported: true,
+              max_intermediate_keyframes: 6,
+            },
           });
         }
         return Response.json(
@@ -141,6 +150,12 @@ describe("SulphurLtxRuntimeAdapter", () => {
             seedOverride: true,
             summary: "The monolith is fully visible above the mist.",
             continuityOverrides: { lighting: "Warm dawn rim light" },
+            keyframes: [{
+              id: "mid-reveal",
+              timeSeconds: 3.5,
+              strength: 0.9,
+              temporalKeyframeBase64: "data:image/png;base64,a2V5ZnJhbWU=",
+            }],
           },
         ],
       },
@@ -164,8 +179,19 @@ describe("SulphurLtxRuntimeAdapter", () => {
           seed_override: true,
           summary: "The monolith is fully visible above the mist.",
           continuity_overrides: { lighting: "Warm dawn rim light" },
+          keyframes: [{
+            id: "mid-reveal",
+            time_seconds: 3.5,
+            strength: 0.9,
+            image_base64: "data:image/png;base64,a2V5ZnJhbWU=",
+          }],
         },
       ],
+    });
+    expect(health.capabilities).toMatchObject({
+      intermediateKeyframes: true,
+      maxIntermediateKeyframes: 6,
+      workflowModes: ["text", "start", "start_end", "multi_keyframe"],
     });
   });
 
@@ -437,13 +463,15 @@ describe("SulphurLtxRuntimeAdapter", () => {
           ready: true,
           worker: "longform-ltx-storyboard-studio",
           capabilities: {
-            workflow_modes: ["text", "start", "start_end"],
+            workflow_modes: ["text", "start", "start_end", "multi_keyframe"],
             style_reference: "not_supported_by_this_runtime",
             subject_reference: "not_supported_by_this_runtime",
           },
           advanced_video_controls: {
             start_frame_supported: true,
             end_frame_supported: true,
+            intermediate_keyframes_supported: true,
+            max_intermediate_keyframes: 6,
           },
           storyboard: {
             max_scenes: 24,
@@ -464,6 +492,9 @@ describe("SulphurLtxRuntimeAdapter", () => {
       audioPreservation: true,
       styleReference: false,
       subjectReference: false,
+      intermediateKeyframes: true,
+      maxIntermediateKeyframes: 6,
+      featureStatus: { multipleKeyframes: "supported" },
     });
   });
 

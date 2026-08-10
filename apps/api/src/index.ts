@@ -148,6 +148,7 @@ const base64FieldByObjectPathField: Record<string, string> = {
   referenceImageObjectPath: "referenceImageBase64",
   styleReferenceObjectPath: "styleReferenceBase64",
   subjectReferenceObjectPath: "subjectReferenceBase64",
+  temporalKeyframeObjectPath: "temporalKeyframeBase64",
 };
 const assetIdFieldByObjectPathField: Record<string, string> =
   Object.fromEntries(
@@ -214,6 +215,58 @@ async function persistAsset(asset: StoredAsset) {
   adminApp();
   const { bytes: _bytes, ...stored } = asset;
   await getFirestore().collection("assets").doc(asset.id).set(stored);
+}
+
+function validateRuntimeTemporalKeyframes(
+  value: unknown,
+  duration: number,
+  sceneNumber: number,
+  uid: string,
+) {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length > MAX_INTERMEDIATE_KEYFRAMES) {
+    throw problem(
+      400,
+      "invalid_temporal_keyframes",
+      `Scene ${sceneNumber} supports up to ${MAX_INTERMEDIATE_KEYFRAMES} intermediate frame anchors`,
+    );
+  }
+  if (value.length > 0 && runtimeState.capabilities?.intermediateKeyframes !== true) {
+    throw problem(
+      409,
+      "capability_unavailable",
+      "The connected runtime has not verified intermediate frame anchors",
+    );
+  }
+  let previousTime = 0;
+  const identifiers = new Set<string>();
+  value.forEach((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw problem(400, "invalid_temporal_keyframes", `Scene ${sceneNumber} intermediate frame ${index + 1} is invalid`);
+    }
+    const source = entry as Record<string, unknown>;
+    if (Object.keys(source).some((key) => !["id", "timeSeconds", "strength", "temporalKeyframeObjectPath"].includes(key))) {
+      throw problem(400, "invalid_temporal_keyframes", `Scene ${sceneNumber} intermediate frame ${index + 1} contains unsupported fields`);
+    }
+    const id = String(source.id ?? "");
+    const timeSeconds = Number(source.timeSeconds);
+    const strength = Number(source.strength);
+    const objectPath = String(source.temporalKeyframeObjectPath ?? "");
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || identifiers.has(id)) {
+      throw problem(400, "invalid_temporal_keyframes", "Intermediate frame identifiers must be unique and valid");
+    }
+    if (!Number.isFinite(duration) || !Number.isFinite(timeSeconds) || timeSeconds <= previousTime || timeSeconds >= duration) {
+      throw problem(400, "invalid_temporal_keyframes", "Intermediate frame times must be ordered inside the scene duration");
+    }
+    if (!Number.isFinite(strength) || strength < 0 || strength > 1) {
+      throw problem(400, "invalid_temporal_keyframes", "Intermediate frame strength must be between 0 and 1");
+    }
+    if (!objectPath || !isOwnedUploadPath(objectPath, uid)) {
+      throw problem(403, "asset_forbidden", "An intermediate-frame asset is not owned by the caller");
+    }
+    identifiers.add(id);
+    previousTime = timeSeconds;
+  });
 }
 async function findAsset(id: string): Promise<StoredAsset | undefined> {
   const memory = assets.get(id);
@@ -1912,7 +1965,55 @@ const draftSceneKeys = new Set([
   "continuityNotes",
   "promptOrigin",
   "staleReason",
+  "keyframes",
 ]);
+
+const MAX_INTERMEDIATE_KEYFRAMES = 6;
+
+function sanitizeDraftTemporalKeyframes(
+  value: unknown,
+  duration: number,
+  sceneNumber: number,
+) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_INTERMEDIATE_KEYFRAMES) {
+    throw problem(
+      400,
+      "invalid_storyboard_draft",
+      `Shot ${sceneNumber} has an invalid intermediate-frame count`,
+    );
+  }
+  let previousTime = 0;
+  const identifiers = new Set<string>();
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${sceneNumber} intermediate frame ${index + 1} is invalid`);
+    }
+    const source = entry as Record<string, unknown>;
+    if (Object.keys(source).some((key) => !["id", "timeSeconds", "strength", "frameAssetId"].includes(key))) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${sceneNumber} intermediate frame ${index + 1} contains unsupported fields`);
+    }
+    const id = String(source.id ?? "");
+    const timeSeconds = Number(source.timeSeconds);
+    const strength = Number(source.strength);
+    const frameAssetId = String(source.frameAssetId ?? "");
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || identifiers.has(id)) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${sceneNumber} intermediate frame identifiers must be unique and valid`);
+    }
+    if (!Number.isFinite(timeSeconds) || timeSeconds <= previousTime || timeSeconds >= duration) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${sceneNumber} intermediate frame times must be ordered inside the scene duration`);
+    }
+    if (!Number.isFinite(strength) || strength < 0 || strength > 1) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${sceneNumber} intermediate frame strength is invalid`);
+    }
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(frameAssetId)) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${sceneNumber} intermediate frame asset is invalid`);
+    }
+    identifiers.add(id);
+    previousTime = timeSeconds;
+    return { id, timeSeconds, strength, frameAssetId };
+  });
+}
 
 function sanitizeReferencePlanningEvidence(value: unknown) {
   if (value === undefined) return undefined;
@@ -2057,8 +2158,17 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
     scene.recommendedControls = Array.isArray(scene.recommendedControls)
       ? [...new Set(scene.recommendedControls
           .map((control) => String(control))
-          .filter((control) => ["start_frame", "end_frame"].includes(control)))]
+          .filter((control) => ["start_frame", "end_frame", "multi_keyframe"].includes(control)))]
       : [];
+    const sceneDuration = Number(scene.duration);
+    if (!Number.isFinite(sceneDuration) || sceneDuration < 1 || sceneDuration > 8) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${index + 1} duration is invalid`);
+    }
+    scene.keyframes = sanitizeDraftTemporalKeyframes(
+      scene.keyframes,
+      sceneDuration,
+      index + 1,
+    );
     return scene;
   });
   draft.candidateCount = Math.min(4, Math.max(1, Math.round(Number(draft.candidateCount) || 3)));
@@ -2137,6 +2247,20 @@ async function validateStoryboardReferenceAssets(form: Record<string, unknown>, 
       const asset = await findAsset(assetId);
       if (!asset || asset.uid !== uid || !asset.uploadedAt || asset.purpose !== "reference") {
         throw problem(403, "reference_forbidden", "A project reference asset is not owned by the caller");
+      }
+    }
+  }
+  const scenes = Array.isArray(form.scenes)
+    ? form.scenes as Array<Record<string, unknown>>
+    : [];
+  for (const scene of scenes) {
+    const keyframes = Array.isArray(scene.keyframes)
+      ? scene.keyframes as Array<Record<string, unknown>>
+      : [];
+    for (const keyframe of keyframes) {
+      const asset = await findAsset(String(keyframe.frameAssetId ?? ""));
+      if (!asset || asset.uid !== uid || !asset.uploadedAt || asset.purpose !== "reference") {
+        throw problem(403, "asset_forbidden", "An intermediate-frame asset is not owned by the caller");
       }
     }
   }
@@ -2532,6 +2656,7 @@ function directorControls() {
   return [
     capabilities?.startFrame ? "start_frame" : "",
     capabilities?.endFrame ? "end_frame" : "",
+    capabilities?.intermediateKeyframes ? "multi_keyframe" : "",
     capabilities?.previousFrameContinuity ? "previous_frame_continuity" : "",
   ].filter(Boolean);
 }
@@ -3509,6 +3634,23 @@ app.post(
                 "Scene trim must preserve at least 0.25 seconds",
               );
           }
+          if (
+            Array.isArray(scene.keyframes) &&
+            scene.keyframes.length > 0 &&
+            !["project", "scene"].includes(String(operationScope))
+          ) {
+            throw problem(
+              400,
+              "invalid_temporal_keyframes",
+              "Intermediate frame anchors are supported only for scene rendering",
+            );
+          }
+          validateRuntimeTemporalKeyframes(
+            scene.keyframes,
+            duration,
+            index + 1,
+            p.uid,
+          );
         });
       }
       const projectId = String(

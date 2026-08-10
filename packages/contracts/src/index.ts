@@ -88,13 +88,15 @@ export interface RuntimeStatus {
   capabilities?: {
     maxScenes: number;
     maxSceneDurationSeconds: number;
-    workflowModes: Array<"text" | "start" | "start_end">;
+    workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe">;
     operationScopes: Array<
       "project" | "scene" | "start_frame" | "end_frame" | "assembly"
     >;
     postProcess: Array<"none" | "interpolate" | "upscale" | "both">;
     startFrame: boolean;
     endFrame: boolean;
+    intermediateKeyframes?: boolean;
+    maxIntermediateKeyframes?: number;
     generatedOpeningFrame: boolean;
     previousFrameContinuity: boolean;
     sceneAssembly: boolean;

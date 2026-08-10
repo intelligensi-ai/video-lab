@@ -10,32 +10,39 @@ test("landing page presents the creator entry point", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("storyboard exposes editable Gemma and frame controls", async ({
+test("minimal VideoLab exposes only Director, preview, generation and three output choices", async ({
   page,
 }) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("vl_token", "e2e-minimal-video-user"),
+  );
   await page.goto("/videolab");
   const brief = page.getByLabel("Overall artistic goal");
+  await expect(brief).toBeEnabled();
   await brief.fill("A musician follows a blue light through a rain-dark city.");
   await expect(
-    page.getByRole("button", { name: "Polish brief" }),
+    page.getByRole("button", { name: "Improve with Director" }),
   ).toBeEnabled();
-  await page.getByText("First frame / last frame", { exact: true }).click();
-  const firstFrameButtons = page.getByRole("button", {
-    name: "Generate first frame",
-  });
-  const lastFrameButtons = page.getByRole("button", {
-    name: "Generate last frame",
-  });
-  await expect(firstFrameButtons).toHaveCount(1);
-  await expect(firstFrameButtons.first()).toBeVisible();
-  await expect(lastFrameButtons).toHaveCount(1);
-  await expect(lastFrameButtons.first()).toBeVisible();
+  await page.getByLabel("Aspect ratio").selectOption("16:9");
+  await page.getByLabel("Resolution").selectOption("1280x720");
+  await page.getByLabel("Video length").selectOption("5");
+  await expect(page.getByLabel("Aspect ratio")).toHaveValue("16:9");
+  await expect(page.getByLabel("Resolution")).toHaveValue("1280x720");
+  await expect(page.getByLabel("Video length")).toHaveValue("5");
+  await page.getByLabel("Aspect ratio").selectOption("9:16");
+  await expect(page.getByLabel("Resolution")).toHaveValue("720x1280");
+  await page.getByLabel("Video length").selectOption("8");
+  await expect(page.getByLabel("Video length")).toHaveValue("8");
+  await expect(page.getByText("Project references")).toHaveCount(0);
+  await expect(page.getByText("Scene direction")).toHaveCount(0);
+  await expect(page.getByText("First frame / last frame")).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: /Project references/ }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: /Advanced/ }),
-  ).toHaveAttribute("href", "/storyboard/advanced");
+    page.getByRole("button", { name: "3 · Generate video" }),
+  ).toBeEnabled();
+  await expect(page.getByRole("link", { name: /Advanced/ })).toHaveAttribute(
+    "href",
+    "/storyboard/advanced",
+  );
 });
 
 test("mobile storyboard has no page-level horizontal overflow", async ({
@@ -92,7 +99,9 @@ test("Director workspace uses real project state and reviewable proposals", asyn
 
   await director.fill("Generate three draft candidates for this scene.");
   await page.getByRole("button", { name: "Send direction" }).click();
-  await expect(page.getByText("Draft inference", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Draft inference", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByText("Generate 3 draft candidates for Scene 1", { exact: true }),
   ).toBeVisible();
@@ -106,6 +115,49 @@ test("Director workspace uses real project state and reviewable proposals", asyn
   ).toBeVisible();
 });
 
+test("Director exposes intermediate frame anchors only after runtime capability proof", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/runtime/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        provider: "verified-test-runtime",
+        status: "healthy",
+        acceptingSubmissions: true,
+        killSwitch: false,
+        queueDepth: 0,
+        updatedAt: new Date().toISOString(),
+        capabilities: {
+          workflowModes: ["text", "start", "start_end", "multi_keyframe"],
+          intermediateKeyframes: true,
+          maxIntermediateKeyframes: 6,
+        },
+      }),
+    });
+  });
+
+  await page.goto("/storyboard/advanced");
+  await page.getByRole("button", { name: "3 Board" }).click();
+
+  const control = page.getByText("Intermediate frame anchors", {
+    exact: true,
+  });
+  await expect(control).toBeVisible();
+  await expect(page.getByText("0/6", { exact: true })).toBeVisible();
+  await control.click();
+  await expect(
+    page.getByText(
+      "Guide exact compositions between the approved first and last frames. Existing anchors are never retimed automatically.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Add intermediate frame" }),
+  ).toBeVisible();
+});
+
 test("mobile Director workspace switches between the canvas and Director without overflow", async ({
   page,
 }) => {
@@ -113,7 +165,9 @@ test("mobile Director workspace switches between the canvas and Director without
   await page.goto("/storyboard/advanced");
   await expect(page.getByRole("button", { name: /Director$/ })).toBeVisible();
   await page.getByRole("button", { name: /Director$/ }).click();
-  await expect(page.getByRole("textbox", { name: "Message the Director" })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Message the Director" }),
+  ).toBeVisible();
   const dimensions = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
     content: document.documentElement.scrollWidth,

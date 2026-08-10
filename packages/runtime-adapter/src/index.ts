@@ -94,6 +94,12 @@ export interface RuntimeVideoSettings {
     carryPreviousFrame: boolean;
     startFrameBase64?: string;
     endFrameBase64?: string;
+    keyframes?: Array<{
+      id: string;
+      timeSeconds: number;
+      strength: number;
+      temporalKeyframeBase64?: string;
+    }>;
   }>;
 }
 
@@ -106,13 +112,15 @@ export interface RuntimeHealth {
   capabilities?: {
     maxScenes: number;
     maxSceneDurationSeconds: number;
-    workflowModes: Array<"text" | "start" | "start_end">;
+    workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe">;
     operationScopes: Array<
       "project" | "scene" | "start_frame" | "end_frame" | "assembly"
     >;
     postProcess: Array<"none" | "interpolate" | "upscale" | "both">;
     startFrame: boolean;
     endFrame: boolean;
+    intermediateKeyframes?: boolean;
+    maxIntermediateKeyframes?: number;
     generatedOpeningFrame: boolean;
     previousFrameContinuity: boolean;
     sceneAssembly: boolean;
@@ -554,6 +562,12 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
             carry_previous_frame: scene.carryPreviousFrame,
             start_frame_base64: scene.startFrameBase64,
             end_frame_base64: scene.endFrameBase64,
+            keyframes: scene.keyframes?.map((keyframe) => ({
+              id: keyframe.id,
+              time_seconds: keyframe.timeSeconds,
+              strength: keyframe.strength,
+              image_base64: keyframe.temporalKeyframeBase64,
+            })),
           })),
         };
       }
@@ -606,6 +620,8 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       advanced_video_controls?: {
         start_frame_supported?: unknown;
         end_frame_supported?: unknown;
+        intermediate_keyframes_supported?: unknown;
+        max_intermediate_keyframes?: unknown;
       };
       storyboard?: {
         max_scenes?: unknown;
@@ -641,12 +657,12 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
             : `${res.status} ${res.statusText}`,
       };
     }
-    const workflowModes: Array<"text" | "start" | "start_end"> = Array.isArray(
+    const workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe"> = Array.isArray(
       body.capabilities?.workflow_modes,
     )
       ? body.capabilities.workflow_modes.filter(
-          (value): value is "text" | "start" | "start_end" =>
-            ["text", "start", "start_end"].includes(String(value)),
+          (value): value is "text" | "start" | "start_end" | "multi_keyframe" =>
+            ["text", "start", "start_end", "multi_keyframe"].includes(String(value)),
         )
       : ["text", "start", "start_end"];
     const postProcess: Array<"none" | "interpolate" | "upscale" | "both"> =
@@ -681,6 +697,13 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
         startFrame:
           body.advanced_video_controls?.start_frame_supported !== false,
         endFrame: body.advanced_video_controls?.end_frame_supported !== false,
+        intermediateKeyframes:
+          body.advanced_video_controls?.intermediate_keyframes_supported === true &&
+          workflowModes.includes("multi_keyframe"),
+        maxIntermediateKeyframes: Math.min(
+          6,
+          Math.max(0, Number(body.advanced_video_controls?.max_intermediate_keyframes) || 0),
+        ),
         generatedOpeningFrame: true,
         previousFrameContinuity:
           body.storyboard?.continuity === "actual_previous_clip_last_frame",
@@ -695,6 +718,11 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
         audioPolicyModes: ["silent", "intent_only", "directed"],
         featureStatus: {
           startEndFrames: "supported",
+          multipleKeyframes:
+            body.advanced_video_controls?.intermediate_keyframes_supported === true &&
+            workflowModes.includes("multi_keyframe")
+              ? "supported"
+              : "unavailable",
           referencePlanning: "partial",
           referenceConditioning: "unavailable",
           candidateVersions: "client_managed",

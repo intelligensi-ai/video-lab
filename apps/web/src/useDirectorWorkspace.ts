@@ -23,6 +23,7 @@ import {
   getRuntimeStatus,
   listDirectorProposals,
   listStoryboardProjects,
+  MAX_INTERMEDIATE_KEYFRAMES,
   storeUserAsset,
   waitForGeneration,
   type LongFormGenerationPayload,
@@ -127,6 +128,7 @@ function normalizeForm(value: LongFormGenerationPayload): LongFormGenerationPayl
           seedOverrideEnabled: scene.seedOverrideEnabled === true,
           summary: scene.summary ?? "",
           continuityOverrides: scene.continuityOverrides ?? {},
+          keyframes: scene.keyframes ?? [],
         }))
       : fallback.scenes,
   };
@@ -181,6 +183,10 @@ function mergeServerForm(
             ...scene,
             startFrame: local.startFrame,
             endFrame: local.endFrame,
+            keyframes: (scene.keyframes ?? []).map((keyframe) => ({
+              ...keyframe,
+              frame: local.keyframes?.find((candidate) => candidate.id === keyframe.id)?.frame,
+            })),
           }
         : scene;
     }),
@@ -560,6 +566,60 @@ export function useDirectorWorkspace() {
     setNotice("Reference removed from the current project. Previous generated versions remain intact.");
   }, []);
 
+  const addTemporalKeyframe = useCallback(
+    async (sceneId: string, file: File) => {
+      const current = formRef.current;
+      const scene = current.scenes.find((candidate) => candidate.id === sceneId);
+      if (!scene) return;
+      if (runtime?.capabilities?.intermediateKeyframes !== true) {
+        throw new Error("The connected runtime has not verified intermediate frame anchors.");
+      }
+      const existing = [...(scene.keyframes ?? [])].sort(
+        (left, right) => left.timeSeconds - right.timeSeconds,
+      );
+      const maximum = Math.min(
+        MAX_INTERMEDIATE_KEYFRAMES,
+        runtime.capabilities.maxIntermediateKeyframes ?? MAX_INTERMEDIATE_KEYFRAMES,
+      );
+      if (existing.length >= maximum) {
+        throw new Error(`This runtime supports up to ${maximum} intermediate frame anchors per scene.`);
+      }
+      setNotice("Uploading the private intermediate frame anchorâ€¦");
+      const frameAssetId = await storeUserAsset(file, `${scene.id}:temporalKeyframe`);
+      if (!frameAssetId) throw new Error("The intermediate frame upload failed.");
+      const boundaries = [0, ...existing.map((keyframe) => keyframe.timeSeconds), scene.duration];
+      let bestStart = 0;
+      let bestEnd = 0;
+      let largestGap = -1;
+      for (let index = 0; index < boundaries.length - 1; index += 1) {
+        const gap = boundaries[index + 1] - boundaries[index];
+        if (gap > largestGap) {
+          largestGap = gap;
+          bestStart = boundaries[index];
+          bestEnd = boundaries[index + 1];
+        }
+      }
+      const timeSeconds = Number(((bestStart + bestEnd) / 2).toFixed(3));
+      updateScene(scene.id, {
+        keyframes: [
+          ...existing,
+          {
+            id: `keyframe-${crypto.randomUUID()}`,
+            timeSeconds,
+            strength: 1,
+            frame: file,
+            frameAssetId,
+          },
+        ].sort((left, right) => left.timeSeconds - right.timeSeconds),
+        staleReason: scene.acceptedVideoGenerationId
+          ? "An intermediate frame anchor changed after this clip was accepted. Render the scene again before assembly."
+          : scene.staleReason,
+      });
+      setNotice("Private intermediate frame anchor added. Review its time before rendering.");
+    },
+    [runtime, updateScene],
+  );
+
   const executeAcceptedAction = useCallback(
     async (proposal: DirectorProposal) => {
       const sceneId = String(proposal.payload.sceneId ?? proposal.affectedSceneIds[0] ?? formRef.current.scenes[0]?.id ?? "");
@@ -749,6 +809,7 @@ export function useDirectorWorkspace() {
     addReference,
     updateReference,
     removeReference,
+    addTemporalKeyframe,
     sendDirection,
     acceptProposal,
     discardProposal,

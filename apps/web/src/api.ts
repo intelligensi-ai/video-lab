@@ -250,6 +250,7 @@ export interface StoryboardScenePayload {
   transitionDuration: number;
   startFrame?: File;
   endFrame?: File;
+  keyframes?: StoryboardTemporalKeyframePayload[];
   carryPreviousFrame: boolean;
   narrativePurpose?: string;
   firstFramePrompt?: string;
@@ -265,6 +266,84 @@ export interface StoryboardScenePayload {
   referenceIds?: string[];
   recommendedControls?: string[];
   audioIntent?: StoryboardAudioIntent;
+}
+
+export interface StoryboardTemporalKeyframePayload {
+  id: string;
+  timeSeconds: number;
+  strength: number;
+  frame?: File;
+  frameAssetId?: string;
+}
+
+export const MAX_INTERMEDIATE_KEYFRAMES = 6;
+
+export async function prepareTemporalKeyframes(
+  scene: StoryboardScenePayload,
+) {
+  const keyframes = scene.keyframes ?? [];
+  if (keyframes.length > MAX_INTERMEDIATE_KEYFRAMES) {
+    throw new Error(
+      `A scene supports up to ${MAX_INTERMEDIATE_KEYFRAMES} intermediate frame anchors.`,
+    );
+  }
+  let previousTime = 0;
+  const identifiers = new Set<string>();
+  return Promise.all(
+    keyframes.map(async (keyframe, index) => {
+      const unexpected = Object.keys(keyframe).filter(
+        (key) => !["id", "timeSeconds", "strength", "frame", "frameAssetId"].includes(key),
+      );
+      if (unexpected.length) {
+        throw new Error(`Intermediate frame ${index + 1} contains unsupported fields.`);
+      }
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(keyframe.id) || identifiers.has(keyframe.id)) {
+        throw new Error("Intermediate frame identifiers must be unique and valid.");
+      }
+      identifiers.add(keyframe.id);
+      if (
+        !Number.isFinite(keyframe.timeSeconds) ||
+        keyframe.timeSeconds <= previousTime ||
+        keyframe.timeSeconds >= scene.duration
+      ) {
+        throw new Error(
+          "Intermediate frame times must be ordered and fall inside the scene duration.",
+        );
+      }
+      previousTime = keyframe.timeSeconds;
+      if (
+        !Number.isFinite(keyframe.strength) ||
+        keyframe.strength < 0 ||
+        keyframe.strength > 1
+      ) {
+        throw new Error("Intermediate frame strength must be between 0 and 1.");
+      }
+      if (
+        keyframe.frameAssetId !== undefined &&
+        !/^[A-Za-z0-9_-]{8,64}$/.test(keyframe.frameAssetId)
+      ) {
+        throw new Error("The intermediate frame asset identifier is invalid.");
+      }
+      const temporalKeyframeAssetId = keyframe.frame
+        ? await storeUserAsset(
+            keyframe.frame,
+            `${scene.id}:temporalKeyframe:${keyframe.id}`,
+          )
+        : keyframe.frameAssetId;
+      if (!temporalKeyframeAssetId && !keyframe.frame) {
+        throw new Error(`Intermediate frame ${index + 1} requires an image.`);
+      }
+      return {
+        id: keyframe.id,
+        timeSeconds: keyframe.timeSeconds,
+        strength: keyframe.strength,
+        temporalKeyframeAssetId,
+        temporalKeyframeBase64: temporalKeyframeAssetId
+          ? undefined
+          : await fileToDataUrl(keyframe.frame),
+      };
+    }),
+  );
 }
 
 export interface StoryboardProjectReference {
@@ -315,22 +394,21 @@ export async function generateLongFormVideo(
       `Storyboard supports up to ${MAX_STORYBOARD_SCENES} scenes per generation.`,
     );
   }
-  const [globalVisualAnchorAssetId, ...uploadedSceneAssetIds] =
-    await Promise.all([
-      storeUserAsset(payload.globalVisualAnchor, "globalVisualAnchor"),
-      ...payload.scenes.flatMap((scene) => [
-        storeUserAsset(scene.startFrame, `${scene.id}:startFrame`),
-        storeUserAsset(scene.endFrame, `${scene.id}:endFrame`),
-      ]),
-    ]);
+  const globalVisualAnchorAssetId = await storeUserAsset(
+    payload.globalVisualAnchor,
+    "globalVisualAnchor",
+  );
   const globalVisualAnchorBase64 =
     payload.globalVisualAnchorEnabled && !globalVisualAnchorAssetId
       ? await fileToDataUrl(payload.globalVisualAnchor)
       : undefined;
   const storyboard = await Promise.all(
     payload.scenes.map(async (scene, index) => {
-      const startFrameAssetId = uploadedSceneAssetIds[index * 2];
-      const endFrameAssetId = uploadedSceneAssetIds[index * 2 + 1];
+      const [startFrameAssetId, endFrameAssetId, keyframes] = await Promise.all([
+        storeUserAsset(scene.startFrame, `${scene.id}:startFrame`),
+        storeUserAsset(scene.endFrame, `${scene.id}:endFrame`),
+        prepareTemporalKeyframes(scene),
+      ]);
       const startFrameBase64 = startFrameAssetId
         ? undefined
         : await fileToDataUrl(scene.startFrame);
@@ -348,6 +426,7 @@ export async function generateLongFormVideo(
         endFrameBase64,
         startFrameAssetId,
         endFrameAssetId,
+        keyframes,
         seed: scene.seedOverrideEnabled ? scene.seed : payload.globalSeed,
         seedOverride: scene.seedOverrideEnabled === true,
       };
@@ -562,9 +641,10 @@ export async function generateStoryboardScene(
   scene: StoryboardScenePayload,
   projectId: string,
 ) {
-  const [startFrameAssetId, endFrameAssetId] = await Promise.all([
+  const [startFrameAssetId, endFrameAssetId, keyframes] = await Promise.all([
     storeUserAsset(scene.startFrame, `${scene.id}:startFrame`),
     storeUserAsset(scene.endFrame, `${scene.id}:endFrame`),
+    prepareTemporalKeyframes(scene),
   ]);
   const storyboard = [
     {
@@ -573,6 +653,7 @@ export async function generateStoryboardScene(
       endFrame: undefined,
       startFrameAssetId,
       endFrameAssetId,
+      keyframes,
       seed: scene.seedOverrideEnabled ? scene.seed : payload.globalSeed,
       seedOverride: scene.seedOverrideEnabled === true,
       summary: scene.summary,
@@ -661,6 +742,7 @@ export async function assembleStoryboardFilm(
           ...scene,
           startFrame: undefined,
           endFrame: undefined,
+          keyframes: undefined,
           trimStart: 0,
           trimEnd: scene.duration,
           seed: scene.seedOverrideEnabled ? scene.seed : payload.globalSeed,

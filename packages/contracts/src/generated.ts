@@ -815,11 +815,13 @@ export interface components {
         RuntimeCapabilities: {
             maxScenes: number;
             maxSceneDurationSeconds: number;
-            workflowModes: ("text" | "start" | "start_end")[];
+            workflowModes: ("text" | "start" | "start_end" | "multi_keyframe")[];
             operationScopes: ("project" | "scene" | "start_frame" | "end_frame" | "assembly")[];
             postProcess: ("none" | "interpolate" | "upscale" | "both")[];
             startFrame: boolean;
             endFrame: boolean;
+            intermediateKeyframes?: boolean;
+            maxIntermediateKeyframes?: number;
             generatedOpeningFrame: boolean;
             previousFrameContinuity: boolean;
             sceneAssembly: boolean;
