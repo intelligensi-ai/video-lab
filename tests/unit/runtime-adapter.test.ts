@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RuntimeCapacityPendingError, SulphurLtxRuntimeAdapter } from "../../packages/runtime-adapter/src/index.js";
+import { RuntimeCapacityPendingError, RuntimeLeaseUnavailableError, SulphurLtxRuntimeAdapter } from "../../packages/runtime-adapter/src/index.js";
 
 describe("SulphurLtxRuntimeAdapter", () => {
   afterEach(() => {
@@ -407,6 +407,25 @@ describe("SulphurLtxRuntimeAdapter", () => {
       retryAfterSeconds: 17,
     });
     expect(calls[0]).toContain("/capacity-demand");
+  });
+
+  it("classifies a lost runtime lease without exposing the upstream response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      code: "runtime_unavailable",
+      detail: "private provider address and internal diagnostics",
+    }, { status: 503, headers: { "Retry-After": "11" } })));
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.test",
+      payloadMode: "intelligensi-api",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+    const error = await adapter.getGenerationStatus("lost-worker-job").catch((caught) => caught);
+    expect(error).toMatchObject<Partial<RuntimeLeaseUnavailableError>>({
+      name: "RuntimeLeaseUnavailableError",
+      message: "runtime_lease_unavailable",
+      retryAfterSeconds: 11,
+    });
+    expect(String(error)).not.toContain("private provider address");
   });
 
   it("projects only safe LongForm capability metadata", async () => {

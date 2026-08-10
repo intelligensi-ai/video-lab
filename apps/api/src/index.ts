@@ -40,6 +40,7 @@ import {
   mockStoryboardEnhancement,
   SulphurLtxRuntimeAdapter,
   RuntimeCapacityPendingError,
+  RuntimeLeaseUnavailableError,
   type RuntimeGenerationInput,
 } from "@video-lab/runtime-adapter";
 import { log, nowIso, problem } from "@video-lab/shared";
@@ -70,6 +71,7 @@ let runtime = createRuntimeFromEnv();
 type StoredGeneration = Generation & {
   uid: string;
   runtimeJobId?: string;
+  assemblyRuntimeAttempt?: number;
   outputBytes?: Uint8Array;
   outputContentType?: string;
   outputObjectPath?: string;
@@ -167,6 +169,7 @@ function publicGeneration(g: StoredGeneration): Generation {
   const {
     uid: _uid,
     runtimeJobId: _runtimeJobId,
+    assemblyRuntimeAttempt: _assemblyRuntimeAttempt,
     outputBytes: _outputBytes,
     outputContentType: _outputContentType,
     outputObjectPath: _outputObjectPath,
@@ -513,7 +516,10 @@ async function runtimeGeneration(
     prompt: g.prompt,
     settings,
     inputAssetUrls: [],
-    idempotencyKey: `video-lab:${g.id}`,
+    idempotencyKey:
+      settings.operationScope === "assembly"
+        ? `video-lab:${g.id}:assembly-attempt-${Math.max(1, g.assemblyRuntimeAttempt ?? 1)}`
+        : `video-lab:${g.id}`,
   };
 }
 export function localAuthEnabled(env: NodeJS.ProcessEnv = process.env) {
@@ -1844,6 +1850,13 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
     audioPolicy,
     requestedCandidateCount: source.requestedCandidateCount as number,
   };
+}
+
+function assemblyRecoveryAttemptLimit(env: NodeJS.ProcessEnv = process.env) {
+  const configured = Number(env.VIDEO_LAB_ASSEMBLY_RECOVERY_ATTEMPTS ?? 3);
+  return Number.isInteger(configured)
+    ? Math.max(1, Math.min(5, configured))
+    : 3;
 }
 
 const draftKeys = new Set([
@@ -3981,15 +3994,22 @@ async function processQueueItem(workerId = "local-worker") {
   }
   let finishClaim = true;
   try {
+    const assemblyRuntimeAttempt =
+      g.settings.operationScope === "assembly"
+        ? Math.max(1, g.assemblyRuntimeAttempt ?? 1)
+        : undefined;
     const preparing = {
       ...g,
+      ...(assemblyRuntimeAttempt ? { assemblyRuntimeAttempt } : {}),
       status: "preparing" as const,
       queuePosition: 0,
       updatedAt: nowIso(),
     };
     gens.set(g.id, preparing);
     await persistGeneration(preparing);
-    const sub = await runtime.submitGeneration(await runtimeGeneration(g));
+    const sub = await runtime.submitGeneration(
+      await runtimeGeneration(preparing),
+    );
     const submitted: StoredGeneration = {
       ...preparing,
       runtimeJobId: sub.runtimeJobId,
@@ -4034,22 +4054,40 @@ async function processQueueItem(workerId = "local-worker") {
       await completeGenerationFromRuntime(gens.get(g.id)!, sub.runtimeJobId, st.qualityAssessment);
     } else throw new Error(st.message ?? st.state);
   } catch (e) {
-    if (e instanceof RuntimeCapacityPendingError) {
+    const currentAssemblyAttempt = Math.max(
+      1,
+      (gens.get(g.id) ?? g).assemblyRuntimeAttempt ?? 1,
+    );
+    const recoverableAssemblyLeaseLoss =
+      e instanceof RuntimeLeaseUnavailableError &&
+      g.settings.operationScope === "assembly" &&
+      currentAssemblyAttempt < assemblyRecoveryAttemptLimit();
+    if (e instanceof RuntimeCapacityPendingError || recoverableAssemblyLeaseLoss) {
       finishClaim = false;
       const waiting: StoredGeneration = {
         ...(gens.get(g.id) ?? g),
         status: "queued",
         queuePosition: Math.max(1, g.queuePosition ?? 1),
-        runtimeMessage: "Preparing generation capacity",
+        runtimeMessage: recoverableAssemblyLeaseLoss
+          ? "Runtime changed; preparing assembly recovery"
+          : "Preparing generation capacity",
+        ...(recoverableAssemblyLeaseLoss
+          ? { assemblyRuntimeAttempt: currentAssemblyAttempt + 1 }
+          : {}),
         safeErrorMessage: undefined,
         updatedAt: nowIso(),
       };
+      delete waiting.runtimeJobId;
       gens.set(g.id, waiting);
       await persistGeneration(waiting);
       await requeueQueueItem(item);
-      log("generation_waiting_for_capacity", {
+      log(recoverableAssemblyLeaseLoss ? "assembly_requeued_after_runtime_change" : "generation_waiting_for_capacity", {
         generationId: g.id,
         retryAfterSeconds: e.retryAfterSeconds,
+        queueAttempt: item.attempt,
+        ...(recoverableAssemblyLeaseLoss
+          ? { assemblyRuntimeAttempt: currentAssemblyAttempt }
+          : {}),
       });
       return true;
     }

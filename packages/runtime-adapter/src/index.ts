@@ -147,6 +147,46 @@ export class RuntimeCapacityPendingError extends Error {
   }
 }
 
+export class RuntimeLeaseUnavailableError extends Error {
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds = 20) {
+    super("runtime_lease_unavailable");
+    this.name = "RuntimeLeaseUnavailableError";
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+async function runtimeLeaseUnavailableResponse(
+  response: Response,
+): Promise<RuntimeLeaseUnavailableError | undefined> {
+  if (![404, 409, 503].includes(response.status)) return undefined;
+  let code = "";
+  try {
+    const body = (await response.clone().json()) as { code?: unknown };
+    code = typeof body.code === "string" ? body.code : "";
+  } catch {
+    // A 503 is still an unavailable lease even when the upstream body is empty.
+  }
+  if (
+    response.status === 503 ||
+    [
+      "job_not_found",
+      "runtime_job_lost",
+      "runtime_job_not_found",
+      "runtime_unavailable",
+      "runtime_warming",
+      "runtime_capacity_pending",
+      "runtime_lease_expired",
+    ].includes(code)
+  ) {
+    return new RuntimeLeaseUnavailableError(
+      Number(response.headers.get("retry-after")) || 20,
+    );
+  }
+  return undefined;
+}
+
 export interface RuntimeGenerationStatus {
   state:
     | "queued"
@@ -753,18 +793,28 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
   async submitGeneration(
     input: RuntimeGenerationInput,
   ): Promise<RuntimeSubmission> {
-    const res = await this.request(
-      this.cfg.submitPath ?? this.defaultPath("submit"),
-      {
-        method: "POST",
-        headers: input.idempotencyKey
-          ? { "Idempotency-Key": input.idempotencyKey }
-          : undefined,
-        body: JSON.stringify(this.payload(input)),
-      },
-    );
+    let res: Response;
+    try {
+      res = await this.request(
+        this.cfg.submitPath ?? this.defaultPath("submit"),
+        {
+          method: "POST",
+          headers: input.idempotencyKey
+            ? { "Idempotency-Key": input.idempotencyKey }
+            : undefined,
+          body: JSON.stringify(this.payload(input)),
+        },
+      );
+    } catch (error) {
+      if (input.settings.operationScope === "assembly") {
+        throw new RuntimeLeaseUnavailableError();
+      }
+      throw error;
+    }
 
     if (!res.ok) {
+      const leaseError = await runtimeLeaseUnavailableResponse(res);
+      if (leaseError) throw new RuntimeCapacityPendingError(leaseError.retryAfterSeconds);
       const responseText = await res.text();
       if (res.status === 429 && /runtime_capacity_pending|rate_limited/i.test(responseText)) {
         throw new RuntimeCapacityPendingError(Number(res.headers.get("retry-after")) || 20);
@@ -789,8 +839,17 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       this.cfg.statusPath ?? this.defaultPath("status"),
       runtimeJobId,
     );
-    const res = await this.request(path);
-    if (!res.ok) throw new Error(`Sulphur status failed: ${await res.text()}`);
+    let res: Response;
+    try {
+      res = await this.request(path);
+    } catch {
+      throw new RuntimeLeaseUnavailableError();
+    }
+    if (!res.ok) {
+      const leaseError = await runtimeLeaseUnavailableResponse(res);
+      if (leaseError) throw leaseError;
+      throw new Error(`Sulphur status failed: ${await res.text()}`);
+    }
 
     const json = (await res.json()) as {
       status?: string;
@@ -868,13 +927,21 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       this.cfg.outputPath ?? this.defaultPath("output"),
       runtimeJobId,
     );
-    let res = await this.request(path, {
-      headers: {
-        accept:
-          "video/mp4, video/webm, image/png, image/jpeg, image/webp, application/octet-stream",
-      },
-    });
+    let res: Response;
+    try {
+      res = await this.request(path, {
+        headers: {
+          accept:
+            "video/mp4, video/webm, image/png, image/jpeg, image/webp, application/octet-stream",
+        },
+      });
+    } catch {
+      throw new RuntimeLeaseUnavailableError();
+    }
     let durationSeconds = 0;
+
+    const leaseError = await runtimeLeaseUnavailableResponse(res);
+    if (leaseError) throw leaseError;
 
     if (!res.ok && this.cfg.payloadMode === "deploy-studio") {
       const statusPath = this.path(
