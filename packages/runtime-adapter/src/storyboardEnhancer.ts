@@ -50,7 +50,7 @@ const shotKeys = new Set([
   "audioIntent",
   "candidateVariations",
 ]);
-const enhancementProviders = new Set(["ollama", "mock"]);
+const enhancementProviders = new Set(["ollama", "llama_cpp", "mock"]);
 const MAX_ENHANCEMENT_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_ENHANCEMENT_RESPONSE_BYTES = 2 * 1024 * 1024;
 const DIRECTOR_CONTEXT_TOKENS = 32_768;
@@ -404,6 +404,10 @@ export class DeployStudioStoryboardEnhancerClient {
       throw new Error(
         response.status === 413
           ? "storyboard_context_budget_exceeded"
+          : response.status === 400
+          ? "storyboard_enhancement_request_rejected"
+          : response.status === 404 || response.status === 409
+          ? "storyboard_enhancement_contract_incompatible"
           : response.status === 503
           ? "storyboard_enhancer_unavailable"
           : "storyboard_enhancement_failed",
@@ -412,7 +416,7 @@ export class DeployStudioStoryboardEnhancerClient {
     }
     try {
       const result = validateStoryboardEnhancement(await boundedJson(response), request, runtimeContext);
-      if (runtimeApi && result.provider !== "ollama") {
+      if (runtimeApi && result.provider === "mock") {
         throw new Error("stable_runtime_provider_invalid");
       }
       return result;

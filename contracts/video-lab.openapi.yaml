@@ -1113,7 +1113,7 @@ components:
                 items: { $ref: "#/components/schemas/StoryboardVisualReferenceAnalysis" },
               },
             vision: { $ref: "#/components/schemas/StoryboardVisionSummary" },
-            provider: { type: string, enum: [ollama, mock] },
+            provider: { type: string, enum: [ollama, llama_cpp, mock] },
             model: { type: string },
             instructionBundle: { $ref: "#/components/schemas/InstructionBundle" },
           },

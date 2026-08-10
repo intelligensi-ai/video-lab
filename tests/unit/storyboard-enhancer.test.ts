@@ -133,6 +133,42 @@ describe("storyboard enhancer contract", () => {
     );
   });
 
+  it("keeps stable contract rejection distinct in server-side diagnostics", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(
+        JSON.stringify({ code: "invalid_request" }),
+        { status: 400, headers: { "content-type": "application/problem+json" } },
+      )),
+    );
+    const client = new DeployStudioStoryboardEnhancerClient({
+      baseUrl: "https://api.intelligensi.ai",
+      token: "server-only-key",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+    await expect(client.enhance(request, runtimeContext)).rejects.toThrow(
+      "storyboard_enhancement_request_rejected",
+    );
+  });
+
+  it("keeps runtime contract incompatibility distinct in server-side diagnostics", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(
+        JSON.stringify({ code: "runtime_contract_incompatible" }),
+        { status: 409, headers: { "content-type": "application/problem+json" } },
+      )),
+    );
+    const client = new DeployStudioStoryboardEnhancerClient({
+      baseUrl: "https://api.intelligensi.ai",
+      token: "server-only-key",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+    await expect(client.enhance(request, runtimeContext)).rejects.toThrow(
+      "storyboard_enhancement_contract_incompatible",
+    );
+  });
+
   it("rejects unknown references, unsupported controls and wrong candidate counts", () => {
     const unknownReference = mockStoryboardEnhancement(request);
     unknownReference.shots[0].referenceIds = ["ref_unknown_01"];
@@ -240,8 +276,8 @@ describe("storyboard enhancer contract", () => {
         });
         return Response.json({
           ...mockStoryboardEnhancement(request),
-          provider: "ollama",
-          model: "gemma4:e4b",
+          provider: "llama_cpp",
+          model: "Bonsai-27B-Q1_0",
         });
       }),
     );
@@ -252,6 +288,8 @@ describe("storyboard enhancer contract", () => {
     });
 
     await expect(client.enhance(request, runtimeContext)).resolves.toMatchObject({
+      provider: "llama_cpp",
+      model: "Bonsai-27B-Q1_0",
       shots: [{ shotNumber: 1 }, { shotNumber: 2 }],
     });
   });

@@ -731,7 +731,7 @@ export interface components {
             visualReferenceAnalyses: components["schemas"]["StoryboardVisualReferenceAnalysis"][];
             vision: components["schemas"]["StoryboardVisionSummary"];
             /** @enum {string} */
-            provider: "ollama" | "mock";
+            provider: "ollama" | "llama_cpp" | "mock";
             model: string;
             instructionBundle: components["schemas"]["InstructionBundle"];
         };
