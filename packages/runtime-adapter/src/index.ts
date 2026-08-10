@@ -78,6 +78,13 @@ export interface RuntimeVideoSettings {
   referenceImageBase64?: string;
   styleReferenceBase64?: string;
   subjectReferenceBase64?: string;
+  referenceConditioning?: Array<{
+    id: string;
+    type: "character" | "location" | "product" | "style";
+    version: number;
+    imageBase64: string;
+    sceneIds: string[];
+  }>;
   storyboard?: Array<{
     id: string;
     title: string;
@@ -92,6 +99,7 @@ export interface RuntimeVideoSettings {
     transition: string;
     transitionDuration: number;
     carryPreviousFrame: boolean;
+    referenceIds?: string[];
     startFrameBase64?: string;
     endFrameBase64?: string;
     keyframes?: Array<{
@@ -112,7 +120,7 @@ export interface RuntimeHealth {
   capabilities?: {
     maxScenes: number;
     maxSceneDurationSeconds: number;
-    workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe">;
+    workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe" | "reference">;
     operationScopes: Array<
       "project" | "scene" | "start_frame" | "end_frame" | "assembly"
     >;
@@ -121,6 +129,8 @@ export interface RuntimeHealth {
     endFrame: boolean;
     intermediateKeyframes?: boolean;
     maxIntermediateKeyframes?: number;
+    referenceConditioning?: boolean;
+    maxSceneReferenceImages?: number;
     generatedOpeningFrame: boolean;
     previousFrameContinuity: boolean;
     sceneAssembly: boolean;
@@ -546,6 +556,13 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
             sha256: source.sha256,
           })),
           global_visual_anchor_base64: settings.globalVisualAnchorBase64,
+          reference_conditioning: settings.referenceConditioning?.map((reference) => ({
+            id: reference.id,
+            type: reference.type,
+            version: reference.version,
+            image_base64: reference.imageBase64,
+            scene_ids: reference.sceneIds,
+          })),
           storyboard: storyboard.map((scene) => ({
             id: scene.id,
             title: scene.title,
@@ -560,6 +577,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
             transition: scene.transition,
             transition_duration: scene.transitionDuration,
             carry_previous_frame: scene.carryPreviousFrame,
+            reference_ids: scene.referenceIds,
             start_frame_base64: scene.startFrameBase64,
             end_frame_base64: scene.endFrameBase64,
             keyframes: scene.keyframes?.map((keyframe) => ({
@@ -616,12 +634,16 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
         workflow_modes?: unknown;
         style_reference?: unknown;
         subject_reference?: unknown;
+        reference_conditioning?: unknown;
+        project_reference_planning?: unknown;
       };
       advanced_video_controls?: {
         start_frame_supported?: unknown;
         end_frame_supported?: unknown;
         intermediate_keyframes_supported?: unknown;
         max_intermediate_keyframes?: unknown;
+        reference_conditioning_supported?: unknown;
+        max_scene_reference_images?: unknown;
       };
       storyboard?: {
         max_scenes?: unknown;
@@ -657,12 +679,12 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
             : `${res.status} ${res.statusText}`,
       };
     }
-    const workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe"> = Array.isArray(
+    const workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe" | "reference"> = Array.isArray(
       body.capabilities?.workflow_modes,
     )
       ? body.capabilities.workflow_modes.filter(
-          (value): value is "text" | "start" | "start_end" | "multi_keyframe" =>
-            ["text", "start", "start_end", "multi_keyframe"].includes(String(value)),
+          (value): value is "text" | "start" | "start_end" | "multi_keyframe" | "reference" =>
+            ["text", "start", "start_end", "multi_keyframe", "reference"].includes(String(value)),
         )
       : ["text", "start", "start_end"];
     const postProcess: Array<"none" | "interpolate" | "upscale" | "both"> =
@@ -704,6 +726,13 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
           6,
           Math.max(0, Number(body.advanced_video_controls?.max_intermediate_keyframes) || 0),
         ),
+        referenceConditioning:
+          body.capabilities?.reference_conditioning === "supported" &&
+          body.advanced_video_controls?.reference_conditioning_supported === true,
+        maxSceneReferenceImages: Math.min(
+          6,
+          Math.max(0, Number(body.advanced_video_controls?.max_scene_reference_images) || 0),
+        ),
         generatedOpeningFrame: true,
         previousFrameContinuity:
           body.storyboard?.continuity === "actual_previous_clip_last_frame",
@@ -723,8 +752,17 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
             workflowModes.includes("multi_keyframe")
               ? "supported"
               : "unavailable",
-          referencePlanning: "partial",
-          referenceConditioning: "unavailable",
+          referencePlanning:
+            body.capabilities?.project_reference_planning === "director_and_runtime"
+              ? "supported"
+              : body.capabilities?.project_reference_planning === "director_only"
+                ? "partial"
+                : "unavailable",
+          referenceConditioning:
+            body.capabilities?.reference_conditioning === "supported" &&
+            body.advanced_video_controls?.reference_conditioning_supported === true
+              ? "supported"
+              : "unavailable",
           candidateVersions: "client_managed",
           qualityAssessment: "partial",
           retake: "unavailable",

@@ -102,13 +102,17 @@ describe("SulphurLtxRuntimeAdapter", () => {
             ready: true,
             worker: "longform-ltx-storyboard-studio",
             capabilities: {
-              workflow_modes: ["text", "start", "start_end", "multi_keyframe"],
+              workflow_modes: ["text", "start", "start_end", "multi_keyframe", "reference"],
+              reference_conditioning: "supported",
+              project_reference_planning: "director_and_runtime",
             },
             advanced_video_controls: {
               start_frame_supported: true,
               end_frame_supported: true,
               intermediate_keyframes_supported: true,
               max_intermediate_keyframes: 6,
+              reference_conditioning_supported: true,
+              max_scene_reference_images: 6,
             },
           });
         }
@@ -135,6 +139,13 @@ describe("SulphurLtxRuntimeAdapter", () => {
         fps: 24,
         overallGoal: "Keep the monolith visually consistent",
         negativePrompt: "flicker",
+        referenceConditioning: [{
+          id: "reference-monolith",
+          type: "product",
+          version: 2,
+          imageBase64: "data:image/jpeg;base64,cmVmZXJlbmNl",
+          sceneIds: ["scene-1"],
+        }],
         storyboard: [
           {
             id: "scene-1",
@@ -147,6 +158,7 @@ describe("SulphurLtxRuntimeAdapter", () => {
             transition: "cut",
             transitionDuration: 0.75,
             carryPreviousFrame: true,
+            referenceIds: ["reference-monolith"],
             seedOverride: true,
             summary: "The monolith is fully visible above the mist.",
             continuityOverrides: { lighting: "Warm dawn rim light" },
@@ -166,6 +178,13 @@ describe("SulphurLtxRuntimeAdapter", () => {
       overall_goal: "Keep the monolith visually consistent",
       negative_prompt: "flicker",
       resolution: "1024x576",
+      reference_conditioning: [{
+        id: "reference-monolith",
+        type: "product",
+        version: 2,
+        image_base64: "data:image/jpeg;base64,cmVmZXJlbmNl",
+        scene_ids: ["scene-1"],
+      }],
       storyboard: [
         {
           id: "scene-1",
@@ -176,6 +195,7 @@ describe("SulphurLtxRuntimeAdapter", () => {
           seed: 1337,
           transition: "cut",
           carry_previous_frame: true,
+          reference_ids: ["reference-monolith"],
           seed_override: true,
           summary: "The monolith is fully visible above the mist.",
           continuity_overrides: { lighting: "Warm dawn rim light" },
@@ -191,7 +211,13 @@ describe("SulphurLtxRuntimeAdapter", () => {
     expect(health.capabilities).toMatchObject({
       intermediateKeyframes: true,
       maxIntermediateKeyframes: 6,
-      workflowModes: ["text", "start", "start_end", "multi_keyframe"],
+      referenceConditioning: true,
+      maxSceneReferenceImages: 6,
+      workflowModes: ["text", "start", "start_end", "multi_keyframe", "reference"],
+      featureStatus: {
+        referencePlanning: "supported",
+        referenceConditioning: "supported",
+      },
     });
   });
 

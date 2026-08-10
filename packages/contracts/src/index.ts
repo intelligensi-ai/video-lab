@@ -88,7 +88,7 @@ export interface RuntimeStatus {
   capabilities?: {
     maxScenes: number;
     maxSceneDurationSeconds: number;
-    workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe">;
+    workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe" | "reference">;
     operationScopes: Array<
       "project" | "scene" | "start_frame" | "end_frame" | "assembly"
     >;
@@ -97,6 +97,8 @@ export interface RuntimeStatus {
     endFrame: boolean;
     intermediateKeyframes?: boolean;
     maxIntermediateKeyframes?: number;
+    referenceConditioning?: boolean;
+    maxSceneReferenceImages?: number;
     generatedOpeningFrame: boolean;
     previousFrameContinuity: boolean;
     sceneAssembly: boolean;

@@ -65,6 +65,15 @@ describe("openapi contract", () => {
     expect(
       doc.components.schemas.RuntimeStatus.properties.capabilities.$ref,
     ).toBe("#/components/schemas/RuntimeCapabilities");
+    expect(
+      doc.components.schemas.RuntimeCapabilities.properties.workflowModes.items.enum,
+    ).toContain("reference");
+    expect(
+      doc.components.schemas.RuntimeCapabilities.properties.referenceConditioning,
+    ).toEqual({ type: "boolean" });
+    expect(
+      doc.components.schemas.RuntimeCapabilities.properties.maxSceneReferenceImages,
+    ).toMatchObject({ type: "integer", maximum: 6 });
   });
   it("defines a closed Director proposal contract", () => {
     expect(doc.components.schemas.DirectorProposalRequest.additionalProperties).toBe(false);
@@ -120,5 +129,11 @@ describe("Deploy Studio runtime API compatibility", () => {
       runtime.components.schemas.StoryboardEnhancementRequest.properties
         .shotCount.maximum,
     ).toBe(24);
+    expect(
+      runtime.components.schemas.RuntimeFeatures.properties.workflowModes.items.enum,
+    ).toContain("reference");
+    expect(
+      runtime.components.schemas.RuntimeFeatures.properties.referenceConditioning,
+    ).toEqual({ type: "boolean" });
   });
 });

@@ -39,6 +39,227 @@ describe('generation worker failure handling', () => {
     expect(generation.body.safeErrorMessage).toContain('runtime timeout');
   }, 15_000);
 
+  it('rejects browser-supplied hydrated reference payloads', async () => {
+    const { app } = await import('../../apps/api/src/index.js');
+    const auth = { authorization: 'Bearer forged-reference-payload-user' };
+    const response = await request(app)
+      .post('/v1/generations')
+      .set(auth)
+      .set('Idempotency-Key', 'forged-reference-payload-key')
+      .send({
+        prompt: 'A cinematic scene with a privately managed reference.',
+        settings: {
+          aspectRatio: '16:9',
+          durationSeconds: 4,
+          quality: 'draft',
+          referenceConditioning: [{
+            id: 'reference-forged-01',
+            type: 'character',
+            version: 1,
+            imageBase64: 'data:image/png;base64,Zm9yZ2Vk',
+            sceneIds: ['scene-1'],
+          }],
+        },
+      })
+      .expect(400);
+
+    expect(response.body.code).toBe('invalid_reference_conditioning');
+    expect(JSON.stringify(response.body)).not.toContain('Zm9yZ2Vk');
+  });
+
+  it('rejects another user\'s private reference during project persistence', async () => {
+    const { app } = await import('../../apps/api/src/index.js');
+    const ownerAuth = { authorization: 'Bearer reference-asset-owner' };
+    const attackerAuth = { authorization: 'Bearer reference-project-attacker' };
+    const image = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const upload = await request(app)
+      .post('/v1/assets/upload-url')
+      .set(ownerAuth)
+      .send({ fileName: 'private-lead.png', contentType: 'image/png', sizeBytes: image.length, purpose: 'reference' })
+      .expect(201);
+    await request(app)
+      .put(upload.body.uploadUrl)
+      .set(ownerAuth)
+      .set('content-type', 'image/png')
+      .send(image)
+      .expect(204);
+
+    const response = await request(app)
+      .post('/v1/storyboards/projects')
+      .set(attackerAuth)
+      .send({
+        title: 'Cross-user reference attempt',
+        form: {
+          overallGoal: 'A scene that must not access another user\'s reference.',
+          projectReferences: [{
+            id: 'reference-stolen-01',
+            type: 'character',
+            label: 'Stolen reference',
+            description: '',
+            lockedTraits: [],
+            sceneIds: [],
+            assetId: upload.body.assetId,
+            assetVersionIds: [upload.body.assetId],
+            version: 1,
+          }],
+          scenes: [{
+            id: 'scene-1',
+            title: 'Private scene',
+            prompt: 'The protected character enters frame.',
+            duration: 4,
+            trimStart: 0,
+            trimEnd: 4,
+            seed: 1337,
+            seedOverrideEnabled: false,
+            summary: '',
+            continuityOverrides: {},
+            transition: 'cut',
+            transitionDuration: 0.75,
+            carryPreviousFrame: false,
+            referenceIds: ['reference-stolen-01'],
+          }],
+        },
+      })
+      .expect(403);
+
+    expect(response.body.code).toBe('reference_forbidden');
+    expect(JSON.stringify(response.body)).not.toContain(upload.body.assetId);
+  });
+
+  it('hydrates only canonical owner-scoped project references for the runtime', async () => {
+    vi.stubEnv('VIDEO_RUNTIME_PROVIDER', 'sulphur-ltx');
+    vi.stubEnv('VIDEO_RUNTIME_BASE_URL', 'http://runtime.test');
+    vi.stubEnv('VIDEO_RUNTIME_PAYLOAD_MODE', 'deploy-studio');
+    let runtimePayload: Record<string, unknown> | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/health')) return Response.json({
+        ok: true,
+        ready: true,
+        worker: 'longform-ltx-storyboard-studio',
+        capabilities: {
+          workflow_modes: ['text', 'start', 'start_end', 'multi_keyframe', 'reference'],
+          reference_conditioning: 'supported',
+        },
+        advanced_video_controls: {
+          start_frame_supported: true,
+          end_frame_supported: true,
+          reference_conditioning_supported: true,
+          max_scene_reference_images: 6,
+        },
+      });
+      if (url.endsWith('/jobs') && init?.method === 'POST') {
+        runtimePayload = JSON.parse(String(init.body));
+        return Response.json({ id: 'reference-runtime-job' }, { status: 202 });
+      }
+      if (url.endsWith('/jobs/reference-runtime-job/output')) {
+        return new Response(new Uint8Array([0, 0, 0, 24]), {
+          status: 200,
+          headers: { 'content-type': 'video/mp4' },
+        });
+      }
+      if (url.endsWith('/jobs/reference-runtime-job')) {
+        return Response.json({ id: 'reference-runtime-job', status: 'completed', progress: 100 });
+      }
+      return Response.json({ id: 'runtime-probe', status: 'running' });
+    }));
+
+    const { app, processOne } = await import('../../apps/api/src/index.js');
+    const owner = 'reference-generation-owner';
+    const auth = { authorization: `Bearer ${owner}` };
+    const image = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const upload = await request(app)
+      .post('/v1/assets/upload-url')
+      .set(auth)
+      .send({ fileName: 'lead.png', contentType: 'image/png', sizeBytes: image.length, purpose: 'reference' })
+      .expect(201);
+    await request(app)
+      .put(upload.body.uploadUrl)
+      .set(auth)
+      .set('content-type', 'image/png')
+      .send(image)
+      .expect(204);
+    const project = await request(app)
+      .post('/v1/storyboards/projects')
+      .set(auth)
+      .send({
+        title: 'Reference-conditioned project',
+        form: {
+          overallGoal: 'A recurring explorer crosses a rain-dark city.',
+          negativePrompt: '', resolution: '1024x576', fps: 24, imageSteps: 4,
+          guidanceScale: 1, startFrameStrength: 1, endFrameStrength: 0.9,
+          enhancePrompt: false, postProcess: 'none', outputFormat: 'mp4',
+          globalVisualAnchorEnabled: false, globalSeed: 1337, seedPolicy: 'global_locked',
+          continuityBible: {
+            characters: '', wardrobe: '', props: '', location: '', sceneGeometry: '',
+            timeOfDay: '', lighting: '', palette: '', lens: '', cameraPosition: '',
+            cameraMovement: '', visualStyle: '', audio: '',
+          },
+          audioPolicy: {
+            mode: 'silent', dialogue: 'off', soundEffects: 'off', ambience: 'off',
+            music: 'off', preserveSourceAudio: false,
+          },
+          candidateCount: 1,
+          projectReferences: [{
+            id: 'reference-lead-01', type: 'character', label: 'Lead', description: 'Explorer in a teal coat.',
+            lockedTraits: ['teal coat'], sceneIds: [], assetId: upload.body.assetId,
+            assetVersionIds: [upload.body.assetId], version: 1,
+          }],
+          scenes: [{
+            id: 'scene-1', title: 'Arrival', prompt: 'The explorer enters the rain-dark city.',
+            duration: 4, trimStart: 0, trimEnd: 4, seed: 1337, seedOverrideEnabled: false,
+            summary: '', continuityOverrides: {}, transition: 'cut', transitionDuration: 0.75,
+            carryPreviousFrame: false, referenceIds: ['reference-lead-01'],
+          }],
+        },
+      })
+      .expect(201);
+    const submitted = await request(app)
+      .post('/v1/generations')
+      .set(auth)
+      .set('Idempotency-Key', 'reference-generation-key')
+      .send({
+        prompt: 'A recurring explorer crosses a rain-dark city.',
+        settings: {
+          runtime: 'longform-ltx-storyboard-studio', aspectRatio: '16:9', durationSeconds: 4,
+          quality: 'draft', projectId: project.body.id, operationScope: 'project',
+          storyboard: [{
+            id: 'scene-1', title: 'Arrival', prompt: 'The explorer enters the rain-dark city.',
+            duration: 4, trimStart: 0, trimEnd: 4, seed: 1337, transition: 'cut',
+            transitionDuration: 0.75, carryPreviousFrame: false,
+            referenceIds: ['forged-reference-id'],
+          }],
+        },
+      })
+      .expect(201);
+    expect(submitted.body.settings.storyboard[0].referenceIds).toEqual(['reference-lead-01']);
+    expect(JSON.stringify(submitted.body)).not.toContain(upload.body.assetId);
+    expect(JSON.stringify(submitted.body)).not.toContain(image.toString('base64'));
+
+    await processOne('reference-generation-worker');
+    expect(runtimePayload).toMatchObject({
+      reference_conditioning: [{
+        id: 'reference-lead-01', type: 'character', version: 1, scene_ids: ['scene-1'],
+      }],
+      storyboard: [{ id: 'scene-1', reference_ids: ['reference-lead-01'] }],
+    });
+    expect(String((runtimePayload?.reference_conditioning as Array<Record<string, unknown>>)[0].image_base64))
+      .toMatch(/^data:image\/jpeg;base64,/);
+    const completed = await request(app)
+      .get(`/v1/generations/${submitted.body.id}`)
+      .set(auth)
+      .expect(200);
+    expect(completed.body.status).toBe('completed');
+    expect(JSON.stringify(completed.body)).not.toContain('image_base64');
+    expect(JSON.stringify(completed.body)).not.toContain(upload.body.assetId);
+  }, 20_000);
+
   it('returns a claimed generation to the durable queue when the pool is full', async () => {
     vi.stubEnv('VIDEO_RUNTIME_PROVIDER', 'intelligensi-api');
     vi.stubEnv('VIDEO_RUNTIME_BASE_URL', 'https://api.intelligensi.test');

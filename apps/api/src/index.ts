@@ -42,6 +42,7 @@ import {
   RuntimeCapacityPendingError,
   RuntimeLeaseUnavailableError,
   type RuntimeGenerationInput,
+  type RuntimeVideoSettings,
 } from "@video-lab/runtime-adapter";
 import { log, nowIso, problem } from "@video-lab/shared";
 import { getFirestore } from "firebase-admin/firestore";
@@ -72,6 +73,7 @@ type StoredGeneration = Generation & {
   uid: string;
   runtimeJobId?: string;
   assemblyRuntimeAttempt?: number;
+  referenceSnapshot?: StoredGenerationReferenceSnapshot[];
   outputBytes?: Uint8Array;
   outputContentType?: string;
   outputObjectPath?: string;
@@ -94,6 +96,15 @@ type StoredAsset = {
   sourceHeight?: number;
   sourcePixelCount?: number;
   bytes?: Uint8Array;
+};
+type StoredGenerationReferenceSnapshot = {
+  id: string;
+  type: "character" | "location" | "product" | "style";
+  version: number;
+  assetId: string;
+  normalizedSha256: string;
+  normalizedByteLength: number;
+  sceneIds: string[];
 };
 type StoredStoryboardProject = {
   id: string;
@@ -171,6 +182,7 @@ function publicGeneration(g: StoredGeneration): Generation {
     uid: _uid,
     runtimeJobId: _runtimeJobId,
     assemblyRuntimeAttempt: _assemblyRuntimeAttempt,
+    referenceSnapshot: _referenceSnapshot,
     outputBytes: _outputBytes,
     outputContentType: _outputContentType,
     outputObjectPath: _outputObjectPath,
@@ -380,6 +392,219 @@ async function ensureNormalizedReference(asset: StoredAsset) {
     pixelCount: normalized.pixelCount,
   } as const;
 }
+
+async function captureGenerationReferenceSnapshot(
+  settings: Generation["settings"],
+  project: StoredStoryboardProject | undefined,
+  uid: string,
+): Promise<StoredGenerationReferenceSnapshot[]> {
+  if (Object.prototype.hasOwnProperty.call(settings, "referenceConditioning")) {
+    throw problem(
+      400,
+      "invalid_reference_conditioning",
+      "Private generation references are resolved by Video Lab",
+    );
+  }
+  const storyboard = Array.isArray(settings.storyboard)
+    ? (settings.storyboard as Array<Record<string, unknown>>)
+    : [];
+  const operationScope = String(settings.operationScope ?? "project");
+  if (!["project", "scene"].includes(operationScope)) {
+    storyboard.forEach((scene) => {
+      scene.referenceIds = [];
+    });
+    return [];
+  }
+  if (!project) {
+    if (
+      storyboard.some(
+        (scene) => Array.isArray(scene.referenceIds) && scene.referenceIds.length > 0,
+      )
+    ) {
+      throw problem(
+        400,
+        "project_required",
+        "Reference-conditioned generation requires a saved project",
+      );
+    }
+    storyboard.forEach((scene) => {
+      scene.referenceIds = [];
+    });
+    return [];
+  }
+
+  const projectScenes = Array.isArray(project.form.scenes)
+    ? (project.form.scenes as Array<Record<string, unknown>>)
+    : [];
+  const projectSceneById = new Map(
+    projectScenes.map((scene) => [String(scene.id ?? ""), scene]),
+  );
+  const rawReferences = Array.isArray(project.form.projectReferences)
+    ? (project.form.projectReferences as Array<Record<string, unknown>>)
+    : [];
+  if (rawReferences.length > 0 && runtimeState.provider !== "mock") {
+    await refreshRuntimeHealth();
+  }
+  const supportedReferences = new Map<string, Record<string, unknown>>();
+  for (const reference of rawReferences) {
+    const id = String(reference.id ?? "");
+    const type = String(reference.type ?? "");
+    const assetId = String(reference.assetId ?? "");
+    if (
+      /^[A-Za-z0-9_-]{8,64}$/.test(id) &&
+      ["character", "location", "product", "style"].includes(type) &&
+      /^[A-Za-z0-9_-]{8,64}$/.test(assetId)
+    ) {
+      supportedReferences.set(id, reference);
+    }
+  }
+
+  const selectedSceneIdsByReference = new Map<string, Set<string>>();
+  const targetedSceneId = operationScope === "scene"
+    ? String(settings.operationSceneId ?? "")
+    : "";
+  const runtimeReferenceLimit = runtimeState.provider === "mock"
+    ? MAX_DIRECTOR_VISUAL_REFERENCES
+    : Math.min(
+        MAX_DIRECTOR_VISUAL_REFERENCES,
+        Math.max(0, Number(runtimeState.capabilities?.maxSceneReferenceImages) || 0),
+      );
+  const runtimeReferenceConditioningReady = runtimeState.provider === "mock" || (
+    runtimeState.capabilities?.referenceConditioning === true &&
+    runtimeState.capabilities?.featureStatus?.referenceConditioning === "supported" &&
+    runtimeReferenceLimit > 0
+  );
+  for (const scene of storyboard) {
+    const sceneId = String(scene.id ?? "");
+    const canonicalScene = projectSceneById.get(sceneId);
+    if (!canonicalScene) {
+      throw problem(
+        400,
+        "invalid_scene_job",
+        "Generation scenes must belong to the saved project",
+      );
+    }
+    if (targetedSceneId && sceneId !== targetedSceneId) {
+      scene.referenceIds = [];
+      continue;
+    }
+    const explicitIds = new Set(
+      Array.isArray(canonicalScene.referenceIds)
+        ? canonicalScene.referenceIds.map(String)
+        : [],
+    );
+    const selectedIds = [...supportedReferences.entries()]
+      .filter(([id, reference]) => {
+        const sceneIds = Array.isArray(reference.sceneIds)
+          ? reference.sceneIds.map(String)
+          : [];
+        return explicitIds.has(id) || sceneIds.length === 0 || sceneIds.includes(sceneId);
+      })
+      .map(([id]) => id)
+      .sort();
+    if (runtimeReferenceConditioningReady && selectedIds.length > runtimeReferenceLimit) {
+      throw problem(
+        400,
+        "reference_limit_exceeded",
+        `The connected runtime supports at most ${runtimeReferenceLimit} visual references per scene`,
+      );
+    }
+    scene.referenceIds = selectedIds;
+    selectedIds.forEach((id) => {
+      const sceneIds = selectedSceneIdsByReference.get(id) ?? new Set<string>();
+      sceneIds.add(sceneId);
+      selectedSceneIdsByReference.set(id, sceneIds);
+    });
+  }
+
+  if (
+    selectedSceneIdsByReference.size > 0 &&
+    !runtimeReferenceConditioningReady
+  ) {
+    throw problem(
+      409,
+      "capability_unavailable",
+      "The connected runtime has not verified visual reference conditioning",
+    );
+  }
+
+  let totalBytes = 0;
+  const snapshots: StoredGenerationReferenceSnapshot[] = [];
+  for (const id of [...selectedSceneIdsByReference.keys()].sort()) {
+    const reference = supportedReferences.get(id)!;
+    const assetId = String(reference.assetId);
+    const asset = await findAsset(assetId);
+    if (
+      !asset ||
+      asset.uid !== uid ||
+      !asset.uploadedAt ||
+      asset.purpose !== "reference"
+    ) {
+      throw problem(
+        403,
+        "reference_forbidden",
+        "A generation reference asset is not owned by the caller",
+      );
+    }
+    const normalized = await ensureNormalizedReference(asset);
+    totalBytes += normalized.byteLength;
+    if (totalBytes > MAX_DIRECTOR_VISUAL_BYTES) {
+      throw problem(
+        400,
+        "reference_limit_exceeded",
+        "Generation references exceed the allowed aggregate size",
+      );
+    }
+    snapshots.push({
+      id,
+      type: String(reference.type) as StoredGenerationReferenceSnapshot["type"],
+      version: Math.min(1_000, Math.max(1, Math.round(Number(reference.version) || 1))),
+      assetId,
+      normalizedSha256: normalized.sha256,
+      normalizedByteLength: normalized.byteLength,
+      sceneIds: [...selectedSceneIdsByReference.get(id)!].sort(),
+    });
+  }
+  return snapshots;
+}
+
+async function hydrateGenerationReferences(
+  g: StoredGeneration,
+): Promise<NonNullable<RuntimeVideoSettings["referenceConditioning"]>> {
+  const snapshots = g.referenceSnapshot ?? [];
+  const references: NonNullable<RuntimeVideoSettings["referenceConditioning"]> = [];
+  let totalBytes = 0;
+  for (const snapshot of snapshots) {
+    const asset = await findAsset(snapshot.assetId);
+    if (
+      !asset ||
+      asset.uid !== g.uid ||
+      !asset.uploadedAt ||
+      asset.purpose !== "reference"
+    ) {
+      throw new Error("reference_snapshot_unavailable");
+    }
+    const normalized = await ensureNormalizedReference(asset);
+    if (
+      normalized.sha256 !== snapshot.normalizedSha256 ||
+      normalized.byteLength !== snapshot.normalizedByteLength
+    ) {
+      throw new Error("reference_snapshot_changed");
+    }
+    totalBytes += normalized.byteLength;
+    if (totalBytes > MAX_DIRECTOR_VISUAL_BYTES) {
+      throw new Error("reference_snapshot_too_large");
+    }
+    references.push({
+      id: snapshot.id,
+      type: snapshot.type,
+      version: snapshot.version,
+      imageBase64: `data:${normalized.contentType};base64,${normalized.bytes.toString("base64")}`,
+      sceneIds: [...snapshot.sceneIds],
+    });
+  }
+  return references;
+}
 async function uploadedAssetDataUrl(objectPath: string, uid: string) {
   if (!isOwnedUploadPath(objectPath, uid))
     throw problem(403, "asset_forbidden", "Asset is not owned by caller");
@@ -518,6 +743,22 @@ async function runtimeGeneration(
     assemblyJobIds?: string[];
     assemblySources?: PortableAssemblySource[];
   };
+  const referenceConditioning = await hydrateGenerationReferences(g);
+  settings.referenceConditioning = referenceConditioning;
+  if (Array.isArray(settings.storyboard)) {
+    const allowedByScene = new Map<string, string[]>();
+    referenceConditioning.forEach((reference) => {
+      reference.sceneIds.forEach((sceneId) => {
+        const ids = allowedByScene.get(sceneId) ?? [];
+        ids.push(reference.id);
+        allowedByScene.set(sceneId, ids);
+      });
+    });
+    settings.storyboard = settings.storyboard.map((scene) => ({
+      ...(scene as Record<string, unknown>),
+      referenceIds: [...new Set(allowedByScene.get(String((scene as { id?: unknown }).id ?? "")) ?? [])].sort(),
+    })) as typeof settings.storyboard;
+  }
   if (settings.operationScope === "assembly") {
     const acceptedIds = settings.acceptedSceneGenerationIds;
     const storyboard = Array.isArray(settings.storyboard)
@@ -3656,11 +3897,17 @@ app.post(
       const projectId = String(
         (settings as { projectId?: unknown }).projectId ?? "",
       );
+      let project: StoredStoryboardProject | undefined;
       if (projectId) {
-        const project = await findStoryboardProject(p.uid, projectId);
+        project = await findStoryboardProject(p.uid, projectId);
         if (!project)
           throw problem(404, "project_not_found", "Project not found");
       }
+      const referenceSnapshot = await captureGenerationReferenceSnapshot(
+        settings,
+        project,
+        p.uid,
+      );
       if (
         Object.prototype.hasOwnProperty.call(settings, "assemblyJobIds") ||
         Object.prototype.hasOwnProperty.call(settings, "assemblySources")
@@ -3775,6 +4022,7 @@ app.post(
         uid: p.uid,
         prompt,
         settings,
+        ...(referenceSnapshot.length > 0 ? { referenceSnapshot } : {}),
         inputAssets,
         status: "queued" as const,
         creditCost: cost,
