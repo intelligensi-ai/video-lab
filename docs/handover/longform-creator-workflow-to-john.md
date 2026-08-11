@@ -1,6 +1,6 @@
 # Video Lab creator workflow: production-platform handover to John
 
-Status: **prepared; successor live acceptance is still pending after local A8 prebuild hardening**
+Status: **prepared; A8 live acceptance is still pending after provider CUDA fabric failure**
 
 This document is the factual handover reference for the production-platform
 work that begins after the creator-to-generation path has passed paid
@@ -15,26 +15,24 @@ before the handover is declared ready.
 
 | Component | Revision or identity | Status |
 | --- | --- | --- |
-| LongForm A7 image | `sha256:33311a0af9f9acf9b7a5eeb44920d16174a1136a9e9a9c0afa6153a27f4260c8` | Immutable candidate; partial CWA5 evidence, not promoted |
-| LongForm A7 source | `1fbc47c65a873e7067ae1fc251c50cf1a2084909` | Image source; does not contain the post-CWA5 Director retry repair |
-| Instruction bundle | `2026-08-10.1` | Proved through the authenticated A7 worker |
-| Workflow schema | `ltx23-reference-temporal-v3` | Proved ready in A7 |
-| Deploy Studio acceptance harness | `25ba86cfc93eb737c490867fc4f62e1b879b5e69` | CWA5 tested revision; a repaired successor checkpoint is pending |
-| Video Lab | `07c3030bcb52dff0aef4547845a25345f0d98328` | CWA5 tested revision; superseded by the local successor source below |
-| Deploy Studio successor source | `202fa38` | Local hardening passed; new immutable image pending |
-| Video Lab successor source | `f9b18d7` | Local hardening and browser acceptance passed; paid runtime acceptance pending |
+| LongForm A8 image | `sha256:1d0356d6b316a5e99c851bdb655781740963f34fe8f44c1d5e1286912ca5904f` | Immutable candidate; built and scanned, not promoted |
+| LongForm A8 source | `ee623da65481aea6ace7b039436bf2d32196213b` | Contains the generation-side successor repairs |
+| Instruction bundle | `2026-08-10.1` | Previously proved through an authenticated worker; A8 live proof remains pending |
+| Workflow schema | `ltx23-reference-temporal-v3` | Previously proved ready; A8 live proof remains pending |
+| Deploy Studio acceptance harness | `590472b10dfab96563d3bcc22361f28df9395c65` | CWA6A-tested, including exact provider-selection fencing |
+| Video Lab | `607cab8d417c662107f0222f59c97aaf5d76af19` | Current paid-acceptance target |
 | Deploy Studio branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Video Lab branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Production LongForm pin | Unchanged by this work | Promotion remains a separate approval |
 
 Gate CWA5 proved A7 startup, CUDA, model-cache verification, ComfyUI workflow
-readiness, runtime authentication and direct strict Gemma output. The required
-Video Lab enhancement failed because a transient 65-second cold-model timeout
-escaped instead of being retried inside the runtime's 210-second total budget.
-The bounded retry and broader concurrency/recovery repairs have passed
-CPU-safe and mocked browser tests but require a new immutable image and
-complete paid acceptance. Legal and licensing approval are
-intentionally outside this technical handover.
+readiness, runtime authentication and direct strict Gemma output. A8 contains
+the bounded Director retry and broader concurrency/recovery repairs. Gate
+CWA6A pulled A8 successfully but stopped before runtime readiness because the
+provider-managed H100 SXM host returned CUDA Error 802 inside the container,
+despite host `nvidia-smi` succeeding. No Gemma, frame, LTX or browser inference
+was reached, so complete paid acceptance remains required. Legal and licensing
+approval are intentionally outside this technical handover.
 
 ## 2. Acceptance evidence
 
@@ -57,6 +55,10 @@ intentionally outside this technical handover.
 - CWA5 used one H100 PCIe in `us-west-3` with the existing persistent cache.
   The owned worker was terminated and Lambda independently reported zero active
   instances after the failed gateway phase.
+- CWA6A used one H100 SXM in `us-south-3`. It failed closed at the provider
+  CUDA-fabric boundary before model inference. The worker was terminated,
+  Lambda independently reported zero active instances, approximate GPU compute
+  was USD `$1.91`, and A8 remained unpromoted.
 
 ### Paid successor evidence required before handover
 
