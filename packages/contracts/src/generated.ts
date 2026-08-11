@@ -556,6 +556,8 @@ export interface components {
                 durationSeconds?: number;
             };
             safeErrorMessage?: string;
+            /** @description Stable, allow-listed failure classification safe to expose to the creator. */
+            failureCode?: string;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */

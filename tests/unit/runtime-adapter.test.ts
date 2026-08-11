@@ -49,6 +49,39 @@ describe("SulphurLtxRuntimeAdapter", () => {
     expect(calls[1].url).toBe("http://runtime.test/jobs/job-1");
   });
 
+  it("prefers the gateway's safe terminal failure over stale queued text", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          id: "failed-job",
+          status: "failed",
+          state: "failed",
+          message: "Queued",
+          error: {
+            code: "runtime_video_encoding_failed",
+            title: "The runtime could not encode the generated video. Retry this scene; if it repeats, turn off generated sound and try again.",
+            detail: "private upstream path must not be selected",
+          },
+        }),
+      ),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.test",
+      payloadMode: "intelligensi-api",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+
+    await expect(adapter.getGenerationStatus("failed-job")).resolves.toMatchObject({
+      state: "failed",
+      failureCode: "runtime_video_encoding_failed",
+      message: "The runtime could not encode the generated video. Retry this scene; if it repeats, turn off generated sound and try again.",
+    });
+    const status = await adapter.getGenerationStatus("failed-job");
+    expect(status.message).not.toContain("Queued");
+    expect(status.message).not.toContain("private upstream");
+  });
+
   it("uses the baked Sulphur prompt completion endpoint", async () => {
     vi.stubGlobal(
       "fetch",

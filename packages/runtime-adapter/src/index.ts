@@ -216,6 +216,7 @@ export interface RuntimeGenerationStatus {
     | "cancelled";
   progress: number;
   message?: string | undefined;
+  failureCode?: string | undefined;
   framesRendered?: number;
   totalFrames?: number;
   currentScene?: number;
@@ -929,7 +930,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       stage?: string;
       quality_report?: unknown;
       qualityAssessment?: unknown;
-      error?: string | { title?: string; detail?: string; code?: string };
+      error?: string | { title?: string; message?: string; detail?: string; code?: string };
     };
     const rawState = json.status ?? json.state ?? "failed";
     const map: Record<string, RuntimeGenerationStatus["state"]> = {
@@ -955,17 +956,25 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       this.cfg.payloadMode === "intelligensi-api" && rawProgress <= 1
         ? Math.round(rawProgress * 10_000) / 100
         : rawProgress;
+    const state = map[rawState.toLowerCase()] ?? "failed";
+    const failureCode =
+      typeof json.error === "object" && json.error
+        ? json.error.code
+        : undefined;
+    const fallbackFailureMessage =
+      "The runtime could not complete this generation. The previous successful version remains available.";
     const errorMessage =
-      typeof json.error === "string"
-        ? json.error
-        : json.error?.detail ?? json.error?.title ?? json.error?.code;
+      typeof json.error === "object" && json.error
+        ? json.error.title ?? json.error.message ?? json.error.code
+        : undefined;
     const qualityAssessment = safeQualityAssessment(
       json.quality_report ?? json.qualityAssessment,
     );
     return {
-      state: map[rawState.toLowerCase()] ?? "failed",
+      state,
       progress,
-      message: json.message ?? errorMessage,
+      message: state === "failed" ? errorMessage ?? fallbackFailureMessage : json.message,
+      ...(state === "failed" && failureCode ? { failureCode } : {}),
       ...optionalPositiveInteger("framesRendered", json.framesRendered),
       ...optionalPositiveInteger("totalFrames", json.totalFrames),
       ...optionalPositiveInteger("currentScene", json.currentScene),

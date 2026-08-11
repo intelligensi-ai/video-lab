@@ -55,6 +55,7 @@ export interface Generation {
     kind?: "video" | "frame";
   };
   safeErrorMessage?: string;
+  failureCode?: string;
   createdAt: string;
   updatedAt: string;
 }

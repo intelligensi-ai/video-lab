@@ -817,6 +817,11 @@ components:
                   },
               },
             safeErrorMessage: { type: string },
+            failureCode:
+              {
+                type: string,
+                description: "Stable, allow-listed failure classification safe to expose to the creator."
+              },
             createdAt: { type: string, format: date-time },
             updatedAt: { type: string, format: date-time },
           },

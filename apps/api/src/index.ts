@@ -142,6 +142,10 @@ let runtimeState: RuntimeStatus = {
 };
 let runtimeControlCheckedAt = 0;
 function operationalErrorCode(error: unknown) {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = String((error as { code?: unknown }).code ?? "");
+    if (/^runtime_[a-z0-9_]+$/.test(code)) return code;
+  }
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (message.includes("timeout")) return "runtime_timeout";
   if (/unauthori[sz]ed|forbidden|\b401\b|\b403\b/.test(message))
@@ -4442,7 +4446,12 @@ async function processQueueItem(workerId = "local-worker") {
       await persistGeneration(cancelled);
     } else if (st.state === "completed") {
       await completeGenerationFromRuntime(gens.get(g.id)!, sub.runtimeJobId, st.qualityAssessment);
-    } else throw new Error(st.message ?? st.state);
+    } else {
+      const runtimeFailure = new Error(st.message ?? "The runtime could not complete this generation.") as Error & { code?: string };
+      runtimeFailure.name = "RuntimeGenerationFailure";
+      runtimeFailure.code = st.failureCode ?? "runtime_job_failed";
+      throw runtimeFailure;
+    }
   } catch (e) {
     const currentAssemblyAttempt = Math.max(
       1,
@@ -4506,6 +4515,7 @@ async function processQueueItem(workerId = "local-worker") {
     const failed: StoredGeneration = {
       ...(gens.get(g.id) ?? g),
       status: "failed",
+      failureCode: operationalErrorCode(e),
       safeErrorMessage: localAuth
         ? `Generation failed: ${detail}.${creditsReturned ? " Credits were returned." : ""}`
         : "Generation failed safely. Please retry when the runtime is available.",
