@@ -1,6 +1,6 @@
 # Video Lab creator workflow: production-platform handover to John
 
-Status: **prepared; Gate CWA2 live A5R evidence is still pending**
+Status: **prepared; successor live acceptance is still pending after Gate CWA5**
 
 This document is the factual handover reference for the production-platform
 work that begins after the creator-to-generation path has passed paid
@@ -8,26 +8,30 @@ acceptance. It deliberately separates the accepted generation system from the
 Firebase, financial, operational, and public-rollout work owned by John.
 
 Do not interpret this document as production approval. Sections marked
-`PENDING CWA2` must be replaced with direct evidence from the guarded paid run
+`PENDING SUCCESSOR ACCEPTANCE` must be replaced with direct evidence from a guarded paid run
 before the handover is declared ready.
 
 ## 1. Handover baseline
 
 | Component | Revision or identity | Status |
 | --- | --- | --- |
-| LongForm A5R image | `sha256:88fe06ac59ca1804d58be3034aa5f08d6eeabf405d64da515de742323a1cfb46` | Immutable candidate; validating, not promoted |
-| LongForm source | `9e719727dd463f3dc8b9766c8c34e45cde9df44a` | Image source |
-| Instruction bundle | `2026-08-10.1` | Packaged in A5R |
-| Workflow schema | `ltx23-reference-temporal-v3` | Packaged in A5R |
-| Deploy Studio acceptance harness | `e8a736c3d2290d7dfdef4d222641f19ac894fab4` | Pushed feature-branch checkpoint |
-| Video Lab | `7710577a1d1b0a3bbed8621532119d8c402826ba` | Pushed feature-branch checkpoint |
+| LongForm A7 image | `sha256:33311a0af9f9acf9b7a5eeb44920d16174a1136a9e9a9c0afa6153a27f4260c8` | Immutable candidate; partial CWA5 evidence, not promoted |
+| LongForm A7 source | `1fbc47c65a873e7067ae1fc251c50cf1a2084909` | Image source; does not contain the post-CWA5 Director retry repair |
+| Instruction bundle | `2026-08-10.1` | Proved through the authenticated A7 worker |
+| Workflow schema | `ltx23-reference-temporal-v3` | Proved ready in A7 |
+| Deploy Studio acceptance harness | `25ba86cfc93eb737c490867fc4f62e1b879b5e69` | CWA5 tested revision; a repaired successor checkpoint is pending |
+| Video Lab | `07c3030bcb52dff0aef4547845a25345f0d98328` | CWA5 tested revision; timeout configuration repair is pending commit |
 | Deploy Studio branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Video Lab branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Production LongForm pin | Unchanged by this work | Promotion remains a separate approval |
 
-The A5R evidence build reported zero Critical and zero High vulnerability
-findings. Legal and licensing approval are intentionally outside this technical
-handover.
+Gate CWA5 proved A7 startup, CUDA, model-cache verification, ComfyUI workflow
+readiness, runtime authentication and direct strict Gemma output. The required
+Video Lab enhancement failed because a transient 65-second cold-model timeout
+escaped instead of being retried inside the runtime's 210-second total budget.
+The bounded retry repair has passed CPU-safe tests but requires a new immutable
+image and complete paid acceptance. Legal and licensing approval are
+intentionally outside this technical handover.
 
 ## 2. Acceptance evidence
 
@@ -35,7 +39,9 @@ handover.
 
 - Deploy Studio: 83 selected tests pass, TypeScript lint passes, and the
   production build passes.
-- Video Lab: 116 tests pass, lint passes, typecheck passes, OpenAPI generation
+- LongForm runtime: 69 Python tests pass, including cold-timeout recovery and
+  exhausted-retry coverage.
+- Video Lab: 119 tests pass, typecheck passes, OpenAPI generation
   and contract checks pass, and the production build passes.
 - Video Lab Playwright: 7/7 desktop/mobile tests pass.
 - The minimal interface restores the accepted completed clip and download
@@ -45,13 +51,13 @@ handover.
   preservation, anchored video, silent-audio inspection, cancellation,
   idempotency, restart recovery, two development identities, and live browser
   redaction checks.
-- A read-only provider preflight on 2026-08-11 found zero active instances and
-  confirmed H100 SXM5 capacity in `us-south-3`, the existing filesystem, SSH
-  key match, and persistent-cache configuration.
+- CWA5 used one H100 PCIe in `us-west-3` with the existing persistent cache.
+  The owned worker was terminated and Lambda independently reported zero active
+  instances after the failed gateway phase.
 
-### Paid A5R evidence required before handover
+### Paid successor evidence required before handover
 
-`PENDING CWA2`:
+`PENDING SUCCESSOR ACCEPTANCE`:
 
 - Run identifier and timestamps.
 - Exact Deploy Studio and Video Lab commits tested.
@@ -71,7 +77,7 @@ handover.
 - Provider termination, cleared routes/leases, and zero unexpected instances.
 
 The canonical sanitized result must live under
-`E:\tmp\intelligensi-longform-creator-acceptance\a5r`; do not commit generated
+`E:\tmp\intelligensi-longform-creator-acceptance`; do not commit generated
 media, runtime addresses, tokens, raw prompts, or test identities.
 
 ## 3. Responsibility boundary
@@ -377,7 +383,7 @@ Unless a failed acceptance item proves a boundary defect, do not change:
 - Z-Image or LTX workflow/model files.
 - Scene cardinality or prompt schemas.
 - Frame/version preservation semantics.
-- The immutable A5R digest.
+- The eventual immutable, fully accepted successor digest.
 - Deploy Studio's role as the lifecycle boundary.
 - MiniMax, Bonsai, or another model integration.
 
