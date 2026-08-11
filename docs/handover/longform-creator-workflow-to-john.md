@@ -1,6 +1,6 @@
 # Video Lab creator workflow: production-platform handover to John
 
-Status: **prepared; A8 live acceptance is still pending after provider CUDA fabric failure**
+Status: **prepared; A8 passed Gemma and anchor-frame acceptance, but successor LTX acceptance is still pending**
 
 This document is the factual handover reference for the production-platform
 work that begins after the creator-to-generation path has passed paid
@@ -17,22 +17,23 @@ before the handover is declared ready.
 | --- | --- | --- |
 | LongForm A8 image | `sha256:1d0356d6b316a5e99c851bdb655781740963f34fe8f44c1d5e1286912ca5904f` | Immutable candidate; built and scanned, not promoted |
 | LongForm A8 source | `ee623da65481aea6ace7b039436bf2d32196213b` | Contains the generation-side successor repairs |
-| Instruction bundle | `2026-08-10.1` | Previously proved through an authenticated worker; A8 live proof remains pending |
-| Workflow schema | `ltx23-reference-temporal-v3` | Previously proved ready; A8 live proof remains pending |
-| Deploy Studio acceptance harness | `590472b10dfab96563d3bcc22361f28df9395c65` | CWA6A-tested, including exact provider-selection fencing |
-| Video Lab | `607cab8d417c662107f0222f59c97aaf5d76af19` | Current paid-acceptance target |
+| Instruction bundle | `2026-08-10.1` | Proved through real A8 Gemma inference |
+| Workflow schema | `ltx23-reference-temporal-v3` | Proved ready on A8; LTX execution was blocked before inference |
+| Deploy Studio acceptance harness | `d57fb8912e5f87feb374588df4f89d2b7a75d0e8` | CWA6B-tested |
+| Video Lab | `41002c4c0749b6f88dc91bef75c07722d8d453bf` | CWA6B-tested |
 | Deploy Studio branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Video Lab branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Production LongForm pin | Unchanged by this work | Promotion remains a separate approval |
 
-Gate CWA5 proved A7 startup, CUDA, model-cache verification, ComfyUI workflow
-readiness, runtime authentication and direct strict Gemma output. A8 contains
-the bounded Director retry and broader concurrency/recovery repairs. Gate
-CWA6A pulled A8 successfully but stopped before runtime readiness because the
-provider-managed H100 SXM host returned CUDA Error 802 inside the container,
-despite host `nvidia-smi` succeeding. No Gemma, frame, LTX or browser inference
-was reached, so complete paid acceptance remains required. Legal and licensing
-approval are intentionally outside this technical handover.
+Gate CWA6B proved A8 startup, CUDA, model-cache verification, ComfyUI workflow
+readiness, runtime authentication, real strict Gemma output, all four original
+anchor frames, independent first/last-frame regeneration, failed-replacement
+preservation, and early two-user ownership and cancellation checks. Anchored
+LTX stopped before inference because the non-root image user could not create
+`/app/diagnostics`. A successor source fixes the image ownership and startup
+boundary, but requires a new immutable build and paid acceptance. Complete
+video, recovery, media and browser evidence therefore remains required. Legal
+and licensing approval are intentionally outside this technical handover.
 
 ## 2. Acceptance evidence
 
@@ -59,6 +60,12 @@ approval are intentionally outside this technical handover.
   CUDA-fabric boundary before model inference. The worker was terminated,
   Lambda independently reported zero active instances, approximate GPU compute
   was USD `$1.91`, and A8 remained unpromoted.
+- CWA6B used one H100 PCIe in `us-west-3`. The runtime became fully ready;
+  Gemma, anchor frames, independent regeneration, preservation, ownership and
+  cancellation checks passed. Anchored LTX was blocked before inference by a
+  missing writable `/app/diagnostics` image directory. The worker was
+  terminated, Lambda independently reported zero active instances, approximate
+  GPU compute was USD `$2.08`, and A8 remained unpromoted.
 
 ### Paid successor evidence required before handover
 
@@ -68,9 +75,11 @@ approval are intentionally outside this technical handover.
 - Exact Deploy Studio and Video Lab commits tested.
 - Provider instance type, region, and quoted rate.
 - Launch, image-pull, container, Gemma, Z-Image, and LTX readiness timings.
-- Gemma one-, two-, and five-scene results and targeted Scene 2 result.
-- Four original anchor hashes and two replacement-anchor hashes.
-- Failed replacement preserving the preceding successful frame.
+- Gemma one-, two-, and five-scene results and targeted Scene 2 result: passed
+  on A8; repeat a bounded smoke probe on the successor digest.
+- Four original anchors, two independent replacement anchors, and
+  failed-replacement preservation: passed on A8; repeat a bounded smoke probe
+  on the successor digest.
 - One valid anchored MP4, `ffprobe` metadata, and silent stream layout.
 - Cancellation, repeated cancellation, controlled failure, retry, and
   idempotency results.
