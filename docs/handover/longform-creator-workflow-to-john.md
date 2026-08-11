@@ -1,6 +1,6 @@
 # Video Lab creator workflow: production-platform handover to John
 
-Status: **prepared; A8 passed Gemma and anchor-frame acceptance, but successor LTX acceptance is still pending**
+Status: **prepared; A9 passed Gemma, anchor-frame and one anchored LTX render, but restart and live-browser acceptance are still pending**
 
 This document is the factual handover reference for the production-platform
 work that begins after the creator-to-generation path has passed paid
@@ -15,25 +15,28 @@ before the handover is declared ready.
 
 | Component | Revision or identity | Status |
 | --- | --- | --- |
-| LongForm A8 image | `sha256:1d0356d6b316a5e99c851bdb655781740963f34fe8f44c1d5e1286912ca5904f` | Immutable candidate; built and scanned, not promoted |
-| LongForm A8 source | `ee623da65481aea6ace7b039436bf2d32196213b` | Contains the generation-side successor repairs |
-| Instruction bundle | `2026-08-10.1` | Proved through real A8 Gemma inference |
-| Workflow schema | `ltx23-reference-temporal-v3` | Proved ready on A8; LTX execution was blocked before inference |
-| Deploy Studio acceptance harness | `d57fb8912e5f87feb374588df4f89d2b7a75d0e8` | CWA6B-tested |
-| Video Lab | `41002c4c0749b6f88dc91bef75c07722d8d453bf` | CWA6B-tested |
+| LongForm A9 image | `sha256:11f4fdb1a603af4ebd7eea6ed2cc71fa081f730cb6fbe2dab8a32997803e77f8` | Immutable candidate; built, scanned and partially paid-tested, not promoted |
+| LongForm A9 source | `64d726e9d397b6db3f394178a0003010eb4ffc91` | Contains the non-root diagnostics repair proved by CWA7 |
+| Instruction bundle | `2026-08-10.1` | Proved through real A9 Gemma inference |
+| Workflow schema | `ltx23-reference-temporal-v3` | Proved ready and used for one real A9 anchored LTX render |
+| Deploy Studio acceptance harness | `73b640342feaa7eee6ca1fd2cba6fa04719922a3` | CWA7-tested; its black-detector typo is repaired in the following checkpoint |
+| Video Lab | `ef1c07540cf7215cd82ec8ca5d70bfbe95d66716` | CWA7-tested |
 | Deploy Studio branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Video Lab branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Production LongForm pin | Unchanged by this work | Promotion remains a separate approval |
 
-Gate CWA6B proved A8 startup, CUDA, model-cache verification, ComfyUI workflow
-readiness, runtime authentication, real strict Gemma output, all four original
-anchor frames, independent first/last-frame regeneration, failed-replacement
-preservation, and early two-user ownership and cancellation checks. Anchored
-LTX stopped before inference because the non-root image user could not create
-`/app/diagnostics`. A successor source fixes the image ownership and startup
-boundary, but requires a new immutable build and paid acceptance. Complete
-video, recovery, media and browser evidence therefore remains required. Legal
-and licensing approval are intentionally outside this technical handover.
+Gate CWA7 proved A9 startup, CUDA, ComfyUI and model readiness, runtime
+authentication, real strict Gemma output, all four original anchor frames,
+independent first/last-frame regeneration, failed-replacement preservation,
+two-user queue and cancellation boundaries, and one real anchored LTX output.
+The preserved MP4 is valid H.264 at 1024x576, 24 fps and two seconds, with no
+audio, sustained black segment or sustained frozen segment. The paid harness
+stopped after download because its local FFmpeg check used `pix_th=0.98`
+instead of `pic_th=0.98`; this was a harness false positive and is repaired
+without rebuilding A9. Completed-job replay, accepted-video persistence,
+runtime-restart recovery and live desktop/mobile browser evidence therefore
+remain required. Legal and licensing approval are intentionally outside this
+technical handover.
 
 ## 2. Acceptance evidence
 
@@ -66,6 +69,20 @@ and licensing approval are intentionally outside this technical handover.
   missing writable `/app/diagnostics` image directory. The worker was
   terminated, Lambda independently reported zero active instances, approximate
   GPU compute was USD `$2.08`, and A8 remained unpromoted.
+- CWA7 used one H100 PCIe in `us-west-3` against immutable A9. Real Gemma,
+  Director probes, four anchors, two independent replacement anchors,
+  preservation, deterministic FIFO, active-user limiting, cross-user denial,
+  queued cancellation and one anchored LTX render passed. The harness then
+  stopped on a local `pix_th`/`pic_th` false positive before restart and browser
+  acceptance. The worker was terminated, Lambda independently reported zero
+  active instances, approximate GPU compute was USD `$2.08`, and A9 remained
+  unpromoted.
+- A supplemental in-app Browser sanity check passed the local minimal workflow
+  at 1440x900 and 390x844. This proves responsive rendering only; it does not
+  replace the pending live paid runtime browser check. On mobile, the primary
+  navigation remains horizontally scrollable and should receive final polish,
+  while Director, settings, preview, generate and download controls remain
+  available in the vertical flow.
 
 ### Paid successor evidence required before handover
 
@@ -75,16 +92,16 @@ and licensing approval are intentionally outside this technical handover.
 - Exact Deploy Studio and Video Lab commits tested.
 - Provider instance type, region, and quoted rate.
 - Launch, image-pull, container, Gemma, Z-Image, and LTX readiness timings.
-- Gemma one-, two-, and five-scene results and targeted Scene 2 result: passed
-  on A8; repeat a bounded smoke probe on the successor digest.
+- Gemma two- and five-scene results and targeted Scene 2 result: passed on A9;
+  repeat only a bounded smoke probe if a successor paid gate is approved.
 - Four original anchors, two independent replacement anchors, and
-  failed-replacement preservation: passed on A8; repeat a bounded smoke probe
-  on the successor digest.
-- One valid anchored MP4, `ffprobe` metadata, and silent stream layout.
-- Cancellation, repeated cancellation, controlled failure, retry, and
-  idempotency results.
+  failed-replacement preservation: passed on A9; repeat only a bounded smoke
+  probe if a successor paid gate is approved.
+- One valid anchored MP4, `ffprobe` metadata, silent stream layout, two-user
+  queue fairness, cross-user denial, queued cancellation and repeated
+  cancellation: passed on A9.
+- Completed-job idempotency replay and accepted-video project persistence.
 - Project reopen and byte-identical runtime-restart recovery.
-- Two-user queue fairness and cross-user denial results.
 - Real minimal desktop/mobile and advanced Director browser screenshots.
 - Browser request-origin inventory and infrastructure-redaction result.
 - Actual compute time and approximate cost.
