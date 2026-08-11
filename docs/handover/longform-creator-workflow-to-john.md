@@ -1,6 +1,6 @@
 # Video Lab creator workflow: production-platform handover to John
 
-Status: **prepared; successor live acceptance is still pending after Gate CWA5**
+Status: **prepared; successor live acceptance is still pending after local A8 prebuild hardening**
 
 This document is the factual handover reference for the production-platform
 work that begins after the creator-to-generation path has passed paid
@@ -20,7 +20,9 @@ before the handover is declared ready.
 | Instruction bundle | `2026-08-10.1` | Proved through the authenticated A7 worker |
 | Workflow schema | `ltx23-reference-temporal-v3` | Proved ready in A7 |
 | Deploy Studio acceptance harness | `25ba86cfc93eb737c490867fc4f62e1b879b5e69` | CWA5 tested revision; a repaired successor checkpoint is pending |
-| Video Lab | `07c3030bcb52dff0aef4547845a25345f0d98328` | CWA5 tested revision; timeout configuration repair is pending commit |
+| Video Lab | `07c3030bcb52dff0aef4547845a25345f0d98328` | CWA5 tested revision; superseded by the local successor source below |
+| Deploy Studio successor source | `202fa38` | Local hardening passed; new immutable image pending |
+| Video Lab successor source | `f9b18d7` | Local hardening and browser acceptance passed; paid runtime acceptance pending |
 | Deploy Studio branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Video Lab branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Production LongForm pin | Unchanged by this work | Promotion remains a separate approval |
@@ -29,20 +31,21 @@ Gate CWA5 proved A7 startup, CUDA, model-cache verification, ComfyUI workflow
 readiness, runtime authentication and direct strict Gemma output. The required
 Video Lab enhancement failed because a transient 65-second cold-model timeout
 escaped instead of being retried inside the runtime's 210-second total budget.
-The bounded retry repair has passed CPU-safe tests but requires a new immutable
-image and complete paid acceptance. Legal and licensing approval are
+The bounded retry and broader concurrency/recovery repairs have passed
+CPU-safe and mocked browser tests but require a new immutable image and
+complete paid acceptance. Legal and licensing approval are
 intentionally outside this technical handover.
 
 ## 2. Acceptance evidence
 
 ### CPU-safe evidence already complete
 
-- Deploy Studio: 83 selected tests pass, TypeScript lint passes, and the
+- Deploy Studio: 84 selected tests pass, TypeScript lint passes, and the
   production build passes.
-- LongForm runtime: 69 Python tests pass, including cold-timeout recovery and
-  exhausted-retry coverage.
-- Video Lab: 119 tests pass, typecheck passes, OpenAPI generation
-  and contract checks pass, and the production build passes.
+- LongForm runtime: 93 Python tests pass, including cold-timeout recovery,
+  cancellation fencing, malformed configuration, cache and media-stack tests.
+- Video Lab: 143 tests pass, typecheck passes, OpenAPI generation and 6
+  contract checks pass, and the production build passes.
 - Video Lab Playwright: 7/7 desktop/mobile tests pass.
 - The minimal interface restores the accepted completed clip and download
   action after reopening and reloading a project.
