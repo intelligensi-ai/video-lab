@@ -557,13 +557,28 @@ export default function LongFormStoryboardStudio({
   useEffect(() => {
     const items = gallery.data?.items ?? [];
     setHistory(items.slice(0, 8));
-    if (!selected)
-      setSelected(
-        items.find(
-          (item) => !["completed", "failed", "cancelled"].includes(item.status),
-        ),
+    if (!selected) {
+      const acceptedVideoIds = new Set(
+        form.scenes
+          .map((scene) => scene.acceptedVideoGenerationId)
+          .filter((id): id is string => Boolean(id)),
       );
-  }, [gallery.data, selected]);
+      const acceptedVideo = items.find(
+        (item) =>
+          acceptedVideoIds.has(item.id) &&
+          item.status === "completed" &&
+          item.output?.kind === "video",
+      );
+      const activeGeneration = items.find(
+        (item) => !["completed", "failed", "cancelled"].includes(item.status),
+      );
+      const latestCompletedVideo = items.find(
+        (item) =>
+          item.status === "completed" && item.output?.kind === "video",
+      );
+      setSelected(acceptedVideo ?? activeGeneration ?? latestCompletedVideo);
+    }
+  }, [form.scenes, gallery.data, selected]);
   useEffect(() => {
     let active = true;
     const restore = async () => {

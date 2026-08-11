@@ -45,6 +45,137 @@ test("minimal VideoLab exposes only Director, preview, generation and three outp
   );
 });
 
+test("minimal VideoLab restores the accepted completed video for a reopened project", async ({
+  page,
+  request,
+}) => {
+  const token = "e2e-reopen-completed-video-user";
+  const headers = { authorization: `Bearer ${token}` };
+  const projectForm = (acceptedVideoGenerationId?: string) => ({
+    overallGoal: "A lighthouse beam crosses a storm-dark sea at night.",
+    negativePrompt: "",
+    resolution: "1280x720",
+    fps: 24,
+    imageSteps: 4,
+    guidanceScale: 1,
+    startFrameStrength: 1,
+    endFrameStrength: 0.85,
+    enhancePrompt: true,
+    postProcess: "none",
+    outputFormat: "mp4",
+    globalVisualAnchorEnabled: false,
+    globalSeed: 1337,
+    seedPolicy: "global_locked",
+    scenes: [
+      {
+        id: "scene-1",
+        title: "The lighthouse",
+        prompt: "A lighthouse beam crosses a storm-dark sea at night.",
+        duration: 4,
+        trimStart: 0,
+        trimEnd: 4,
+        seed: 1337,
+        transition: "cut",
+        transitionDuration: 0.75,
+        carryPreviousFrame: false,
+        ...(acceptedVideoGenerationId ? { acceptedVideoGenerationId } : {}),
+      },
+    ],
+  });
+  const created = await request.post(
+    "http://127.0.0.1:5001/v1/storyboards/projects",
+    {
+      headers,
+      data: {
+        title: "Reopened lighthouse film",
+        form: projectForm(),
+      },
+    },
+  );
+  expect(created.status()).toBe(201);
+  const project = await created.json();
+  const submitted = await request.post(
+    "http://127.0.0.1:5001/v1/generations",
+    {
+      headers: {
+        ...headers,
+        "Idempotency-Key": `e2e-reopen-video-${Date.now()}`,
+      },
+      data: {
+        prompt: "A lighthouse beam crosses a storm-dark sea at night.",
+        settings: {
+          runtime: "longform-ltx-storyboard-studio",
+          projectId: project.id,
+          operationScope: "scene",
+          operationSceneId: "scene-1",
+          aspectRatio: "16:9",
+          durationSeconds: 4,
+          quality: "draft",
+          storyboard: [
+            {
+              id: "scene-1",
+              title: "The lighthouse",
+              prompt: "A lighthouse beam crosses a storm-dark sea at night.",
+              duration: 4,
+              trimStart: 0,
+              trimEnd: 4,
+              seed: 1337,
+              transition: "cut",
+              transitionDuration: 0.75,
+              carryPreviousFrame: false,
+            },
+          ],
+        },
+        inputAssets: [],
+      },
+    },
+  );
+  expect(submitted.status()).toBe(201);
+  const generation = await submitted.json();
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const current = await request.get(
+      `http://127.0.0.1:5001/v1/generations/${generation.id}`,
+      { headers },
+    );
+    const body = await current.json();
+    if (body.status === "completed") break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const completed = await request.get(
+    `http://127.0.0.1:5001/v1/generations/${generation.id}`,
+    { headers },
+  );
+  expect((await completed.json()).status).toBe("completed");
+
+  const updated = await request.put(
+    `http://127.0.0.1:5001/v1/storyboards/projects/${project.id}`,
+    {
+      headers,
+      data: {
+        title: "Reopened lighthouse film",
+        form: projectForm(generation.id),
+      },
+    },
+  );
+  expect(updated.status()).toBe(200);
+
+  await page.addInitScript((authToken) => {
+    localStorage.setItem("vl_token", authToken);
+  }, token);
+  await page.goto("/videolab");
+
+  await expect(page.getByLabel("Overall artistic goal")).toHaveValue(
+    "A lighthouse beam crosses a storm-dark sea at night.",
+  );
+  await expect(page.locator(".lf-screen video")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Download video/ })).toBeVisible();
+
+  await page.reload();
+  await expect(page.locator(".lf-screen video")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Download video/ })).toBeVisible();
+});
+
 test("mobile storyboard has no page-level horizontal overflow", async ({
   page,
 }) => {
