@@ -427,6 +427,32 @@ paths:
           }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteGeneration
+      summary: Delete an owner-authorized generation after active runtime work stops
+      parameters: [{ $ref: "#/components/parameters/generationId" }]
+      responses:
+        "204": { description: Generation deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          {
+            description: Runtime cancellation was accepted but is not terminal,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+        "503":
+          {
+            description: Active runtime work could not be stopped safely,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
   /v1/generations/{generationId}/download:
     get:
       operationId: downloadGeneration
@@ -461,8 +487,26 @@ paths:
                   { schema: { $ref: "#/components/schemas/Generation" } },
               },
           }
+        "202":
+          {
+            description: Cancellation accepted; generation remains active until the runtime confirms termination,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Generation" } },
+              },
+          }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          {
+            description: Runtime cancellation could not be confirmed,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
   /v1/gallery:
     get:
       operationId: listGallery

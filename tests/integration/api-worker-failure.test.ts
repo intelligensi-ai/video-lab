@@ -36,7 +36,153 @@ describe('generation worker failure handling', () => {
       .expect(200);
 
     expect(generation.body.status).toBe('failed');
-    expect(generation.body.safeErrorMessage).toContain('runtime timeout');
+    expect(generation.body.failureCode).toBe('runtime_timeout');
+    expect(generation.body.safeErrorMessage).toBe(
+      'Generation timed out. Please retry when the runtime is available.',
+    );
+    expect(JSON.stringify(generation.body)).not.toContain('runtime.test');
+  }, 15_000);
+
+  it('preserves an active job when runtime cancellation cannot be confirmed', async () => {
+    vi.stubEnv('VIDEO_RUNTIME_PROVIDER', 'sulphur-ltx');
+    vi.stubEnv('VIDEO_RUNTIME_BASE_URL', 'http://runtime.test');
+    vi.stubEnv('VIDEO_RUNTIME_PAYLOAD_MODE', 'deploy-studio');
+    let terminal = false;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith('/jobs') && init?.method === 'POST') {
+        return Response.json({ id: 'uncancellable-runtime-job' }, { status: 202 });
+      }
+      if (requestUrl.endsWith('/jobs/uncancellable-runtime-job/cancel')) {
+        terminal = true;
+        return Response.json(
+          { error: 'private worker cancellation failure at http://10.0.0.8' },
+          { status: 503 },
+        );
+      }
+      if (requestUrl.endsWith('/jobs/uncancellable-runtime-job')) {
+        return terminal
+          ? Response.json({
+              status: 'failed',
+              error: {
+                code: 'runtime_job_failed',
+                title: 'private worker path /workspace/job.json',
+              },
+            })
+          : Response.json({ status: 'running', progress: 10 });
+      }
+      throw new Error(`Unexpected test URL: ${requestUrl}`);
+    }));
+
+    const { app, processOne } = await import('../../apps/api/src/index.js');
+    const auth = { authorization: 'Bearer cancel-failure-user' };
+    const submitted = await request(app)
+      .post('/v1/generations')
+      .set(auth)
+      .set('Idempotency-Key', 'cancel-failure-key')
+      .send({
+        prompt: 'A bounded cancellation failure test',
+        settings: { aspectRatio: '16:9', durationSeconds: 4, quality: 'draft' },
+      })
+      .expect(201);
+
+    const worker = processOne('uncancellable-worker');
+    await vi.waitFor(async () => {
+      const current = await request(app)
+        .get(`/v1/generations/${submitted.body.id}`)
+        .set(auth);
+      expect(current.body.status).toBe('generating');
+    });
+
+    const cancellation = await request(app)
+      .post(`/v1/generations/${submitted.body.id}/cancel`)
+      .set(auth)
+      .expect(503);
+    expect(cancellation.body.code).toBe('runtime_cancel_unconfirmed');
+    expect(JSON.stringify(cancellation.body)).not.toMatch(/10\.0\.0\.8|workspace|runtime\.test/i);
+
+    const deletion = await request(app)
+      .delete(`/v1/generations/${submitted.body.id}`)
+      .set(auth)
+      .expect(503);
+    expect(deletion.body.code).toBe('runtime_cancel_unconfirmed');
+    await request(app)
+      .get(`/v1/generations/${submitted.body.id}`)
+      .set(auth)
+      .expect(200);
+
+    await worker;
+    const failed = await request(app)
+      .get(`/v1/generations/${submitted.body.id}`)
+      .set(auth)
+      .expect(200);
+    expect(failed.body.status).toBe('failed');
+    expect(JSON.stringify(failed.body)).not.toMatch(/10\.0\.0\.8|workspace|runtime\.test/i);
+  }, 15_000);
+
+  it('keeps an accepted cancellation active until the runtime confirms it stopped', async () => {
+    vi.stubEnv('VIDEO_RUNTIME_PROVIDER', 'sulphur-ltx');
+    vi.stubEnv('VIDEO_RUNTIME_BASE_URL', 'http://runtime.test');
+    vi.stubEnv('VIDEO_RUNTIME_PAYLOAD_MODE', 'deploy-studio');
+    let statusChecks = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith('/jobs') && init?.method === 'POST') {
+        return Response.json({ id: 'slow-cancel-runtime-job' }, { status: 202 });
+      }
+      if (requestUrl.endsWith('/jobs/slow-cancel-runtime-job/cancel')) {
+        return Response.json({ status: 'cancelling' }, { status: 202 });
+      }
+      if (requestUrl.endsWith('/jobs/slow-cancel-runtime-job')) {
+        statusChecks += 1;
+        return Response.json(
+          statusChecks >= 3
+            ? { status: 'cancelled', progress: 0 }
+            : { status: 'running', progress: 25 },
+        );
+      }
+      throw new Error(`Unexpected test URL: ${requestUrl}`);
+    }));
+
+    const { app, processOne } = await import('../../apps/api/src/index.js');
+    const auth = { authorization: 'Bearer slow-cancel-user' };
+    const submitted = await request(app)
+      .post('/v1/generations')
+      .set(auth)
+      .set('Idempotency-Key', 'slow-cancel-key')
+      .send({
+        prompt: 'A cancellation confirmation boundary test',
+        settings: { aspectRatio: '16:9', durationSeconds: 4, quality: 'draft' },
+      })
+      .expect(201);
+
+    const worker = processOne('slow-cancel-worker');
+    await vi.waitFor(async () => {
+      const current = await request(app)
+        .get(`/v1/generations/${submitted.body.id}`)
+        .set(auth);
+      expect(current.body.status).toBe('generating');
+    });
+
+    const cancellation = await request(app)
+      .post(`/v1/generations/${submitted.body.id}/cancel`)
+      .set(auth)
+      .expect(202);
+    expect(cancellation.body.status).toBe('generating');
+    expect(cancellation.body.runtimeMessage).toContain('Waiting for the generator');
+
+    const deletion = await request(app)
+      .delete(`/v1/generations/${submitted.body.id}`)
+      .set(auth)
+      .expect(409);
+    expect(deletion.body.code).toBe('runtime_cancel_pending');
+
+    await worker;
+    const terminal = await request(app)
+      .get(`/v1/generations/${submitted.body.id}`)
+      .set(auth)
+      .expect(200);
+    expect(terminal.body.status).toBe('cancelled');
   }, 15_000);
 
   it('rejects browser-supplied hydrated reference payloads', async () => {
@@ -451,6 +597,7 @@ describe('generation worker failure handling', () => {
     });
     expect(capacityWaiting.body).not.toHaveProperty('assemblyRuntimeAttempt');
 
+    await new Promise((resolve) => setTimeout(resolve, 1_050));
     await processOne('assembly-old-worker');
     const waiting = await request(app).get(`/v1/generations/${assembly.body.id}`).set(auth).expect(200);
     expect(waiting.body).toMatchObject({
@@ -460,6 +607,7 @@ describe('generation worker failure handling', () => {
     expect(waiting.body).not.toHaveProperty('assemblyRuntimeAttempt');
     expect(JSON.stringify(waiting.body)).not.toContain('assembly-old-worker');
 
+    await new Promise((resolve) => setTimeout(resolve, 1_050));
     await processOne('assembly-replacement-worker');
     const completed = await request(app).get(`/v1/generations/${assembly.body.id}`).set(auth).expect(200);
     expect(completed.body).toMatchObject({
@@ -507,6 +655,7 @@ describe('generation worker failure handling', () => {
       .set(auth)
       .expect(200)
       .expect(({ body }) => expect(body.status).toBe('queued'));
+    await new Promise((resolve) => setTimeout(resolve, 1_050));
     await processOne('assembly-unavailable-second');
     const exhausted = await request(app)
       .get(`/v1/generations/${exhaustedAssembly.body.id}`)

@@ -95,7 +95,7 @@ const enhancementBody = (masterPrompt: string, shotCount: number, targetShotNumb
 describe("public runtime readiness boundaries", () => {
   it("bounds distributed dispatcher concurrency", () => {
     expect(workerConcurrencyLimit({ VIDEO_LAB_WORKER_CONCURRENCY: "2" } as NodeJS.ProcessEnv)).toBe(2);
-    expect(workerConcurrencyLimit({ VIDEO_LAB_WORKER_CONCURRENCY: "999" } as NodeJS.ProcessEnv)).toBe(20);
+    expect(workerConcurrencyLimit({ VIDEO_LAB_WORKER_CONCURRENCY: "999" } as NodeJS.ProcessEnv)).toBe(2);
     expect(workerConcurrencyLimit({ VIDEO_LAB_WORKER_CONCURRENCY: "invalid" } as NodeJS.ProcessEnv)).toBe(2);
   });
   it("rejects untrusted browser origins", async () => {

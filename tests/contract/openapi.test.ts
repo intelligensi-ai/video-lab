@@ -54,6 +54,14 @@ describe("openapi contract", () => {
   it("requires idempotency key on generation submission", () => {
     expect(doc.paths["/v1/generations"].post.parameters[0].required).toBe(true);
   });
+  it("documents non-terminal cancellation and fail-closed deletion", () => {
+    expect(
+      doc.paths["/v1/generations/{generationId}/cancel"].post.responses,
+    ).toHaveProperty("202");
+    expect(
+      doc.paths["/v1/generations/{generationId}"].delete.responses,
+    ).toEqual(expect.objectContaining({ "204": expect.any(Object), "409": expect.any(Object), "503": expect.any(Object) }));
+  });
   it("matches the LongForm 24-scene and safe-capability contract", () => {
     expect(
       doc.components.schemas.StoryboardEnhancementRequest.properties.shotCount

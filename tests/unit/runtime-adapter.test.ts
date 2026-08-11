@@ -1,5 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RuntimeCapacityPendingError, RuntimeLeaseUnavailableError, SulphurLtxRuntimeAdapter } from "../../packages/runtime-adapter/src/index.js";
+import { boundedInteger, RuntimeCapacityPendingError, RuntimeLeaseUnavailableError, SulphurLtxRuntimeAdapter } from "../../packages/runtime-adapter/src/index.js";
+
+describe("bounded runtime configuration", () => {
+  it.each([
+    [undefined, 120_000],
+    ["", 120_000],
+    ["not-a-number", 120_000],
+    ["0", 120_000],
+    ["-1", 120_000],
+    ["1000.5", 120_000],
+    ["999", 120_000],
+    ["1000", 1_000],
+    ["900000", 900_000],
+    ["900001", 120_000],
+  ])("fails %s to a safe bounded value", (value, expected) => {
+    expect(boundedInteger(value, 120_000, 1_000, 900_000)).toBe(expected);
+  });
+});
 
 describe("SulphurLtxRuntimeAdapter", () => {
   afterEach(() => {
@@ -49,6 +66,109 @@ describe("SulphurLtxRuntimeAdapter", () => {
     expect(calls[1].url).toBe("http://runtime.test/jobs/job-1");
   });
 
+  it("replays an ambiguous paid submission once with the same idempotency key", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        if (calls.length === 1) throw new TypeError("response connection lost");
+        return Response.json({ id: "original-paid-job", status: "queued" }, { status: 202 });
+      }),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.test",
+      payloadMode: "intelligensi-api",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+
+    await expect(
+      adapter.submitGeneration({
+        prompt: "A bounded historical scene",
+        idempotencyKey: "project-1:scene-1:version-1",
+        settings: {
+          runtime: "longform-ltx-storyboard-studio",
+          aspectRatio: "16:9",
+          durationSeconds: 2,
+          quality: "draft",
+        },
+      }),
+    ).resolves.toEqual({ runtimeJobId: "original-paid-job" });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0].url).toBe(calls[1].url);
+    expect(calls[0].init?.body).toBe(calls[1].init?.body);
+    expect(
+      (calls[0].init?.headers as Record<string, string>)["Idempotency-Key"],
+    ).toBe("project-1:scene-1:version-1");
+    expect(
+      (calls[1].init?.headers as Record<string, string>)["Idempotency-Key"],
+    ).toBe("project-1:scene-1:version-1");
+  });
+
+  it("does not replay an ambiguous submission without an idempotency key", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("response connection lost");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.test",
+      payloadMode: "intelligensi-api",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+
+    await expect(
+      adapter.submitGeneration({
+        prompt: "A generation without a durable retry key",
+        settings: {
+          runtime: "longform-ltx-storyboard-studio",
+          aspectRatio: "16:9",
+          durationSeconds: 2,
+          quality: "draft",
+        },
+      }),
+    ).rejects.toThrow("response connection lost");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [503, "runtime_submission_uncertain"],
+    [409, "idempotency_in_progress"],
+  ])(
+    "keeps gateway reconciliation code %s/%s in the durable queue",
+    async (status, code) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          Response.json(
+            { code, message: "safe retry" },
+            { status, headers: { "retry-after": "7" } },
+          ),
+        ),
+      );
+      const adapter = new SulphurLtxRuntimeAdapter({
+        baseUrl: "https://api.intelligensi.test",
+        payloadMode: "intelligensi-api",
+        runtimeId: "longform-ltx-storyboard-studio",
+      });
+
+      const submission = adapter.submitGeneration({
+        prompt: "An idempotent reconciliation test",
+        idempotencyKey: "project-1:scene-1:version-1",
+        settings: {
+          runtime: "longform-ltx-storyboard-studio",
+          aspectRatio: "16:9",
+          durationSeconds: 2,
+          quality: "draft",
+        },
+      });
+      await expect(submission).rejects.toMatchObject({
+        name: "RuntimeCapacityPendingError",
+        retryAfterSeconds: 7,
+      });
+    },
+  );
+
   it("prefers the gateway's safe terminal failure over stale queued text", async () => {
     vi.stubGlobal(
       "fetch",
@@ -80,6 +200,137 @@ describe("SulphurLtxRuntimeAdapter", () => {
     const status = await adapter.getGenerationStatus("failed-job");
     expect(status.message).not.toContain("Queued");
     expect(status.message).not.toContain("private upstream");
+  });
+
+  it("never exposes upstream infrastructure details as creator progress", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          id: "private-progress-job",
+          status: "running",
+          progress: 500,
+          stage: "lambda_worker_10_0_0_4",
+          message:
+            "Loading ComfyUI from http://10.0.0.4:8188 with bearer secret-token",
+          qualityAssessment: {
+            version: "media-qc-v2",
+            advisory: true,
+            score: 50,
+            recommendation: "review",
+            checks: [
+              {
+                id: "container_path",
+                status: "warning",
+                confidence: 1,
+                detail: "Inspect /workspace/private/job.json on Lambda",
+              },
+            ],
+          },
+        }),
+      ),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.test",
+      payloadMode: "intelligensi-api",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+
+    const status = await adapter.getGenerationStatus("private-progress-job");
+
+    expect(status).toMatchObject({
+      state: "generating",
+      progress: 100,
+      message: "Rendering generation",
+    });
+    expect(status.stage).toBeUndefined();
+    expect(status.qualityAssessment?.checks[0]?.detail).toBeUndefined();
+    expect(JSON.stringify(status)).not.toMatch(
+      /lambda|comfyui|10\.0\.0\.4|bearer|workspace|secret-token/i,
+    );
+  });
+
+  it("replaces unsafe terminal errors and invalid codes with a fixed message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          id: "private-failure-job",
+          status: "failed",
+          progress: "not-a-number",
+          error: {
+            code: "provider_lambda_secret_failure",
+            title: "Docker failed at /workspace/private using token abc123",
+          },
+        }),
+      ),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.test",
+      payloadMode: "intelligensi-api",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+
+    await expect(
+      adapter.getGenerationStatus("private-failure-job"),
+    ).resolves.toEqual({
+      state: "failed",
+      progress: 0,
+      message:
+        "The runtime could not complete this generation. The previous successful version remains available.",
+    });
+  });
+
+  it("keeps an in-flight cancellation non-terminal until the worker confirms it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          id: "cancelling-job",
+          status: "cancelling",
+          stage: "cancelling",
+          progress: 42,
+          message: "Interrupting ComfyUI at http://127.0.0.1:8188",
+        }),
+      ),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.test",
+      payloadMode: "intelligensi-api",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+
+    await expect(adapter.getGenerationStatus("cancelling-job")).resolves.toEqual({
+      state: "generating",
+      progress: 42,
+      message: "Cancelling generation",
+      stage: "cancelling",
+    });
+  });
+
+  it("distinguishes accepted cancellation from confirmed termination", async () => {
+    const responses = [
+      Response.json(
+        { status: "running", state: "generating", stage: "cancelling" },
+        { status: 200 },
+      ),
+      Response.json({ status: "cancelled" }, { status: 202 }),
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => responses.shift()!));
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.test",
+      payloadMode: "intelligensi-api",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+
+    await expect(adapter.cancelGeneration("running-job")).resolves.toEqual({
+      cancelled: false,
+      accepted: true,
+    });
+    await expect(adapter.cancelGeneration("stopped-job")).resolves.toEqual({
+      cancelled: true,
+      accepted: true,
+    });
   });
 
   it("uses the baked Sulphur prompt completion endpoint", async () => {

@@ -282,7 +282,8 @@ export interface paths {
         get: operations["getGeneration"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete an owner-authorized generation after active runtime work stops */
+        delete: operations["deleteGeneration"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1543,6 +1544,46 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    deleteGeneration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                generationId: components["parameters"]["generationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Generation deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            /** @description Runtime cancellation was accepted but is not terminal */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Active runtime work could not be stopped safely */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     downloadGeneration: {
         parameters: {
             query?: never;
@@ -1592,8 +1633,26 @@ export interface operations {
                     "application/json": components["schemas"]["Generation"];
                 };
             };
+            /** @description Cancellation accepted; generation remains active until the runtime confirms termination */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Generation"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            /** @description Runtime cancellation could not be confirmed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     listGallery: {

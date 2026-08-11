@@ -1,7 +1,90 @@
 declare const process: { env: Record<string, string | undefined> };
 import type { Generation } from "@video-lab/contracts";
+import { boundedInteger } from "./config.js";
 
 export * from "./storyboardEnhancer.js";
+export * from "./config.js";
+
+const publicRuntimeStages = new Set([
+  "queued",
+  "validating",
+  "planning_opening_frame",
+  "generating_start_frame",
+  "generating_end_frame",
+  "generating_scene",
+  "cancelling",
+  "assembly",
+  "assembling",
+  "uploading",
+  "completed",
+  "cancelled",
+]);
+
+function safePublicRuntimeText(value: unknown, maximumLength = 500) {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  if (!text || text.length > maximumLength || /[\r\n]/.test(text)) return undefined;
+  if (
+    /https?:\/\/|\b(?:localhost|lambda|ollama|comfyui|docker|container|cuda)\b|\bbearer\s+|\b(?:api[_ -]?key|access[_ -]?token|secret)\b|(?:\d{1,3}\.){3}\d{1,3}|[a-z]:\\|\/(?:home|mnt|opt|root|tmp|var|workspace)\//i.test(
+      text,
+    )
+  )
+    return undefined;
+  return text;
+}
+
+function safeRuntimeStage(value: unknown) {
+  const stage = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return publicRuntimeStages.has(stage) ? stage : undefined;
+}
+
+function safeRuntimeFailureCode(value: unknown) {
+  const code = typeof value === "string" ? value.trim() : "";
+  return /^runtime_[a-z0-9_]{1,80}$/.test(code) ? code : undefined;
+}
+
+function publicRuntimeMessage(
+  state: RuntimeGenerationStatus["state"],
+  stage: string | undefined,
+  failureCode?: string,
+) {
+  if (state === "failed") {
+    const knownMessages: Record<string, string> = {
+      runtime_generation_timeout:
+        "Generation timed out. The previous successful version remains available.",
+      runtime_gpu_memory_exhausted:
+        "The generator ran out of working memory. Retry with shorter or lower-resolution settings.",
+      runtime_gpu_unavailable:
+        "Generation capacity is temporarily unavailable. Please retry shortly.",
+      runtime_media_processing_failed:
+        "The generated media could not be finalised. The previous successful version remains available.",
+      runtime_model_unavailable:
+        "A required generation model is temporarily unavailable. Please retry shortly.",
+      runtime_video_encoding_failed:
+        "The runtime could not encode the generated video. Retry this scene; if it repeats, turn off generated sound and try again.",
+      runtime_workflow_rejected:
+        "The requested settings are not supported by the active generator.",
+      runtime_workflow_unavailable:
+        "The requested generation workflow is temporarily unavailable.",
+    };
+    return (
+      (failureCode ? knownMessages[failureCode] : undefined) ??
+      "The runtime could not complete this generation. The previous successful version remains available."
+    );
+  }
+  if (state === "queued") return "Waiting for generation capacity";
+  if (state === "preparing") return "Preparing generation";
+  if (state === "uploading") return "Finalising output";
+  if (state !== "generating") return undefined;
+  if (stage === "cancelling") return "Cancelling generation";
+  if (stage === "generating_start_frame") return "Generating opening frame";
+  if (stage === "generating_end_frame") return "Generating closing frame";
+  if (stage === "planning_opening_frame") return "Planning opening frame";
+  if (stage === "assembly" || stage === "assembling") return "Assembling film";
+  if (stage === "validating") return "Validating generation";
+  if (stage === "generating_scene") return "Rendering scene";
+  return "Rendering generation";
+}
 
 function optionalPositiveInteger<K extends string>(key: K, value: unknown) {
   const number = Number(value);
@@ -22,16 +105,21 @@ function safeQualityAssessment(value: unknown): Generation["qualityAssessment"] 
     const check = entry as Record<string, unknown>;
     const status = String(check.status);
     const id = String(check.id ?? "").trim();
-    if (!id || !["passed", "failed", "warning", "not_evaluated"].includes(status)) return [];
+    if (!/^[a-z][a-z0-9_-]{0,79}$/.test(id) || !["passed", "failed", "warning", "not_evaluated"].includes(status)) return [];
+    const detail = safePublicRuntimeText(check.detail);
     return [{
-      id: id.slice(0, 80),
+      id,
       status: status as "passed" | "failed" | "warning" | "not_evaluated",
       confidence: Math.min(1, Math.max(0, Number(check.confidence) || 0)),
-      ...(typeof check.detail === "string" ? { detail: check.detail.trim().slice(0, 500) } : {}),
+      ...(detail ? { detail } : {}),
     }];
   });
   const score = Math.min(100, Math.max(0, Math.round(Number(source.score) || 0)));
-  return { version: String(source.version ?? "media-qc-v2").slice(0, 80), advisory: true, score, recommendation, checks };
+  const requestedVersion = String(source.version ?? "media-qc-v2").trim();
+  const version = /^[a-z0-9][a-z0-9._-]{0,79}$/i.test(requestedVersion)
+    ? requestedVersion
+    : "media-qc-v2";
+  return { version, advisory: true, score, recommendation, checks };
 }
 
 export interface RuntimeVideoSettings {
@@ -227,6 +315,7 @@ export interface RuntimeGenerationStatus {
 
 export interface RuntimeCancelResult {
   cancelled: boolean;
+  accepted?: boolean;
 }
 
 export interface RuntimeOutput {
@@ -442,7 +531,12 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     init: RequestInit = {},
     timeoutOverrideMs?: number,
   ) {
-    const timeoutMs = timeoutOverrideMs ?? this.cfg.timeoutMs ?? 120_000;
+    const timeoutMs = boundedInteger(
+      timeoutOverrideMs ?? this.cfg.timeoutMs,
+      120_000,
+      1_000,
+      15 * 60_000,
+    );
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -860,26 +954,54 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
   async submitGeneration(
     input: RuntimeGenerationInput,
   ): Promise<RuntimeSubmission> {
+    const requestPath = this.cfg.submitPath ?? this.defaultPath("submit");
+    const requestInit: RequestInit = {
+      method: "POST",
+      headers: input.idempotencyKey
+        ? { "Idempotency-Key": input.idempotencyKey }
+        : undefined,
+      body: JSON.stringify(this.payload(input)),
+    };
     let res: Response;
     try {
-      res = await this.request(
-        this.cfg.submitPath ?? this.defaultPath("submit"),
-        {
-          method: "POST",
-          headers: input.idempotencyKey
-            ? { "Idempotency-Key": input.idempotencyKey }
-            : undefined,
-          body: JSON.stringify(this.payload(input)),
-        },
-      );
+      res = await this.request(requestPath, requestInit);
     } catch (error) {
-      if (input.settings.operationScope === "assembly") {
-        throw new RuntimeLeaseUnavailableError();
+      if (input.idempotencyKey) {
+        try {
+          // A paid worker may have accepted the first request before its HTTP
+          // response was lost. Replay the exact request once with the same
+          // durable key so Deploy Studio resolves the original assignment.
+          res = await this.request(requestPath, requestInit);
+        } catch {
+          if (input.settings.operationScope === "assembly") {
+            throw new RuntimeLeaseUnavailableError();
+          }
+          throw error;
+        }
+      } else {
+        if (input.settings.operationScope === "assembly") {
+          throw new RuntimeLeaseUnavailableError();
+        }
+        throw error;
       }
-      throw error;
     }
 
     if (!res.ok) {
+      let responseCode = "";
+      try {
+        const body = (await res.clone().json()) as { code?: unknown };
+        responseCode = typeof body.code === "string" ? body.code : "";
+      } catch {
+        // Fall through to the normal status-based classification.
+      }
+      if (
+        responseCode === "runtime_submission_uncertain" ||
+        responseCode === "idempotency_in_progress"
+      ) {
+        throw new RuntimeCapacityPendingError(
+          Number(res.headers.get("retry-after")) || 5,
+        );
+      }
       const leaseError = await runtimeLeaseUnavailableResponse(res);
       if (leaseError) throw new RuntimeCapacityPendingError(leaseError.retryAfterSeconds);
       const responseText = await res.text();
@@ -949,39 +1071,35 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       error: "failed",
       cancelled: "cancelled",
       canceled: "cancelled",
+      cancelling: "generating",
     };
 
     const rawProgress = Number(json.progress ?? 0);
-    const progress =
-      this.cfg.payloadMode === "intelligensi-api" && rawProgress <= 1
-        ? Math.round(rawProgress * 10_000) / 100
-        : rawProgress;
+    const normalizedProgress = Number.isFinite(rawProgress) ? rawProgress : 0;
+    const scaledProgress =
+      this.cfg.payloadMode === "intelligensi-api" && normalizedProgress <= 1
+        ? Math.round(normalizedProgress * 10_000) / 100
+        : normalizedProgress;
+    const progress = Math.min(100, Math.max(0, scaledProgress));
     const state = map[rawState.toLowerCase()] ?? "failed";
     const failureCode =
       typeof json.error === "object" && json.error
-        ? json.error.code
+        ? safeRuntimeFailureCode(json.error.code)
         : undefined;
-    const fallbackFailureMessage =
-      "The runtime could not complete this generation. The previous successful version remains available.";
-    const errorMessage =
-      typeof json.error === "object" && json.error
-        ? json.error.title ?? json.error.message ?? json.error.code
-        : undefined;
+    const stage = safeRuntimeStage(json.stage);
     const qualityAssessment = safeQualityAssessment(
       json.quality_report ?? json.qualityAssessment,
     );
     return {
       state,
       progress,
-      message: state === "failed" ? errorMessage ?? fallbackFailureMessage : json.message,
+      message: publicRuntimeMessage(state, stage, failureCode),
       ...(state === "failed" && failureCode ? { failureCode } : {}),
       ...optionalPositiveInteger("framesRendered", json.framesRendered),
       ...optionalPositiveInteger("totalFrames", json.totalFrames),
       ...optionalPositiveInteger("currentScene", json.currentScene),
       ...optionalPositiveInteger("totalScenes", json.totalScenes),
-      ...(typeof json.stage === "string" && json.stage.trim()
-        ? { stage: json.stage.trim() }
-        : {}),
+      ...(stage ? { stage } : {}),
       ...(qualityAssessment
         ? { qualityAssessment }
         : {}),
@@ -994,7 +1112,31 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       runtimeJobId,
     );
     const res = await this.request(path, { method: "POST" });
-    return { cancelled: res.ok };
+    if (!res.ok) return { cancelled: false, accepted: false };
+    let state = "";
+    let stage = "";
+    try {
+      const body = (await res.clone().json()) as {
+        status?: unknown;
+        state?: unknown;
+        stage?: unknown;
+      };
+      state = String(body.status ?? body.state ?? "").toLowerCase();
+      stage = String(body.stage ?? "").toLowerCase();
+    } catch {
+      // A successful but empty response acknowledges the request without
+      // proving that the worker has reached a terminal state.
+    }
+    const cancelled = state === "cancelled" || state === "canceled";
+    return {
+      cancelled,
+      accepted:
+        cancelled ||
+        state === "cancelling" ||
+        state === "canceling" ||
+        stage === "cancelling" ||
+        stage === "canceling",
+    };
   }
 
   async fetchOutput(runtimeJobId: string): Promise<RuntimeOutput> {
@@ -1105,12 +1247,6 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
   }
 }
 
-function numberFromEnv(value: string | undefined) {
-  if (!value) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 function payloadModeFromEnv(
   value: string | undefined,
 ): RuntimePayloadMode | undefined {
@@ -1147,7 +1283,12 @@ export function createRuntimeFromEnv(): VideoRuntimeAdapter {
           process.env.VIDEO_RUNTIME_PROVIDER === "intelligensi-api"
             ? "intelligensi-api"
             : payloadModeFromEnv(process.env.VIDEO_RUNTIME_PAYLOAD_MODE),
-        timeoutMs: numberFromEnv(process.env.VIDEO_RUNTIME_TIMEOUT_MS),
+        timeoutMs: boundedInteger(
+          process.env.VIDEO_RUNTIME_TIMEOUT_MS,
+          120_000,
+          1_000,
+          15 * 60_000,
+        ),
       })
     : new MockVideoRuntimeAdapter();
 }

@@ -41,6 +41,7 @@ import {
   SulphurLtxRuntimeAdapter,
   RuntimeCapacityPendingError,
   RuntimeLeaseUnavailableError,
+  boundedInteger,
   type RuntimeGenerationInput,
   type RuntimeVideoSettings,
 } from "@video-lab/runtime-adapter";
@@ -857,9 +858,11 @@ let runtimeDiscovery: RuntimeDiscovery = {
 };
 let runtimeDiscoveryCheckedAt = 0;
 let runtimeDiscoveryPromise: Promise<void> | undefined;
-const runtimeDiscoveryRefreshMs = Math.max(
+const runtimeDiscoveryRefreshMs = boundedInteger(
+  process.env.VIDEO_RUNTIME_DISCOVERY_REFRESH_MS,
+  10_000,
   2_000,
-  Number(process.env.VIDEO_RUNTIME_DISCOVERY_REFRESH_MS ?? 10_000),
+  5 * 60_000,
 );
 let manualRuntimeBaseUrl: string | undefined;
 export function creditLimitsEnabled(_env: NodeJS.ProcessEnv = process.env) {
@@ -929,7 +932,12 @@ function createRuntimeAdapter(
         : process.env.VIDEO_RUNTIME_PAYLOAD_MODE === "sulphur"
           ? "sulphur"
           : "deploy-studio",
-    timeoutMs: Number(process.env.VIDEO_RUNTIME_TIMEOUT_MS ?? 120000),
+    timeoutMs: boundedInteger(
+      process.env.VIDEO_RUNTIME_TIMEOUT_MS,
+      120_000,
+      1_000,
+      15 * 60_000,
+    ),
   });
 }
 async function connectRuntimeEndpoint(
@@ -945,16 +953,14 @@ async function connectRuntimeEndpoint(
   try {
     health = await adapter.healthCheck();
   } catch (e) {
-    const detail =
-      e instanceof Error && e.name === "AbortError"
-        ? "Runtime health check timed out"
-        : e instanceof Error
-          ? e.message
-          : String(e);
+    log("runtime_health_unreachable", {
+      source,
+      errorCode: operationalErrorCode(e),
+    });
     throw problem(
       503,
       "runtime_health_unreachable",
-      `Could not reach runtime health endpoint: ${detail}`,
+      "Could not reach the managed generation runtime. Verify the server-side runtime connection and try again.",
     );
   }
   if (!health.ok)
@@ -969,7 +975,7 @@ async function connectRuntimeEndpoint(
       throw problem(
         401,
         "runtime_access_denied",
-        `Runtime health is ready, but protected job routes rejected Video Lab credentials (${protectedAccess.message ?? protectedAccess.status}). Configure VIDEO_RUNTIME_DIRECT_WORKER_TOKEN with the worker RUNTIME_ACCESS_TOKEN, or connect through Deploy Studio.`,
+        "Runtime health is ready, but protected generation routes rejected the server connection. Verify server-side runtime credentials or connect through Deploy Studio.",
       );
   }
   runtimeBaseUrl = baseUrl;
@@ -1340,7 +1346,8 @@ async function refreshRuntimeHealth() {
       runtimeDiscovery = {
         ...runtimeDiscovery,
         state: "unavailable",
-        message: `Manual runtime health is ready, but protected job routes rejected Video Lab credentials (${protectedAccess.message ?? protectedAccess.status}).`,
+        message:
+          "Manual runtime health is ready, but protected generation routes rejected the server connection.",
       };
       return;
     }
@@ -1545,6 +1552,35 @@ async function failGenerationFromRuntime(
   return failed;
 }
 
+async function requireRuntimeCancellation(
+  generation: StoredGeneration,
+  action: "cancel" | "delete",
+): Promise<"confirmed" | "accepted"> {
+  if (!generation.runtimeJobId) return "confirmed";
+  try {
+    const result = await runtime.cancelGeneration(generation.runtimeJobId);
+    if (result.cancelled) return "confirmed";
+    if (result.accepted) return "accepted";
+  } catch (error) {
+    log(
+      action === "delete"
+        ? "runtime_cancel_before_delete_failed"
+        : "runtime_cancel_failed",
+      {
+        generationId: generation.id,
+        errorCode: operationalErrorCode(error),
+      },
+    );
+  }
+  throw problem(
+    503,
+    "runtime_cancel_unconfirmed",
+    action === "delete"
+      ? "Deletion was not completed because the active generation could not be stopped safely. Retry shortly; the project record is unchanged."
+      : "Cancellation could not be confirmed by the generator. The job remains active; retry shortly.",
+  );
+}
+
 async function reconcileActiveGeneration(uid: string) {
   const active = localAuth
     ? [...gens.values()].find(
@@ -1720,11 +1756,17 @@ async function enqueueGeneration(
   return { generation, created: true };
 }
 
-function queueLeaseMs() {
-  const timeout = Math.max(
+function runtimeJobTimeoutMs() {
+  return boundedInteger(
+    process.env.VIDEO_RUNTIME_JOB_TIMEOUT_MS,
+    55 * 60_000,
     60_000,
-    Number(process.env.VIDEO_RUNTIME_JOB_TIMEOUT_MS ?? 55 * 60_000),
+    2 * 60 * 60_000,
   );
+}
+
+function queueLeaseMs() {
+  const timeout = runtimeJobTimeoutMs();
   return Math.min(2 * 60 * 60_000, timeout + 5 * 60_000);
 }
 
@@ -1734,29 +1776,32 @@ async function claimQueueItem(
   if (localAuth) return claimNext(queue, workerId, new Date(), queueLeaseMs());
   adminApp();
   const firestore = getFirestore();
-  const queued = await firestore
-    .collection(generationQueueCollection)
-    .where("status", "==", "queued")
-    .orderBy("createdAt", "asc")
-    .limit(10)
-    .get();
-  const expired = queued.empty
-    ? await firestore
+  const [queued, expired] = await Promise.all([
+    firestore
+      .collection(generationQueueCollection)
+      .where("status", "==", "queued")
+      .orderBy("createdAt", "asc")
+      .limit(100)
+      .get(),
+    firestore
         .collection(generationQueueCollection)
         .where("status", "==", "claimed")
         .where("leaseExpiresAt", "<", nowIso())
         .orderBy("leaseExpiresAt", "asc")
-        .limit(10)
-        .get()
-    : undefined;
-  for (const candidate of [...queued.docs, ...(expired?.docs ?? [])]) {
+        .limit(100)
+        .get(),
+  ]);
+  for (const candidate of [...queued.docs, ...expired.docs]) {
     let claimed: QueueItem | undefined;
     await firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(candidate.ref);
       if (!snapshot.exists) return;
       const item = snapshot.data() as QueueItem;
+      const capacityReady =
+        !item.capacityRetryAt ||
+        new Date(item.capacityRetryAt).getTime() <= Date.now();
       const eligible =
-        item.status === "queued" ||
+        (item.status === "queued" && capacityReady) ||
         (item.status === "claimed" &&
           Boolean(item.leaseExpiresAt) &&
           new Date(item.leaseExpiresAt!).getTime() < Date.now());
@@ -1767,12 +1812,14 @@ async function claimQueueItem(
         claimedBy: workerId,
         attempt: Number(item.attempt ?? 0) + 1,
         leaseExpiresAt: new Date(Date.now() + queueLeaseMs()).toISOString(),
+        capacityRetryAt: undefined,
       };
       transaction.update(candidate.ref, {
         status: claimed.status,
         claimedBy: claimed.claimedBy,
         attempt: claimed.attempt,
         leaseExpiresAt: claimed.leaseExpiresAt,
+        capacityRetryAt: null,
       });
     });
     if (claimed) return claimed;
@@ -1823,11 +1870,16 @@ async function finishQueueItem(item: QueueItem, uid?: string) {
   });
 }
 
-async function requeueQueueItem(item: QueueItem) {
+async function requeueQueueItem(item: QueueItem, retryAfterSeconds = 20) {
+  const retrySeconds = boundedInteger(retryAfterSeconds, 20, 1, 300);
+  const capacityRetryAt = new Date(
+    Date.now() + retrySeconds * 1_000,
+  ).toISOString();
   if (localAuth) {
     item.status = "queued";
     item.claimedBy = undefined;
     item.leaseExpiresAt = undefined;
+    item.capacityRetryAt = capacityRetryAt;
     return;
   }
   adminApp();
@@ -1839,7 +1891,7 @@ async function requeueQueueItem(item: QueueItem) {
         status: "queued",
         claimedBy: null,
         leaseExpiresAt: null,
-        capacityRetryAt: nowIso(),
+        capacityRetryAt,
       },
       { merge: true },
     );
@@ -2151,10 +2203,7 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
 }
 
 function assemblyRecoveryAttemptLimit(env: NodeJS.ProcessEnv = process.env) {
-  const configured = Number(env.VIDEO_LAB_ASSEMBLY_RECOVERY_ATTEMPTS ?? 3);
-  return Number.isInteger(configured)
-    ? Math.max(1, Math.min(5, configured))
-    : 3;
+  return boundedInteger(env.VIDEO_LAB_ASSEMBLY_RECOVERY_ATTEMPTS, 3, 1, 5);
 }
 
 const draftKeys = new Set([
@@ -3115,8 +3164,11 @@ async function enhanceStoryboard(
         authScheme: useStableApi
           ? process.env.VIDEO_RUNTIME_AUTH_SCHEME
           : undefined,
-        timeoutMs: Number(
-          process.env.VIDEO_STORYBOARD_ENHANCER_TIMEOUT_MS ?? 250_000,
+        timeoutMs: boundedInteger(
+          process.env.VIDEO_STORYBOARD_ENHANCER_TIMEOUT_MS,
+          250_000,
+          30_000,
+          10 * 60_000,
         ),
       }).enhance(request, runtimeContext);
     } catch (error) {
@@ -3153,7 +3205,12 @@ app.use(
 app.use(
   rateLimit({
     name: "api",
-    limit: Number(process.env.VIDEO_LAB_RATE_LIMIT_PER_MINUTE ?? 180),
+    limit: boundedInteger(
+      process.env.VIDEO_LAB_RATE_LIMIT_PER_MINUTE,
+      180,
+      1,
+      10_000,
+    ),
   }),
 );
 app.use((req, _res, next) => {
@@ -4010,9 +4067,11 @@ app.post(
             );
         }
       }
-      const globalQueueLimit = Math.max(
+      const globalQueueLimit = boundedInteger(
+        process.env.VIDEO_RUNTIME_GLOBAL_QUEUE_LIMIT,
+        100,
         1,
-        Number(process.env.VIDEO_RUNTIME_GLOBAL_QUEUE_LIMIT ?? 100),
+        10_000,
       );
       for (const a of inputAssets) {
         if ((await findAsset(String(a.assetId ?? "")))?.uid !== p.uid)
@@ -4129,15 +4188,16 @@ app.post("/v1/generations/:id/cancel", auth, async (req, res, next) => {
       throw problem(404, "not_found", "Generation not found");
     if (["completed", "failed", "cancelled"].includes(g.status))
       return res.json(publicGeneration(g));
-    if (g.runtimeJobId) {
-      try {
-        await runtime.cancelGeneration(g.runtimeJobId);
-      } catch (e) {
-        log("runtime_cancel_failed", {
-          generationId: g.id,
-          errorCode: operationalErrorCode(e),
-        });
-      }
+    const cancellation = await requireRuntimeCancellation(g, "cancel");
+    if (cancellation === "accepted") {
+      const cancelling: StoredGeneration = {
+        ...g,
+        runtimeMessage: "Cancellation requested. Waiting for the generator to stop safely.",
+        updatedAt: nowIso(),
+      };
+      gens.set(g.id, cancelling);
+      await persistGeneration(cancelling);
+      return res.status(202).json(publicGeneration(cancelling));
     }
     const wallet = wallets.get(g.uid);
     if (creditLimitsEnabled() && wallet && wallet.reserved >= g.creditCost)
@@ -4170,14 +4230,14 @@ app.delete("/v1/generations/:id", auth, async (req, res, next) => {
     const g = await findGeneration(id);
     if (!g || g.uid !== res.locals.principal.uid)
       throw problem(404, "not_found", "Generation not found");
-    if (g.runtimeJobId && activeGenerationStatus(g.status)) {
-      try {
-        await runtime.cancelGeneration(g.runtimeJobId);
-      } catch (e) {
-        log("runtime_cancel_before_delete_failed", {
-          generationId: g.id,
-          errorCode: operationalErrorCode(e),
-        });
+    if (activeGenerationStatus(g.status)) {
+      const cancellation = await requireRuntimeCancellation(g, "delete");
+      if (cancellation === "accepted") {
+        throw problem(
+          409,
+          "runtime_cancel_pending",
+          "Deletion is waiting for the active generation to stop safely. Retry after cancellation completes.",
+        );
       }
     }
     await deleteStoredGeneration(g);
@@ -4412,12 +4472,7 @@ async function processQueueItem(workerId = "local-worker") {
     gens.set(g.id, submitted);
     await persistGeneration(submitted);
     let st = await runtime.getGenerationStatus(sub.runtimeJobId);
-    const deadline =
-      Date.now() +
-      Math.max(
-        60_000,
-        Number(process.env.VIDEO_RUNTIME_JOB_TIMEOUT_MS ?? 55 * 60_000),
-      );
+    const deadline = Date.now() + runtimeJobTimeoutMs();
     while (!["completed", "failed", "cancelled"].includes(st.state)) {
       if (Date.now() >= deadline) throw new Error("runtime_job_timeout");
       if (gens.get(g.id)?.status === "cancelled") break;
@@ -4479,7 +4534,7 @@ async function processQueueItem(workerId = "local-worker") {
       delete waiting.runtimeJobId;
       gens.set(g.id, waiting);
       await persistGeneration(waiting);
-      await requeueQueueItem(item);
+      await requeueQueueItem(item, e.retryAfterSeconds);
       log(recoverableAssemblyLeaseLoss ? "assembly_requeued_after_runtime_change" : "generation_waiting_for_capacity", {
         generationId: g.id,
         retryAfterSeconds: e.retryAfterSeconds,
@@ -4490,7 +4545,7 @@ async function processQueueItem(workerId = "local-worker") {
       });
       return true;
     }
-    const detail = e instanceof Error ? e.message : String(e);
+    const failureCode = operationalErrorCode(e);
     const wallet = wallets.get(g.uid);
     let creditsReturned = false;
     if (!creditLimitsEnabled()) {
@@ -4515,10 +4570,16 @@ async function processQueueItem(workerId = "local-worker") {
     const failed: StoredGeneration = {
       ...(gens.get(g.id) ?? g),
       status: "failed",
-      failureCode: operationalErrorCode(e),
-      safeErrorMessage: localAuth
-        ? `Generation failed: ${detail}.${creditsReturned ? " Credits were returned." : ""}`
-        : "Generation failed safely. Please retry when the runtime is available.",
+      failureCode,
+      safeErrorMessage: `${
+        failureCode === "runtime_timeout"
+          ? "Generation timed out. Please retry when the runtime is available."
+          : failureCode === "runtime_authentication"
+            ? "Generation access could not be verified. Please retry shortly."
+            : failureCode === "runtime_invalid_response"
+              ? "The generator returned an invalid response. Your successful work is unchanged."
+              : "Generation failed safely. Please retry when the runtime is available."
+      }${creditsReturned ? " Credits were returned." : ""}`,
       updatedAt: nowIso(),
     };
     gens.set(g.id, failed);
@@ -4539,10 +4600,7 @@ export async function processOne(workerId = "local-worker") {
   await processQueueItem(workerId);
 }
 export function workerConcurrencyLimit(env: NodeJS.ProcessEnv = process.env) {
-  const configured = Number(env.VIDEO_LAB_WORKER_CONCURRENCY ?? 2);
-  return Number.isInteger(configured)
-    ? Math.max(1, Math.min(20, configured))
-    : 2;
+  return boundedInteger(env.VIDEO_LAB_WORKER_CONCURRENCY, 2, 1, 20);
 }
 const activeWorkerPromises = new Set<Promise<boolean>>();
 
