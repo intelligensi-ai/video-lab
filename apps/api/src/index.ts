@@ -2772,7 +2772,7 @@ async function enhanceStoryboard(
 
 export const app: express.Express = express();
 app.disable("x-powered-by");
-app.set("trust proxy", 1);
+app.set("trust proxy", process.env.NODE_ENV === "production" ? 1 : false);
 app.use(securityHeaders);
 app.use(cors(corsOptions()));
 app.use(
