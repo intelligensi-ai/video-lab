@@ -633,6 +633,13 @@ async function connectRuntimeEndpoint(
   source: RuntimeDiscovery["source"],
   message: string,
 ) {
+  if (!runtimeOriginAllowed(baseUrl)) {
+    throw problem(
+      400,
+      "runtime_origin_not_allowed",
+      "Runtime origin is not in the allowed production allow-list",
+    );
+  }
   const adapter = createRuntimeAdapter(
     baseUrl,
     source === "environment" ? "direct-worker" : "configured",
