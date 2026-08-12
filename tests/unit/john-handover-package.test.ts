@@ -9,16 +9,16 @@ describe("John production-platform handover package", () => {
   it("pins the generation baseline and distinguishes pending live evidence", () => {
     const reference = fs.readFileSync(referencePath, "utf8");
     expect(reference).toContain(
-      "sha256:33311a0af9f9acf9b7a5eeb44920d16174a1136a9e9a9c0afa6153a27f4260c8",
+      "sha256:e986a7c7bcb480ee7af065c459725ce1224cea959de825ded26727fbb4c13e14",
     );
     expect(reference).toContain(
-      "25ba86cfc93eb737c490867fc4f62e1b879b5e69",
+      "4131cbfe2a2debce8c86b333f49ac4b0a7509505",
     );
     expect(reference).toContain(
-      "07c3030bcb52dff0aef4547845a25345f0d98328",
+      "65c0f857394ec492ed3797fdecdcb62df890ab7f",
     );
     expect(reference).toMatch(
-      /PENDING SUCCESSOR ACCEPTANCE|successor[^\n]*passed/i,
+      /PENDING CWA8R ACCEPTANCE|CWA8R[^\n]*passed/i,
     );
     expect(reference).toContain("contracts/video-lab.openapi.yaml");
     expect(reference).toContain("intelligensi-runtime-api.openapi.yaml");

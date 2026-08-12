@@ -43,8 +43,8 @@ Before implementation:
 
 1. Read the complete handover reference.
 2. Verify the current branches, remotes, commits, and clean working trees.
-3. Confirm that the handover's paid-successor section contains direct paid
-   evidence, not `PENDING SUCCESSOR ACCEPTANCE` placeholders.
+3. Confirm that the handover's CWA8R section contains direct paid evidence,
+   not a `PENDING CWA8R ACCEPTANCE` placeholder.
 4. Confirm the exact tested LongForm digest and both tested source commits.
 5. Confirm the production runtime pin has not changed implicitly.
 6. Preserve unrelated work and existing Firebase configuration.

@@ -1,59 +1,56 @@
 # Video Lab creator workflow: production-platform handover to John
 
-Status: **prepared but not ready to hand over; CWA7R exposed failed end-anchor adherence in A9, and the repaired successor workflow still requires an immutable build and paid proof**
+Status: **prepared but not ready to hand over; CWA8 proved A10's real
+start/end anchoring and the creator-generation path, but post-restart media
+hash recovery and live desktop/mobile acceptance require one narrow successor
+run with the corrected recovery-first harness**
 
 This document is the factual handover reference for the production-platform
 work that begins after the creator-to-generation path has passed paid
 acceptance. It deliberately separates the accepted generation system from the
 Firebase, financial, operational, and public-rollout work owned by John.
 
-Do not interpret this document as production approval. Sections marked
-`PENDING SUCCESSOR ACCEPTANCE` must be replaced with direct evidence from a guarded paid run
-before the handover is declared ready.
+Do not interpret this document as production approval. The remaining
+`PENDING CWA8R ACCEPTANCE` items must be replaced with direct evidence from one
+guarded paid run before the handover is declared ready.
 
 ## 1. Handover baseline
 
 | Component | Revision or identity | Status |
 | --- | --- | --- |
-| LongForm A9 image | `sha256:11f4fdb1a603af4ebd7eea6ed2cc71fa081f730cb6fbe2dab8a32997803e77f8` | Immutable candidate; valid media generation passed, end-anchor adherence failed, not promoted |
-| LongForm A9 source | `64d726e9d397b6db3f394178a0003010eb4ffc91` | Contains the non-root diagnostics repair proved by CWA7 |
-| Instruction bundle | `2026-08-10.1` | Proved through real A9 Gemma inference |
-| A9 workflow schema | `ltx23-reference-temporal-v3` | Produced a valid video but failed the encoded end-anchor check |
-| Prepared successor schema | `ltx23-reference-temporal-v4` | Local guide-aware draft repair; not built or paid-tested |
-| Deploy Studio acceptance harness | `1f129faf61326869bd7656bfe4a223d86b486ec7` | CWA7R-tested; endpoint, restart-timeout and transient-shutdown repairs are local and uncommitted |
-| Video Lab | `c880ff92fbdfc5dbe7388bbb9f15e74c6c90c3f3` | CWA7R-tested |
+| LongForm A10 image | `sha256:e986a7c7bcb480ee7af065c459725ce1224cea959de825ded26727fbb4c13e14` | Immutable candidate; real encoded start/end adherence passed; not promoted |
+| LongForm A10 source | `8ecfe7bf33b975d6bc677e8c5decaafe39e1a98b` | Contains the guide-aware single-pass start/end workflow proved by CWA8 |
+| Instruction bundle | `2026-08-10.1` / hash `c1887ef29d2314e0ed3dc43786b55a7a6be63937395aeb8e3fad394520dd6301` | Proved through real A10 Gemma inference |
+| Workflow schema | `ltx23-reference-temporal-v4` | Real encoded start and end anchors passed the bounded SSIM floor |
+| Deploy Studio CWA8 harness | `4131cbfe2a2debce8c86b333f49ac4b0a7509505` | CWA8-tested; recovery-first ordering repair is the next harness revision |
+| Video Lab | `65c0f857394ec492ed3797fdecdcb62df890ab7f` | CWA8-tested through API/media delivery before restart |
 | Deploy Studio branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Video Lab branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Production LongForm pin | Unchanged by this work | Promotion remains a separate approval |
 
-Gate CWA7R proved A9 startup, CUDA, ComfyUI and model readiness, runtime
+Gate CWA8 proved A10 startup, CUDA, persistent-cache reuse, runtime
 authentication, real strict Gemma output, all four original anchor frames,
-independent first/last-frame regeneration, failed-replacement preservation,
-two-user queue and cancellation boundaries, one real LTX output, corrected
-media validation, completed-generation idempotency replay, accepted-video
-project persistence, stale-video signalling and same-origin private delivery.
-The MP4 is valid silent H.264 at 1024x576, 24 fps and two seconds, with no
-sustained black or frozen segment.
+independent first/last-frame regeneration, previous-success preservation,
+two-user FIFO and cancellation boundaries, one real LTX output, media
+validation, completed-generation idempotency replay, accepted-video project
+persistence, stale-video signalling and same-origin private delivery.
 
-It did **not** prove start/end anchoring. The encoded first frame followed the
-accepted start anchor with SSIM `0.617031`, but the encoded final frame changed
-to an unrelated third-person composition and scored only `0.117263` against
-the accepted end anchor. That fails the deliberately lenient `0.25`
-missing-anchor threshold. Do not describe A9 as an accepted anchored runtime.
+Most importantly, A10 closed A9's anchoring defect. The accepted start anchor
+to encoded first-frame SSIM was `0.836528`; the accepted end anchor to encoded
+last-frame SSIM was `0.463196`. Both exceed the deliberately lenient `0.25`
+missing-anchor floor. The output is valid silent H.264 at 1024x576, 24 fps and
+two seconds, with no sustained black or frozen segment.
 
-CWA7R then stopped at a 12-minute restart-readiness assertion. The same A9
-runtime required approximately 12 minutes 44 seconds to reach full readiness
-earlier in the run. Redacted restart diagnostics showed healthy CUDA, a
-verified cache with zero downloads, and ComfyUI reaching `Starting server`;
-they did not show a runtime or media failure. The harness now allows 16 minutes
-and Deploy Studio's shutdown reconciliation tolerates bounded transient Lambda
-inventory failures. The endpoint failure requires a runtime workflow change,
-so A9 cannot be reused for final acceptance. The local successor decodes the
-guide-aware first pass, declares schema `ltx23-reference-temporal-v4`, uses full
-end-frame strength, and fails paid acceptance unless both encoded endpoints
-meet the bounded SSIM check. It must be built as a new immutable candidate and
-paid-tested before this package is handed to John. Legal and licensing approval
-remain outside this technical handover.
+CWA8 then found an acceptance-order problem rather than a generation defect.
+The restarted runtime verified the cache with zero downloads, detected the
+H100, and started ComfyUI, but the harness waited for full generation readiness
+before requesting the persisted completed job. It timed out at 16 minutes, so
+the already-independent completed-job/output API and browser recovery were not
+exercised. The corrected harness now requests the persisted completed job and
+identical output first, runs same-origin browser recovery, and reports expensive
+generation warm-up separately. This harness-only repair does not require an
+A10 image rebuild. Legal and licensing approval remain outside this technical
+handover.
 
 ## 2. Acceptance evidence
 
@@ -61,7 +58,7 @@ remain outside this technical handover.
 
 - Deploy Studio: 84 selected tests pass, TypeScript lint passes, and the
   production build passes.
-- LongForm runtime: 93 Python tests pass, including cold-timeout recovery,
+- LongForm runtime: 94 Python tests pass, including cold-timeout recovery,
   cancellation fencing, malformed configuration, cache and media-stack tests.
 - Video Lab: 143 tests pass, typecheck passes, OpenAPI generation and 6
   contract checks pass, and the production build passes.
@@ -94,21 +91,18 @@ remain outside this technical handover.
   acceptance. The worker was terminated, Lambda independently reported zero
   active instances, approximate GPU compute was USD `$2.08`, and A9 remained
   unpromoted.
-- CWA7R reused immutable A9 on one H100 PCIe in `us-west-3`. Real Gemma and
-  anchor smoke, corrected LTX validation, completed-generation idempotency,
-  accepted-video persistence, stale signalling, same-origin private delivery,
-  two-user isolation, fairness, cancellation and retry all passed. The valid
-  silent MP4 is H.264 at 1024x576, 24 fps and two seconds, with no sustained
-  black or frozen segment. Visual/SSIM inspection then proved its encoded last
-  frame did not follow the accepted end anchor (`0.117263`, below `0.25`), so
-  anchored LTX acceptance failed. Restart recovery reached healthy CUDA, verified the
-  model cache with zero downloads and reached ComfyUI server startup, but the
-  harness timed out at 12 minutes before A9's observed 12m44s readiness. The
-  worker was terminated, a separate Lambda inventory returned zero instances,
-  approximate GPU compute was USD `$3.14`, and A9 remained unpromoted. The
-  guide-aware workflow, endpoint acceptance, restart window and transient
-  shutdown reconciliation are repaired locally. A new immutable build and one
-  bounded paid acceptance remain.
+- CWA8 used immutable A10 on one H100 PCIe in `us-west-3`. Real Gemma and
+  Director probes, four anchors, two independent replacements, preservation,
+  two-user isolation, fairness, cancellation, retry, valid silent LTX,
+  completed-generation idempotency, accepted-video persistence, stale
+  signalling and same-origin delivery passed. Encoded endpoint SSIM was
+  `0.836528` at the start and `0.463196` at the end, closing A9's missing end
+  anchor. The run then failed closed because the harness blocked completed-job
+  recovery on full post-restart model readiness. The worker terminated, an
+  independent Lambda inventory returned zero instances, approximate GPU compute
+  was USD `$3.20`, and A10 remained unpromoted. Recovery-first harness ordering
+  is repaired and passes 84 Deploy Studio tests, type checking, and 94 LongForm
+  tests. One narrow A10 paid run remains.
 - A supplemental in-app Browser sanity check passed the local minimal workflow
   at 1440x900 and 390x844. This proves responsive rendering only; it does not
   replace the pending live paid runtime browser check. On mobile, the primary
@@ -116,25 +110,19 @@ remain outside this technical handover.
   while Director, settings, preview, generate and download controls remain
   available in the vertical flow.
 
-### Narrow successor evidence required before handover
+### Narrow CWA8R evidence required before handover
 
-`PENDING SUCCESSOR ACCEPTANCE`:
+`PENDING CWA8R ACCEPTANCE`:
 
 - Run identifier and timestamps.
 - Exact Deploy Studio and Video Lab commits tested.
 - Provider instance type, region, and quoted rate.
 - Launch, image-pull, container, Gemma, Z-Image, and LTX readiness timings.
-- Gemma two- and five-scene results and targeted Scene 2 result: passed on A9
-  in CWA7R; repeat only a bounded smoke probe if required to recreate inputs.
-- Four original anchors, two independent replacement anchors, and
-  failed-replacement preservation: passed on A9 in CWA7R; repeat only a bounded
-  smoke probe if required to recreate inputs.
-- One valid MP4, corrected `ffprobe`/black/freeze evidence, silent stream
-  layout, two-user queue fairness, cross-user denial, queued cancellation and
-  repeated cancellation: passed on A9 in CWA7R. End-anchor adherence failed and
-  must pass on the successor digest.
-- Completed-generation idempotency replay, accepted-video project persistence,
-  project reopen and stale-video signalling: passed on A9 in CWA7R.
+- A bounded Gemma/anchor smoke only if required to recreate owned inputs.
+- A10 endpoint adherence may be reused unless a new LTX output is required:
+  start `0.836528`, end `0.463196`, floor `0.25`.
+- Completed-generation idempotency, project persistence and stale signalling
+  already passed on A10 in CWA8.
 - Byte-identical completed-job and media recovery after runtime restart.
 - Real minimal desktop/mobile and advanced Director browser screenshots.
 - Browser request-origin inventory and infrastructure-redaction result.
