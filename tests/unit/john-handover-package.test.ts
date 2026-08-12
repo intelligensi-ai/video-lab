@@ -6,20 +6,20 @@ const referencePath =
 const goalPath = "docs/handover/john-production-platform-goal.md";
 
 describe("John production-platform handover package", () => {
-  it("pins the generation baseline and distinguishes pending live evidence", () => {
+  it("pins the accepted generation baseline and remaining staging evidence", () => {
     const reference = fs.readFileSync(referencePath, "utf8");
     expect(reference).toContain(
       "sha256:e986a7c7bcb480ee7af065c459725ce1224cea959de825ded26727fbb4c13e14",
     );
     expect(reference).toContain(
-      "4131cbfe2a2debce8c86b333f49ac4b0a7509505",
+      "639e86adb03960172b6e5a6eb6ecf4a2fd1e37ad",
     );
     expect(reference).toContain(
-      "65c0f857394ec492ed3797fdecdcb62df890ab7f",
+      "239cc67c6cb9dcf092d9d7d2c97e53079f476f11",
     );
-    expect(reference).toMatch(
-      /PENDING CWA8R ACCEPTANCE|CWA8R[^\n]*passed/i,
-    );
+    expect(reference).toContain("CWA8R3");
+    expect(reference).not.toContain("PENDING CWA8R ACCEPTANCE");
+    expect(reference).toContain("advanced/mobile staging browser replay");
     expect(reference).toContain("contracts/video-lab.openapi.yaml");
     expect(reference).toContain("intelligensi-runtime-api.openapi.yaml");
   });

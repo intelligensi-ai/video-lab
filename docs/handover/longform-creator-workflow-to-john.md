@@ -1,18 +1,17 @@
 # Video Lab creator workflow: production-platform handover to John
 
-Status: **prepared but not ready to hand over; CWA8 proved A10's real
-start/end anchoring and the creator-generation path, but post-restart media
-hash recovery and live desktop/mobile acceptance require one narrow successor
-run with the corrected recovery-first harness**
+Status: **ready for John's production-platform work. CWA8R3 proved the A10
+creator-generation and restart-recovery core. Production promotion remains
+unapproved, and the advanced/mobile staging browser replay remains a platform
+acceptance item that does not require new model inference.**
 
 This document is the factual handover reference for the production-platform
 work that begins after the creator-to-generation path has passed paid
 acceptance. It deliberately separates the accepted generation system from the
 Firebase, financial, operational, and public-rollout work owned by John.
 
-Do not interpret this document as production approval. The remaining
-`PENDING CWA8R ACCEPTANCE` items must be replaced with direct evidence from one
-guarded paid run before the handover is declared ready.
+Do not interpret this document as production approval. It is the technical
+handover baseline for Firebase, financial, operational and public-rollout work.
 
 ## 1. Handover baseline
 
@@ -22,35 +21,33 @@ guarded paid run before the handover is declared ready.
 | LongForm A10 source | `8ecfe7bf33b975d6bc677e8c5decaafe39e1a98b` | Contains the guide-aware single-pass start/end workflow proved by CWA8 |
 | Instruction bundle | `2026-08-10.1` / hash `c1887ef29d2314e0ed3dc43786b55a7a6be63937395aeb8e3fad394520dd6301` | Proved through real A10 Gemma inference |
 | Workflow schema | `ltx23-reference-temporal-v4` | Real encoded start and end anchors passed the bounded SSIM floor |
-| Deploy Studio CWA8 harness | `4131cbfe2a2debce8c86b333f49ac4b0a7509505` | CWA8-tested; recovery-first ordering repair is the next harness revision |
-| Video Lab | `65c0f857394ec492ed3797fdecdcb62df890ab7f` | CWA8-tested through API/media delivery before restart |
+| Deploy Studio paid-test revision | `639e86adb03960172b6e5a6eb6ecf4a2fd1e37ad` | CWA8R3-tested against the immutable A10 worker |
+| Deploy Studio handover revision | `dffbd344ab3d5db02ec9abd0d61b2b018bfec462` | Adds the selector repair, regression coverage and final CWA8R3 evidence |
+| Video Lab | `239cc67c6cb9dcf092d9d7d2c97e53079f476f11` | CWA8R3-tested through the same-origin API and minimal live desktop workflow |
 | Deploy Studio branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Video Lab branch | `codex/longform-gemma4-multimodal-hardening` | Do not merge merely because this handover exists |
 | Production LongForm pin | Unchanged by this work | Promotion remains a separate approval |
 
-Gate CWA8 proved A10 startup, CUDA, persistent-cache reuse, runtime
+Gates CWA8 and CWA8R3 proved A10 startup, CUDA, persistent-cache reuse, runtime
 authentication, real strict Gemma output, all four original anchor frames,
 independent first/last-frame regeneration, previous-success preservation,
 two-user FIFO and cancellation boundaries, one real LTX output, media
 validation, completed-generation idempotency replay, accepted-video project
-persistence, stale-video signalling and same-origin private delivery.
+persistence, stale-video signalling, same-origin private delivery and immediate
+recovery after a container restart.
 
-Most importantly, A10 closed A9's anchoring defect. The accepted start anchor
-to encoded first-frame SSIM was `0.836528`; the accepted end anchor to encoded
-last-frame SSIM was `0.463196`. Both exceed the deliberately lenient `0.25`
-missing-anchor floor. The output is valid silent H.264 at 1024x576, 24 fps and
-two seconds, with no sustained black or frozen segment.
+Most importantly, A10 closed A9's anchoring defect. In the final CWA8R3 run,
+the encoded first-frame SSIM was `0.889015` and the encoded last-frame SSIM was
+`0.763695`, both above the deliberately lenient `0.25` missing-anchor floor.
+The accepted output is valid silent H.264 at 1024x576, 24 fps and two seconds,
+with no sustained black or frozen segment.
 
-CWA8 then found an acceptance-order problem rather than a generation defect.
-The restarted runtime verified the cache with zero downloads, detected the
-H100, and started ComfyUI, but the harness waited for full generation readiness
-before requesting the persisted completed job. It timed out at 16 minutes, so
-the already-independent completed-job/output API and browser recovery were not
-exercised. The corrected harness now requests the persisted completed job and
-identical output first, runs same-origin browser recovery, and reports expensive
-generation warm-up separately. This harness-only repair does not require an
-A10 image rebuild. Legal and licensing approval remain outside this technical
-handover.
+CWA8R3 also closed the earlier recovery-evidence gap. Immediately after the
+container restart, Video Lab recovered the same project, the same accepted
+generation identifier, byte-identical video and frame hashes, and authenticated
+same-origin playback/download without waiting for expensive generation models
+to become fully warm. Legal and licensing approval remain outside this
+technical handover.
 
 ## 2. Acceptance evidence
 
@@ -101,37 +98,49 @@ handover.
   recovery on full post-restart model readiness. The worker terminated, an
   independent Lambda inventory returned zero instances, approximate GPU compute
   was USD `$3.20`, and A10 remained unpromoted. Recovery-first harness ordering
-  is repaired and passes 84 Deploy Studio tests, type checking, and 94 LongForm
-  tests. One narrow A10 paid run remains.
+  was repaired before the final run.
+- CWA8R3 used immutable A10 on one H100 PCIe in `us-west-3`. It proved the
+  corrected recovery-first path: exact two-scene Gemma planning and targeted
+  Scene 2 regeneration, all four anchors and independent replacements,
+  previous-success preservation, FIFO fairness, two-user isolation, per-user
+  active limits, queued/repeated cancellation, controlled failure and retry,
+  one valid silent anchored LTX clip, completed-generation idempotency,
+  accepted-video persistence, stale signalling, immediate post-restart project
+  and completed-generation recovery, unchanged accepted-generation identity,
+  identical video/frame hashes and same-origin playback/download. Encoded
+  endpoint SSIM was `0.889015` at the start and `0.763695` at the end. The
+  minimal live desktop browser reopened the project and displayed the playable
+  result and download control. The worker terminated, Lambda independently
+  returned zero instances, approximate GPU compute was USD `$2.15`, and the
+  conservative total including the approved egress ceiling was USD `$3.38`.
+  A10 remains unpromoted.
 - A supplemental in-app Browser sanity check passed the local minimal workflow
   at 1440x900 and 390x844. This proves responsive rendering only; it does not
-  replace the pending live paid runtime browser check. On mobile, the primary
+  replace staging acceptance with production Firebase. On mobile, the primary
   navigation remains horizontally scrollable and should receive final polish,
   while Director, settings, preview, generate and download controls remain
   available in the vertical flow.
 
-### Narrow CWA8R evidence required before handover
+### CWA8R3 evidence and remaining staging replay
 
-`PENDING CWA8R ACCEPTANCE`:
+The canonical sanitized report is Deploy Studio
+`docs/runtime-validation/longform-gate-cwa8r3-acceptance-2026-08-12.md`.
+The uncommitted acceptance artifacts remain under
+`E:\tmp\intelligensi-longform-creator-acceptance`; generated media, runtime
+addresses, tokens, raw prompts and test identities must not be committed.
 
-- Run identifier and timestamps.
-- Exact Deploy Studio and Video Lab commits tested.
-- Provider instance type, region, and quoted rate.
-- Launch, image-pull, container, Gemma, Z-Image, and LTX readiness timings.
-- A bounded Gemma/anchor smoke only if required to recreate owned inputs.
-- A10 endpoint adherence may be reused unless a new LTX output is required:
-  start `0.836528`, end `0.463196`, floor `0.25`.
-- Completed-generation idempotency, project persistence and stale signalling
-  already passed on A10 in CWA8.
-- Byte-identical completed-job and media recovery after runtime restart.
-- Real minimal desktop/mobile and advanced Director browser screenshots.
-- Browser request-origin inventory and infrastructure-redaction result.
-- Actual compute time and approximate cost.
-- Provider termination, cleared routes/leases, and zero unexpected instances.
+The advanced Director page reached both expected first/last frame cards, but
+the paid browser phase then stopped because the harness used a plural
+`.vlx-frame-card` locator in Playwright strict mode. The repaired harness now
+targets `.vlx-frame-card.first` and `.vlx-frame-card.last` separately and is
+covered by contract tests. Advanced desktop, minimal mobile and the final
+whole-browser request-origin assertion remain staging evidence for John; they
+must not be reported as passed yet.
 
-The canonical sanitized result must live under
-`E:\tmp\intelligensi-longform-creator-acceptance`; do not commit generated
-media, runtime addresses, tokens, raw prompts, or test identities.
+These remaining browser-only checks can import the durable owner-scoped
+accepted project/media fixture. They do not require another Gemma, Z-Image or
+LTX run unless the runtime, gateway, generation payload, media path or
+ownership boundary changes.
 
 ## 3. Responsibility boundary
 

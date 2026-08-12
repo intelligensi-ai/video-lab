@@ -11,6 +11,9 @@ Deploy Studio:
 Primary reference:
 `Video-Lab/docs/handover/longform-creator-workflow-to-john.md`
 
+Start-here index:
+`Video-Lab/docs/handover/README.md`
+
 Authoritative contracts:
 
 - `Video-Lab/contracts/video-lab.openapi.yaml`
@@ -43,14 +46,17 @@ Before implementation:
 
 1. Read the complete handover reference.
 2. Verify the current branches, remotes, commits, and clean working trees.
-3. Confirm that the handover's CWA8R section contains direct paid evidence,
-   not a `PENDING CWA8R ACCEPTANCE` placeholder.
+3. Confirm that the handover records direct CWA8R3 paid evidence, the exact A10
+   digest and the final zero-instance provider inventory.
 4. Confirm the exact tested LongForm digest and both tested source commits.
 5. Confirm the production runtime pin has not changed implicitly.
 6. Preserve unrelated work and existing Firebase configuration.
 
-If paid generation evidence is still pending, continue with emulator-safe
-platform work but do not claim launch readiness or promote the runtime.
+The generation core has direct CWA8R3 evidence. The remaining advanced/mobile
+browser and origin-audit evidence belongs in staging and should reuse the
+durable accepted fixture without new inference unless an affected boundary
+changes. Do not claim launch readiness or promote the runtime until the full
+production-platform staging threshold in this goal passes.
 
 ## Responsibility boundary
 
