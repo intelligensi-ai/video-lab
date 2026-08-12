@@ -322,6 +322,7 @@ export function buildDirectorEnhancementRequest(
     availableControls,
     audioPolicy: audioPolicy(form),
     requestedCandidateCount: Math.min(4, Math.max(1, Number(form.candidateCount) || 3)),
+    videoModel: form.videoModel === "ltx-2.5" ? "ltx-2.5" : "ltx-2.3",
   };
 }
 

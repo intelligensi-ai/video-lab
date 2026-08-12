@@ -387,6 +387,11 @@ describe("SulphurLtxRuntimeAdapter", () => {
             worker: "longform-ltx-storyboard-studio",
             capabilities: {
               workflow_modes: ["text", "start", "start_end", "multi_keyframe", "reference"],
+              default_video_model: "ltx-2.5",
+              video_models: [
+                { id: "ltx-2.3", label: "LTX 2.3", status: "proven", available: false, recommended: false, workflow_modes: [] },
+                { id: "ltx-2.5", label: "LTX 2.5", status: "preview", available: true, recommended: true, workflow_modes: ["text", "start"] },
+              ],
               reference_conditioning: "supported",
               project_reference_planning: "director_and_runtime",
             },
@@ -416,6 +421,7 @@ describe("SulphurLtxRuntimeAdapter", () => {
       prompt: "A continuous cinematic story",
       settings: {
         runtime: "longform-ltx-storyboard-studio",
+        videoModel: "ltx-2.5",
         aspectRatio: "16:9",
         durationSeconds: 8,
         quality: "standard",
@@ -459,6 +465,7 @@ describe("SulphurLtxRuntimeAdapter", () => {
 
     expect(health.provider).toBe("longform-ltx-storyboard-studio");
     expect(JSON.parse(String(calls[1].init?.body))).toMatchObject({
+      video_model: "ltx-2.5",
       overall_goal: "Keep the monolith visually consistent",
       negative_prompt: "flicker",
       resolution: "1024x576",
@@ -493,6 +500,11 @@ describe("SulphurLtxRuntimeAdapter", () => {
       ],
     });
     expect(health.capabilities).toMatchObject({
+      defaultVideoModel: "ltx-2.5",
+      videoModels: [
+        { id: "ltx-2.3", available: false, status: "proven" },
+        { id: "ltx-2.5", available: true, status: "preview", workflowModes: ["text", "start"] },
+      ],
       intermediateKeyframes: true,
       maxIntermediateKeyframes: 6,
       referenceConditioning: true,

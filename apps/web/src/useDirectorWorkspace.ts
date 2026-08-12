@@ -3,6 +3,7 @@ import type {
   DirectorActionType,
   DirectorProposal,
   Generation,
+  LongFormVideoModel,
   RuntimeStatus,
   StoryboardAudioPolicy,
   StoryboardProjectSummary,
@@ -36,6 +37,10 @@ import {
   loadStoryboardSession,
   saveStoryboardSession,
 } from "./storyboardSession.js";
+import {
+  longFormProjectHasRenderedVideo,
+  prepareLongFormVideoModelSwitch,
+} from "./longFormVideoModels.js";
 
 export type WorkspaceFrameState = {
   status: "idle" | "queued" | "generating" | "failed";
@@ -97,6 +102,7 @@ export function freshDirectorForm(): LongFormGenerationPayload {
     audioPolicy: DEFAULT_AUDIO,
     candidateCount: 3,
     projectReferences: [],
+    videoModel: "ltx-2.3",
   };
 }
 
@@ -105,6 +111,7 @@ function normalizeForm(value: LongFormGenerationPayload): LongFormGenerationPayl
   return {
     ...fallback,
     ...value,
+    videoModel: value.videoModel === "ltx-2.5" ? "ltx-2.5" : "ltx-2.3",
     audioPolicy: value.audioPolicy ?? DEFAULT_AUDIO,
     candidateCount: Math.min(4, Math.max(1, value.candidateCount ?? 3)),
     continuityBible: value.continuityBible ?? fallback.continuityBible,
@@ -566,6 +573,41 @@ export function useDirectorWorkspace() {
     setNotice("Reference removed from the current project. Previous generated versions remain intact.");
   }, []);
 
+  const changeVideoModel = useCallback(async (videoModel: LongFormVideoModel) => {
+    const current = formRef.current;
+    if ((current.videoModel ?? "ltx-2.3") === videoModel) return;
+    const copy = prepareLongFormVideoModelSwitch(current, videoModel);
+    const hasRenderedVideo = longFormProjectHasRenderedVideo(current);
+    if (!hasRenderedVideo) {
+      setForm(copy);
+      setNotice(`This project now uses ${videoModel === "ltx-2.5" ? "LTX 2.5 Preview" : "LTX 2.3"}.`);
+      return;
+    }
+    if (!globalThis.confirm(
+      "This project already has generated video drafts. Create a separate copy for the selected model so the original stays unchanged?",
+    )) return;
+    try {
+      const label = videoModel === "ltx-2.5" ? "LTX 2.5 Preview" : "LTX 2.3";
+      const title = `${projectTitleRef.current} - ${label}`.slice(0, 160);
+      const serializable = JSON.parse(JSON.stringify(copy, (_key, value) =>
+        value instanceof File ? undefined : value,
+      )) as Record<string, unknown>;
+      const created = await createStoryboardProject(title, serializable);
+      if (ownerId) await saveStoryboardSession(ownerId, created.id, title, copy);
+      setProjects((items) => [created, ...items]);
+      setProjectId(created.id);
+      setProjectTitle(title);
+      setForm(copy);
+      setCurrentProposal(undefined);
+      setUndoForm(undefined);
+      setFrameStates({});
+      setSceneStates({});
+      setNotice(`Created a separate ${label} copy. The original project and generated videos are unchanged.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "The model-specific project copy could not be created.");
+    }
+  }, [ownerId]);
+
   const addTemporalKeyframe = useCallback(
     async (sceneId: string, file: File) => {
       const current = formRef.current;
@@ -801,6 +843,7 @@ export function useDirectorWorkspace() {
     createProject,
     removeProject,
     resizeScenes,
+    changeVideoModel,
     regenerateFrame,
     renderCandidates,
     acceptCandidate,

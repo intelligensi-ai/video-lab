@@ -9,6 +9,7 @@ import {
 import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
 import type {
   Generation,
+  LongFormVideoModel,
   StoryboardEnhancementResponse,
   StoryboardProjectSummary,
 } from "@video-lab/contracts";
@@ -49,6 +50,12 @@ import {
   saveStoryboardSession,
 } from "./storyboardSession.js";
 import { runtimeProgressCounter } from "./runtimeProgress.js";
+import {
+  longFormVideoModelLabel,
+  longFormVideoModelsForRuntime,
+  longFormProjectHasRenderedVideo,
+  prepareLongFormVideoModelSwitch,
+} from "./longFormVideoModels.js";
 
 type LongFormReference = {
   label: string;
@@ -246,6 +253,7 @@ const initialForm: LongFormGenerationPayload = {
   },
   candidateCount: 3,
   projectReferences: [],
+  videoModel: "ltx-2.3",
 };
 
 const freshInitialForm = (): LongFormGenerationPayload =>
@@ -257,6 +265,7 @@ function normalizePersistedForm(
   return {
     ...freshInitialForm(),
     ...saved,
+    videoModel: saved.videoModel === "ltx-2.5" ? "ltx-2.5" : "ltx-2.3",
     audioPolicy: saved.audioPolicy ?? freshInitialForm().audioPolicy,
     candidateCount: Math.min(4, Math.max(1, saved.candidateCount ?? 3)),
     projectReferences: (saved.projectReferences ?? []).map((reference) => {
@@ -990,6 +999,42 @@ export default function LongFormStoryboardStudio({
         runtime.data?.capabilities?.maxScenes ?? MAX_STORYBOARD_SCENES,
       );
   const runtimeFeatureStatus = runtime.data?.capabilities?.featureStatus ?? {};
+  const videoModels = longFormVideoModelsForRuntime(runtime.data);
+  const changeVideoModel = async (videoModel: LongFormVideoModel) => {
+    if ((form.videoModel ?? "ltx-2.3") === videoModel) return;
+    const copy = prepareLongFormVideoModelSwitch(form, videoModel);
+    const hasRenderedVideo = longFormProjectHasRenderedVideo(form);
+    if (!hasRenderedVideo) {
+      setForm(copy);
+      return;
+    }
+    if (!globalThis.confirm(
+      "This project already has generated video drafts. Create a separate copy for the selected model so the original stays unchanged?",
+    )) return;
+    setProjectBusy(true);
+    setProjectError("");
+    try {
+      const label = videoModel === "ltx-2.5" ? "LTX 2.5 Preview" : "LTX 2.3";
+      const title = `${projectTitle} - ${label}`.slice(0, 160);
+      const serializable = JSON.parse(JSON.stringify(copy, (_key, value) =>
+        value instanceof File ? undefined : value,
+      )) as Record<string, unknown>;
+      const created = await createStoryboardProject(title, serializable);
+      if (sessionOwner) await saveStoryboardSession(sessionOwner, created.id, title, copy);
+      setProjects((items) => [created, ...items]);
+      setProjectId(created.id);
+      setProjectTitle(title);
+      setForm(copy);
+      setUndoForm(undefined);
+      setFrameStates({});
+      setSceneRenderStates({});
+      setSessionStatus("saved");
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "The model-specific project copy could not be created.");
+    } finally {
+      setProjectBusy(false);
+    }
+  };
   const allScenesAccepted =
     form.scenes.length > 0 &&
     form.scenes.every(
@@ -1153,6 +1198,22 @@ export default function LongFormStoryboardStudio({
               >
                 <span className="lf-label">Video settings</span>
                 <div className="lf-minimal-output-grid">
+                  <Field label="Video model">
+                    <select
+                      aria-label="Video model"
+                      disabled={!sessionReady}
+                      value={form.videoModel ?? "ltx-2.3"}
+                      onChange={(event) =>
+                        void changeVideoModel(event.target.value as LongFormVideoModel)
+                      }
+                    >
+                      {videoModels.map((model) => (
+                        <option key={model.id} value={model.id} disabled={!model.available}>
+                          {longFormVideoModelLabel(model)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
                   <Field label="Aspect ratio">
                     <select
                       aria-label="Aspect ratio"
@@ -1318,6 +1379,27 @@ export default function LongFormStoryboardStudio({
               <span className="lf-label">Setup</span>
               <h2>Storyboard settings</h2>
               <div className="lf-settings">
+                <Field
+                  label="Video model"
+                  help="Projects stay pinned to this model. Switching preserves existing media and marks accepted clips for regeneration."
+                >
+                  <select
+                    aria-label="Video model"
+                    value={form.videoModel ?? "ltx-2.3"}
+                    onChange={(event) =>
+                      void changeVideoModel(event.target.value as LongFormVideoModel)
+                    }
+                  >
+                    {videoModels.map((model) => (
+                      <option key={model.id} value={model.id} disabled={!model.available}>
+                        {longFormVideoModelLabel(model)}
+                      </option>
+                    ))}
+                  </select>
+                  {videoModels.find((model) => model.id === (form.videoModel ?? "ltx-2.3"))?.reason && (
+                    <small>{videoModels.find((model) => model.id === (form.videoModel ?? "ltx-2.3"))?.reason}</small>
+                  )}
+                </Field>
                 <Field
                   label="Sound behaviour"
                   help="Only when requested is conservative: mood words never add music, while quoted dialogue and explicit sound markers can enable sound."

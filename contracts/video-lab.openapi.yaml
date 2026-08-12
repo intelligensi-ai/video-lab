@@ -742,6 +742,7 @@ components:
             quality: { type: string, enum: [draft, standard, high] },
             seed: { type: integer, minimum: 0 },
             runtime: { type: string },
+            videoModel: { type: string, enum: ["ltx-2.3", "ltx-2.5"] },
             resolution: { type: string },
             overallGoal: { type: string },
             originalMasterPrompt: { type: string },
@@ -1101,6 +1102,7 @@ components:
             availableControls: { type: array, maxItems: 0, items: { type: string } },
             audioPolicy: { $ref: "#/components/schemas/StoryboardAudioPolicy" },
             requestedCandidateCount: { type: integer, minimum: 1, maximum: 4 },
+            videoModel: { type: string, enum: ["ltx-2.3", "ltx-2.5"], default: "ltx-2.3" },
           },
       }
     EnhancedStoryboardShot:
@@ -1365,6 +1367,24 @@ components:
           additionalProperties:
             { type: string, enum: [supported, partial, unavailable, client_managed] }
         instructionBundle: { $ref: "#/components/schemas/InstructionBundle" }
+        defaultVideoModel: { type: string, enum: ["ltx-2.3", "ltx-2.5"] }
+        videoModels:
+          type: array
+          items: { $ref: "#/components/schemas/LongFormVideoModelCapability" }
+    LongFormVideoModelCapability:
+      type: object
+      additionalProperties: false
+      required: [id, label, status, available, recommended, workflowModes]
+      properties:
+        id: { type: string, enum: ["ltx-2.3", "ltx-2.5"] }
+        label: { type: string, minLength: 1, maxLength: 80 }
+        status: { type: string, enum: [proven, preview, unavailable] }
+        available: { type: boolean }
+        recommended: { type: boolean }
+        workflowModes:
+          type: array
+          items: { type: string, enum: [text, start, start_end, multi_keyframe, reference] }
+        reason: { type: string, maxLength: 180 }
     RuntimeStatus:
       {
         type: object,

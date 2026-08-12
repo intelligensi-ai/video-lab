@@ -50,6 +50,22 @@ Structured LongForm enhancement uses the same gateway and API key at
 strict response schema are validated again in Video Lab. No paid LLM fallback
 is used.
 
+Runtime API v1.6 adds an allow-listed LongForm video-model contract. Projects
+persist `videoModel` as either `ltx-2.3` or `ltx-2.5`; generation requests use
+`video_model`, while Director requests use `videoModel` according to their
+respective schemas. The gateway schedules only a worker whose sanitized model
+capability and approved immutable image digest both match that selection.
+
+LTX 2.3 remains the compatibility default. LTX 2.5 remains disabled in the UI
+until health reports an approved ready Preview worker. Fresh projects with no
+generated video may switch in place. Switching a project with draft or accepted
+video creates a separate copy and preserves the source project and outputs. The
+copy retains its prompts and frame anchors but removes old-model video IDs so
+they cannot be accepted or assembled under the new model. The API also rejects
+in-place model changes for rendered projects and requires the persisted project,
+generation request and accepted assembly clips to have matching model provenance.
+A dropdown value never selects an image, endpoint, model path or provider directly.
+
 Job polling remains backward compatible with the original `status`, `progress`
 and `message` fields. Runtime API v1.1 may also return `state`, `stage`,
 `framesRendered`, `totalFrames`, `currentScene` and `totalScenes`; Video Lab

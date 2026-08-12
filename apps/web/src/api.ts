@@ -4,6 +4,7 @@ import type {
   DirectorProposalRequest,
   DirectorProposalResult,
   Generation,
+  LongFormVideoModel,
   RuntimeStatus,
   StoryboardProject,
   StoryboardProjectSummary,
@@ -380,6 +381,7 @@ export interface LongFormGenerationPayload {
   audioPolicy: StoryboardAudioPolicy;
   candidateCount: number;
   projectReferences: StoryboardProjectReference[];
+  videoModel?: LongFormVideoModel;
   directorAssumptions?: string[];
   instructionBundle?: StoryboardEnhancementResponse["instructionBundle"];
   referencePlanningEvidence?: StoryboardReferencePlanningEvidence;
@@ -443,6 +445,7 @@ export async function generateLongFormVideo(
       prompt: payload.overallGoal,
       settings: {
         runtime: "longform-ltx-storyboard-studio",
+        videoModel: payload.videoModel ?? "ltx-2.3",
         aspectRatio:
           payload.resolution.startsWith("576x") ||
           payload.resolution.startsWith("720x1280")
@@ -537,6 +540,7 @@ export function storyboardEnhancementRequest(
     availableControls: [],
     audioPolicy: payload.audioPolicy,
     requestedCandidateCount: payload.candidateCount,
+    videoModel: payload.videoModel ?? "ltx-2.3",
     shots: payload.scenes.map((scene, index) => ({
       shotNumber: index + 1,
       title: scene.title,
@@ -610,6 +614,7 @@ export async function generateStoryboardFrame(
       prompt: payload.overallGoal,
       settings: {
         runtime: "longform-ltx-storyboard-studio",
+        videoModel: payload.videoModel ?? "ltx-2.3",
         aspectRatio: payload.resolution.includes("x1280")
           ? "9:16"
           : payload.resolution.includes("1080x1080")
@@ -667,6 +672,7 @@ export async function generateStoryboardScene(
       prompt: scene.prompt,
       settings: {
         runtime: "longform-ltx-storyboard-studio",
+        videoModel: payload.videoModel ?? "ltx-2.3",
         aspectRatio: payload.resolution.includes("x1280")
           ? "9:16"
           : payload.resolution.includes("1080x1080")
@@ -718,6 +724,7 @@ export async function assembleStoryboardFilm(
       prompt: payload.overallGoal,
       settings: {
         runtime: "longform-ltx-storyboard-studio",
+        videoModel: payload.videoModel ?? "ltx-2.3",
         aspectRatio: payload.resolution.includes("x1280")
           ? "9:16"
           : payload.resolution.includes("1080x1080")

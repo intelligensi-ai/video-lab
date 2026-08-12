@@ -107,7 +107,7 @@ describe("Deploy Studio runtime API compatibility", () => {
 
   contractIt("matches the authoritative LongForm gateway surface", () => {
     const runtime = YAML.parse(fs.readFileSync(deployContractPath, "utf8"));
-    expect(runtime.info.version).toBe("1.5.0");
+    expect(runtime.info.version).toBe("1.6.0");
     expect(runtime.components.securitySchemes.ApiKeyAuth).toMatchObject({
       type: "apiKey",
       in: "header",
@@ -143,5 +143,11 @@ describe("Deploy Studio runtime API compatibility", () => {
     expect(
       runtime.components.schemas.RuntimeFeatures.properties.referenceConditioning,
     ).toEqual({ type: "boolean" });
+    expect(
+      runtime.components.schemas.RuntimeFeatures.properties.defaultVideoModel.enum,
+    ).toEqual(["ltx-2.3", "ltx-2.5"]);
+    expect(
+      runtime.components.schemas.StoryboardEnhancementRequest.properties.videoModel.enum,
+    ).toEqual(["ltx-2.3", "ltx-2.5"]);
   });
 });

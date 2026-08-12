@@ -125,6 +125,7 @@ function runtimeApiEnhancementRequest(
     availableControls: request.availableControls,
     audioPolicy: request.audioPolicy,
     requestedCandidateCount: request.requestedCandidateCount,
+    videoModel: request.videoModel ?? "ltx-2.3",
     correlationId: runtimeContext?.correlationId ?? randomUUID(),
     visualReferences: runtimeContext?.visualReferences ?? [],
     textOnlyReferenceIds: runtimeContext?.textOnlyReferenceIds ?? [],

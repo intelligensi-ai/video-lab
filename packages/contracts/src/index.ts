@@ -1,5 +1,17 @@
 export * from "./generated.js";
 export const MAX_STORYBOARD_SCENES = 24;
+export const longFormVideoModels = ["ltx-2.3", "ltx-2.5"] as const;
+export type LongFormVideoModel = (typeof longFormVideoModels)[number];
+export type LongFormVideoModelStatus = "proven" | "preview" | "unavailable";
+export interface LongFormVideoModelCapability {
+  id: LongFormVideoModel;
+  label: string;
+  status: LongFormVideoModelStatus;
+  available: boolean;
+  recommended: boolean;
+  workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe" | "reference">;
+  reason?: string;
+}
 export const generationStatuses = [
   "queued",
   "preparing",
@@ -115,6 +127,8 @@ export interface RuntimeStatus {
       framePromptVersion: string;
       hash: string;
     };
+    defaultVideoModel?: LongFormVideoModel;
+    videoModels?: LongFormVideoModelCapability[];
   };
   discovery?: {
     source: "deploy-studio" | "environment" | "legacy" | "none";
@@ -260,6 +274,7 @@ export interface StoryboardEnhancementRequest {
   availableControls: string[];
   audioPolicy: StoryboardAudioPolicy;
   requestedCandidateCount: number;
+  videoModel?: LongFormVideoModel;
 }
 
 export interface EnhancedStoryboardShot {

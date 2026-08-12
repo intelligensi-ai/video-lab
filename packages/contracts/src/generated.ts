@@ -489,6 +489,8 @@ export interface components {
             quality: "draft" | "standard" | "high";
             seed?: number;
             runtime?: string;
+            /** @enum {string} */
+            videoModel?: "ltx-2.3" | "ltx-2.5";
             resolution?: string;
             overallGoal?: string;
             originalMasterPrompt?: string;
@@ -709,6 +711,11 @@ export interface components {
             availableControls: string[];
             audioPolicy: components["schemas"]["StoryboardAudioPolicy"];
             requestedCandidateCount: number;
+            /**
+             * @default ltx-2.3
+             * @enum {string}
+             */
+            videoModel: "ltx-2.3" | "ltx-2.5";
         };
         EnhancedStoryboardShot: {
             shotNumber: number;
@@ -840,6 +847,20 @@ export interface components {
                 [key: string]: "supported" | "partial" | "unavailable" | "client_managed";
             };
             instructionBundle?: components["schemas"]["InstructionBundle"];
+            /** @enum {string} */
+            defaultVideoModel?: "ltx-2.3" | "ltx-2.5";
+            videoModels?: components["schemas"]["LongFormVideoModelCapability"][];
+        };
+        LongFormVideoModelCapability: {
+            /** @enum {string} */
+            id: "ltx-2.3" | "ltx-2.5";
+            label: string;
+            /** @enum {string} */
+            status: "proven" | "preview" | "unavailable";
+            available: boolean;
+            recommended: boolean;
+            workflowModes: ("text" | "start" | "start_end" | "multi_keyframe" | "reference")[];
+            reason?: string;
         };
         RuntimeStatus: {
             provider: string;

@@ -1,5 +1,9 @@
 declare const process: { env: Record<string, string | undefined> };
-import type { Generation } from "@video-lab/contracts";
+import type {
+  Generation,
+  LongFormVideoModel,
+  LongFormVideoModelCapability,
+} from "@video-lab/contracts";
 import { boundedInteger } from "./config.js";
 
 export * from "./storyboardEnhancer.js";
@@ -128,6 +132,7 @@ export interface RuntimeVideoSettings {
   quality: "draft" | "standard" | "high";
   seed?: number;
   runtime?: string;
+  videoModel?: LongFormVideoModel;
   resolution?: string;
   outputFormat?: string;
   negativePrompt?: string;
@@ -229,6 +234,8 @@ export interface RuntimeHealth {
     enhancementContractVersion?: "2" | null;
     featureStatus?: Record<string, "supported" | "partial" | "unavailable" | "client_managed">;
     instructionBundle?: { directorVersion: string; enhancerVersion: string; framePromptVersion: string; hash: string };
+    defaultVideoModel?: LongFormVideoModel;
+    videoModels?: LongFormVideoModelCapability[];
   };
 }
 
@@ -621,6 +628,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
 
         return {
           project_id: settings.projectId,
+          video_model: settings.videoModel ?? "ltx-2.3",
           operation_scope: settings.operationScope ?? "project",
           operation_scene_id: settings.operationSceneId,
           frame_prompt: settings.framePrompt,
@@ -727,6 +735,8 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       error?: string | null;
       capabilities?: {
         workflow_modes?: unknown;
+        default_video_model?: unknown;
+        video_models?: unknown;
         style_reference?: unknown;
         subject_reference?: unknown;
         reference_conditioning?: unknown;
@@ -791,6 +801,50 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
               ),
           )
         : ["none", "interpolate", "upscale", "both"];
+    const videoModels: LongFormVideoModelCapability[] = Array.isArray(
+      body.capabilities?.video_models,
+    )
+      ? body.capabilities.video_models.flatMap((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+          const model = entry as Record<string, unknown>;
+          const id = String(model.id);
+          const status = String(model.status);
+          if (!(["ltx-2.3", "ltx-2.5"] as string[]).includes(id)) return [];
+          if (!(["proven", "preview", "unavailable"] as string[]).includes(status)) return [];
+          const modelModes = Array.isArray(model.workflow_modes)
+            ? model.workflow_modes.filter(
+                (value): value is "text" | "start" | "start_end" | "multi_keyframe" | "reference" =>
+                  ["text", "start", "start_end", "multi_keyframe", "reference"].includes(String(value)),
+              )
+            : [];
+          return [{
+            id: id as LongFormVideoModel,
+            label: safePublicRuntimeText(model.label, 80) ?? id.toUpperCase(),
+            status: status as LongFormVideoModelCapability["status"],
+            available: model.available === true,
+            recommended: model.recommended === true,
+            workflowModes: modelModes,
+            ...(safePublicRuntimeText(model.reason, 180)
+              ? { reason: safePublicRuntimeText(model.reason, 180) }
+              : {}),
+          }];
+        })
+      : [{
+          id: "ltx-2.3",
+          label: "LTX 2.3",
+          status: "proven",
+          available: true,
+          recommended: true,
+          workflowModes,
+        }];
+    const requestedDefaultVideoModel = String(
+      body.capabilities?.default_video_model ?? "ltx-2.3",
+    );
+    const defaultVideoModel: LongFormVideoModel =
+      requestedDefaultVideoModel === "ltx-2.5" &&
+      videoModels.some((model) => model.id === "ltx-2.5" && model.available)
+        ? "ltx-2.5"
+        : "ltx-2.3";
     return {
       ok: res.ok && ready,
       provider: body.worker ?? "sulphur-ltx",
@@ -840,6 +894,8 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
           body.capabilities?.subject_reference !==
           "not_supported_by_this_runtime",
         audioPolicyModes: ["silent", "intent_only", "directed"],
+        defaultVideoModel,
+        videoModels,
         featureStatus: {
           startEndFrames: "supported",
           multipleKeyframes:

@@ -7,7 +7,7 @@ import YAML from "yaml";
 import { nanoid } from "nanoid";
 import { applicationDefault, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
+import { longFormVideoModels, MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
 import type {
   CreditWallet,
   DirectorProposal,
@@ -2071,6 +2071,7 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
     "contractVersion", "projectId", "projectRevision", "operation", "userInstruction", "masterPrompt", "shotCount",
     "generationMode", "continuityBible", "shots", "targetShotNumber", "aspectRatio", "resolution", "references",
     "availableControls", "audioPolicy", "requestedCandidateCount",
+    "videoModel",
   ]), "Storyboard enhancement input");
   if (source.contractVersion !== "2") invalid("incompatible_runtime", "Storyboard enhancement contract version 2 is required");
   const operations = new Set(["enhance_master_prompt", "plan_storyboard", "revise_shot", "revise_first_frame", "revise_last_frame"]);
@@ -2181,6 +2182,8 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
   const audioPolicy = rawAudioPolicy as unknown as StoryboardAudioPolicy;
   if (audioPolicy.mode === "silent" && (audioPolicy.dialogue !== "off" || audioPolicy.soundEffects !== "off" || audioPolicy.ambience !== "off" || audioPolicy.music !== "off" || audioPolicy.preserveSourceAudio)) invalid("invalid_storyboard", "Silent audio policy contains enabled audio");
   if (!Number.isInteger(source.requestedCandidateCount) || Number(source.requestedCandidateCount) < 1 || Number(source.requestedCandidateCount) > 4) invalid("invalid_storyboard", "Candidate count is invalid");
+  const videoModel = String(source.videoModel ?? "ltx-2.3");
+  if (!(longFormVideoModels as readonly string[]).includes(videoModel)) invalid("invalid_video_model", "Video model is not supported");
   return {
     contractVersion: "2",
     projectId,
@@ -2199,6 +2202,7 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
     availableControls: [...allowedControls],
     audioPolicy,
     requestedCandidateCount: source.requestedCandidateCount as number,
+    videoModel: videoModel as StoryboardEnhancementRequest["videoModel"],
   };
 }
 
@@ -2229,6 +2233,7 @@ const draftKeys = new Set([
   "directorAssumptions",
   "instructionBundle",
   "referencePlanningEvidence",
+  "videoModel",
   "scenes",
 ]);
 const draftSceneKeys = new Set([
@@ -2385,6 +2390,11 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
   const draft = Object.fromEntries(
     Object.entries(source).filter(([key]) => draftKeys.has(key)),
   );
+  const videoModel = String(draft.videoModel ?? "ltx-2.3");
+  if (!(longFormVideoModels as readonly string[]).includes(videoModel)) {
+    throw problem(400, "invalid_video_model", "Video model is not supported");
+  }
+  draft.videoModel = videoModel;
   if (
     typeof draft.overallGoal !== "string" ||
     draft.overallGoal.length > 12_000
@@ -2524,6 +2534,16 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
     );
   }
   return draft;
+}
+
+function storyboardDraftHasRenderedVideo(form: Record<string, unknown>) {
+  const scenes = Array.isArray(form.scenes) ? form.scenes : [];
+  return scenes.some((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+    const scene = entry as Record<string, unknown>;
+    return Boolean(scene.acceptedVideoGenerationId)
+      || (Array.isArray(scene.candidateGenerationIds) && scene.candidateGenerationIds.length > 0);
+  });
 }
 
 async function validateStoryboardReferenceAssets(form: Record<string, unknown>, uid: string) {
@@ -3283,6 +3303,18 @@ app.put("/v1/storyboards/projects/:id", auth, async (req, res, next) => {
     if (!existing) throw problem(404, "project_not_found", "Project not found");
     const form = sanitizeStoryboardDraft(req.body?.form);
     await validateStoryboardReferenceAssets(form, uid);
+    const existingVideoModel = String(existing.form.videoModel ?? "ltx-2.3");
+    const nextVideoModel = String(form.videoModel ?? "ltx-2.3");
+    if (
+      existingVideoModel !== nextVideoModel
+      && (storyboardDraftHasRenderedVideo(existing.form) || storyboardDraftHasRenderedVideo(form))
+    ) {
+      throw problem(
+        409,
+        "rendered_project_model_change",
+        "Create a separate project copy before changing the video model",
+      );
+    }
     res.json(
       await persistStoryboardProject({
         ...existing,
@@ -3848,6 +3880,26 @@ app.post(
         requestedSettings,
         p.uid,
       )) as Generation["settings"];
+      const requestedVideoModel = String(settings.videoModel ?? "ltx-2.3");
+      if (!(longFormVideoModels as readonly string[]).includes(requestedVideoModel)) {
+        throw problem(400, "invalid_video_model", "Video model is not supported");
+      }
+      const advertisedVideoModels = runtimeState.capabilities?.videoModels;
+      const advertisedVideoModel = advertisedVideoModels?.find(
+        (model) => model.id === requestedVideoModel,
+      );
+      const requiresExplicitCapability = requestedVideoModel !== "ltx-2.3";
+      if (
+        (requiresExplicitCapability && !advertisedVideoModels?.length)
+        || (advertisedVideoModels?.length && !advertisedVideoModel?.available)
+      ) {
+        throw problem(
+          409,
+          "video_model_unavailable",
+          "The selected video model is not available on the active managed runtime",
+        );
+      }
+      settings.videoModel = requestedVideoModel;
       if (!Array.isArray(inputAssets) || inputAssets.length > 3) {
         throw problem(
           400,
@@ -3963,6 +4015,17 @@ app.post(
         project = await findStoryboardProject(p.uid, projectId);
         if (!project)
           throw problem(404, "project_not_found", "Project not found");
+        const projectVideoModel = String(project.form.videoModel ?? "ltx-2.3");
+        if (!(longFormVideoModels as readonly string[]).includes(projectVideoModel)) {
+          throw problem(409, "project_video_model_invalid", "The project video model is not supported");
+        }
+        if (projectVideoModel !== requestedVideoModel) {
+          throw problem(
+            409,
+            "project_video_model_mismatch",
+            "The generation model must match the project video model",
+          );
+        }
       }
       const referenceSnapshot = await captureGenerationReferenceSnapshot(
         settings,
@@ -4058,7 +4121,8 @@ app.post(
             accepted.status !== "completed" ||
             accepted.settings.operationScope !== "scene" ||
             accepted.settings.operationSceneId !== expectedSceneId ||
-            accepted.settings.projectId !== projectId
+            accepted.settings.projectId !== projectId ||
+            String(accepted.settings.videoModel ?? "ltx-2.3") !== requestedVideoModel
           )
             throw problem(
               400,
