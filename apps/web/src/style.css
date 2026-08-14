@@ -921,6 +921,29 @@ body:has(.admin-page) .site-nav.logged-in .site-nav-inner {
 .lf-preview header p {
   margin: 0;
 }
+.lf-preview-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+.lf-preview-header-actions .lf-session {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+.lf-preview-header-actions .lf-session-save {
+  display: none;
+}
+.lf-preview-header-actions .lf-session span,
+.lf-preview-header-actions .lf-help-toggle {
+  min-height: 30px !important;
+  padding: 0.35rem 0.58rem !important;
+  font-size: 0.54rem !important;
+}
 .lf-preview-tabs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

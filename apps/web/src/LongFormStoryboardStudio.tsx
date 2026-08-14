@@ -1266,9 +1266,6 @@ export default function LongFormStoryboardStudio({
                 ? "Use everyday language. The Director can turn your idea into production-ready cinematic direction before you generate."
                 : "Set the visual and narrative rules for the whole film. Each scene then contributes one clear action and camera beat."}
             </p>
-            {isClassic && (
-              <div className="lf-classic-tools">{sessionControls}</div>
-            )}
             {isClassic && !sessionReady && (
               <p className="lf-minimal-session-state" role="status">
                 Opening your private project…
@@ -2142,6 +2139,7 @@ export default function LongFormStoryboardStudio({
             cancelError={cancellation.error?.message}
             minimal={isClassic}
             aspectRatio={minimalAspectRatio(form.resolution)}
+            headerControls={isClassic ? sessionControls : undefined}
           />
           {!isClassic && (
             <History generations={history} onSelect={setSelected} />
@@ -3824,6 +3822,7 @@ function Preview({
   cancelError,
   minimal = false,
   aspectRatio = "16:9",
+  headerControls,
 }: {
   generation?: Generation;
   loading: boolean;
@@ -3836,6 +3835,7 @@ function Preview({
   cancelError?: string;
   minimal?: boolean;
   aspectRatio?: MinimalAspectRatio;
+  headerControls?: React.ReactNode;
 }) {
   const video = useAuthenticatedVideo(generation?.output?.downloadUrl);
   const [now, setNow] = useState(Date.now());
@@ -3882,16 +3882,19 @@ function Preview({
           </span>
           <h2>{minimal ? "Your video" : "Cinematic preview"}</h2>
         </div>
-        <span
-          className="lf-complete"
-          data-help="The current state of the selected generation: ready, queued, rendering, completed, failed or cancelled."
-        >
-          {loading
-            ? "Rendering"
-            : submissionError
-              ? "Action needed"
-              : statusLabel}
-        </span>
+        <div className="lf-preview-header-actions">
+          {headerControls}
+          <span
+            className="lf-complete"
+            data-help="The current state of the selected generation: ready, queued, rendering, completed, failed or cancelled."
+          >
+            {loading
+              ? "Rendering"
+              : submissionError
+                ? "Action needed"
+                : statusLabel}
+          </span>
+        </div>
       </header>
       {!minimal && (
         <div className="lf-preview-tabs">
