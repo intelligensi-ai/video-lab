@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
+import { boundedInteger } from "./config.js";
 import type {
   EnhancedStoryboardShot,
   StoryboardAudioIntent,
@@ -124,6 +125,7 @@ function runtimeApiEnhancementRequest(
     availableControls: request.availableControls,
     audioPolicy: request.audioPolicy,
     requestedCandidateCount: request.requestedCandidateCount,
+    videoModel: request.videoModel ?? "ltx-2.3",
     correlationId: runtimeContext?.correlationId ?? randomUUID(),
     visualReferences: runtimeContext?.visualReferences ?? [],
     textOnlyReferenceIds: runtimeContext?.textOnlyReferenceIds ?? [],
@@ -394,7 +396,14 @@ export class DeployStudioStoryboardEnhancerClient {
           [headerName]: authentication,
         },
         body,
-        signal: AbortSignal.timeout(this.config.timeoutMs ?? 250_000),
+        signal: AbortSignal.timeout(
+          boundedInteger(
+            this.config.timeoutMs,
+            250_000,
+            30_000,
+            10 * 60_000,
+          ),
+        ),
       });
     } catch (cause) {
       throw new Error("storyboard_enhancer_unavailable", { cause });

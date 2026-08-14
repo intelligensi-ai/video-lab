@@ -99,7 +99,7 @@ Lambda's [official on-demand table](https://lambda.ai/instances) checked on 2026
 8. Decide retention/deletion policy for prompts, frames, videos, idempotency records and completed queue records.
 9. Continue the route-level split beyond the 59.4 KiB LongForm chunk; the remaining Firebase/auth/account/admin shell is about 1,006.7 KiB minified and still triggers Vite's 500 KiB warning.
 10. Integrate the real server-side entitlement provider without trusting browser state. Payment work remains out of scope.
-11. Run the approved real-runtime accepted-scene assembly and provider-replacement persistence test; assembly still depends on the active worker retaining its accepted scene outputs.
+11. Run the approved real-runtime accepted-scene assembly and provider-replacement persistence test. Video Lab now rehydrates owner-scoped canonical scene media and can rebuild an assembly on a replacement worker within a bounded retry limit, but the replacement path still requires paid evidence.
 
 ## Paid runtime acceptance
 

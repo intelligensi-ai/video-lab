@@ -1,5 +1,17 @@
 export * from "./generated.js";
 export const MAX_STORYBOARD_SCENES = 24;
+export const longFormVideoModels = ["ltx-2.3", "ltx-2.5"] as const;
+export type LongFormVideoModel = (typeof longFormVideoModels)[number];
+export type LongFormVideoModelStatus = "proven" | "preview" | "unavailable";
+export interface LongFormVideoModelCapability {
+  id: LongFormVideoModel;
+  label: string;
+  status: LongFormVideoModelStatus;
+  available: boolean;
+  recommended: boolean;
+  workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe" | "reference">;
+  reason?: string;
+}
 export const generationStatuses = [
   "queued",
   "preparing",
@@ -55,6 +67,7 @@ export interface Generation {
     kind?: "video" | "frame";
   };
   safeErrorMessage?: string;
+  failureCode?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -88,13 +101,17 @@ export interface RuntimeStatus {
   capabilities?: {
     maxScenes: number;
     maxSceneDurationSeconds: number;
-    workflowModes: Array<"text" | "start" | "start_end">;
+    workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe" | "reference">;
     operationScopes: Array<
       "project" | "scene" | "start_frame" | "end_frame" | "assembly"
     >;
     postProcess: Array<"none" | "interpolate" | "upscale" | "both">;
     startFrame: boolean;
     endFrame: boolean;
+    intermediateKeyframes?: boolean;
+    maxIntermediateKeyframes?: number;
+    referenceConditioning?: boolean;
+    maxSceneReferenceImages?: number;
     generatedOpeningFrame: boolean;
     previousFrameContinuity: boolean;
     sceneAssembly: boolean;
@@ -110,6 +127,8 @@ export interface RuntimeStatus {
       framePromptVersion: string;
       hash: string;
     };
+    defaultVideoModel?: LongFormVideoModel;
+    videoModels?: LongFormVideoModelCapability[];
   };
   discovery?: {
     source: "deploy-studio" | "environment" | "legacy" | "none";
@@ -255,6 +274,7 @@ export interface StoryboardEnhancementRequest {
   availableControls: string[];
   audioPolicy: StoryboardAudioPolicy;
   requestedCandidateCount: number;
+  videoModel?: LongFormVideoModel;
 }
 
 export interface EnhancedStoryboardShot {

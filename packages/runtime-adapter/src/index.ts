@@ -1,7 +1,94 @@
 declare const process: { env: Record<string, string | undefined> };
-import type { Generation } from "@video-lab/contracts";
+import type {
+  Generation,
+  LongFormVideoModel,
+  LongFormVideoModelCapability,
+} from "@video-lab/contracts";
+import { boundedInteger } from "./config.js";
 
 export * from "./storyboardEnhancer.js";
+export * from "./config.js";
+
+const publicRuntimeStages = new Set([
+  "queued",
+  "validating",
+  "planning_opening_frame",
+  "generating_start_frame",
+  "generating_end_frame",
+  "generating_scene",
+  "cancelling",
+  "assembly",
+  "assembling",
+  "uploading",
+  "completed",
+  "cancelled",
+]);
+
+function safePublicRuntimeText(value: unknown, maximumLength = 500) {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  if (!text || text.length > maximumLength || /[\r\n]/.test(text)) return undefined;
+  if (
+    /https?:\/\/|\b(?:localhost|lambda|ollama|comfyui|docker|container|cuda)\b|\bbearer\s+|\b(?:api[_ -]?key|access[_ -]?token|secret)\b|(?:\d{1,3}\.){3}\d{1,3}|[a-z]:\\|\/(?:home|mnt|opt|root|tmp|var|workspace)\//i.test(
+      text,
+    )
+  )
+    return undefined;
+  return text;
+}
+
+function safeRuntimeStage(value: unknown) {
+  const stage = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return publicRuntimeStages.has(stage) ? stage : undefined;
+}
+
+function safeRuntimeFailureCode(value: unknown) {
+  const code = typeof value === "string" ? value.trim() : "";
+  return /^runtime_[a-z0-9_]{1,80}$/.test(code) ? code : undefined;
+}
+
+function publicRuntimeMessage(
+  state: RuntimeGenerationStatus["state"],
+  stage: string | undefined,
+  failureCode?: string,
+) {
+  if (state === "failed") {
+    const knownMessages: Record<string, string> = {
+      runtime_generation_timeout:
+        "Generation timed out. The previous successful version remains available.",
+      runtime_gpu_memory_exhausted:
+        "The generator ran out of working memory. Retry with shorter or lower-resolution settings.",
+      runtime_gpu_unavailable:
+        "Generation capacity is temporarily unavailable. Please retry shortly.",
+      runtime_media_processing_failed:
+        "The generated media could not be finalised. The previous successful version remains available.",
+      runtime_model_unavailable:
+        "A required generation model is temporarily unavailable. Please retry shortly.",
+      runtime_video_encoding_failed:
+        "The runtime could not encode the generated video. Retry this scene; if it repeats, turn off generated sound and try again.",
+      runtime_workflow_rejected:
+        "The requested settings are not supported by the active generator.",
+      runtime_workflow_unavailable:
+        "The requested generation workflow is temporarily unavailable.",
+    };
+    return (
+      (failureCode ? knownMessages[failureCode] : undefined) ??
+      "The runtime could not complete this generation. The previous successful version remains available."
+    );
+  }
+  if (state === "queued") return "Waiting for generation capacity";
+  if (state === "preparing") return "Preparing generation";
+  if (state === "uploading") return "Finalising output";
+  if (state !== "generating") return undefined;
+  if (stage === "cancelling") return "Cancelling generation";
+  if (stage === "generating_start_frame") return "Generating opening frame";
+  if (stage === "generating_end_frame") return "Generating closing frame";
+  if (stage === "planning_opening_frame") return "Planning opening frame";
+  if (stage === "assembly" || stage === "assembling") return "Assembling film";
+  if (stage === "validating") return "Validating generation";
+  if (stage === "generating_scene") return "Rendering scene";
+  return "Rendering generation";
+}
 
 function optionalPositiveInteger<K extends string>(key: K, value: unknown) {
   const number = Number(value);
@@ -22,16 +109,21 @@ function safeQualityAssessment(value: unknown): Generation["qualityAssessment"] 
     const check = entry as Record<string, unknown>;
     const status = String(check.status);
     const id = String(check.id ?? "").trim();
-    if (!id || !["passed", "failed", "warning", "not_evaluated"].includes(status)) return [];
+    if (!/^[a-z][a-z0-9_-]{0,79}$/.test(id) || !["passed", "failed", "warning", "not_evaluated"].includes(status)) return [];
+    const detail = safePublicRuntimeText(check.detail);
     return [{
-      id: id.slice(0, 80),
+      id,
       status: status as "passed" | "failed" | "warning" | "not_evaluated",
       confidence: Math.min(1, Math.max(0, Number(check.confidence) || 0)),
-      ...(typeof check.detail === "string" ? { detail: check.detail.trim().slice(0, 500) } : {}),
+      ...(detail ? { detail } : {}),
     }];
   });
   const score = Math.min(100, Math.max(0, Math.round(Number(source.score) || 0)));
-  return { version: String(source.version ?? "media-qc-v2").slice(0, 80), advisory: true, score, recommendation, checks };
+  const requestedVersion = String(source.version ?? "media-qc-v2").trim();
+  const version = /^[a-z0-9][a-z0-9._-]{0,79}$/i.test(requestedVersion)
+    ? requestedVersion
+    : "media-qc-v2";
+  return { version, advisory: true, score, recommendation, checks };
 }
 
 export interface RuntimeVideoSettings {
@@ -40,6 +132,7 @@ export interface RuntimeVideoSettings {
   quality: "draft" | "standard" | "high";
   seed?: number;
   runtime?: string;
+  videoModel?: LongFormVideoModel;
   resolution?: string;
   outputFormat?: string;
   negativePrompt?: string;
@@ -78,6 +171,13 @@ export interface RuntimeVideoSettings {
   referenceImageBase64?: string;
   styleReferenceBase64?: string;
   subjectReferenceBase64?: string;
+  referenceConditioning?: Array<{
+    id: string;
+    type: "character" | "location" | "product" | "style";
+    version: number;
+    imageBase64: string;
+    sceneIds: string[];
+  }>;
   storyboard?: Array<{
     id: string;
     title: string;
@@ -92,8 +192,15 @@ export interface RuntimeVideoSettings {
     transition: string;
     transitionDuration: number;
     carryPreviousFrame: boolean;
+    referenceIds?: string[];
     startFrameBase64?: string;
     endFrameBase64?: string;
+    keyframes?: Array<{
+      id: string;
+      timeSeconds: number;
+      strength: number;
+      temporalKeyframeBase64?: string;
+    }>;
   }>;
 }
 
@@ -106,13 +213,17 @@ export interface RuntimeHealth {
   capabilities?: {
     maxScenes: number;
     maxSceneDurationSeconds: number;
-    workflowModes: Array<"text" | "start" | "start_end">;
+    workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe" | "reference">;
     operationScopes: Array<
       "project" | "scene" | "start_frame" | "end_frame" | "assembly"
     >;
     postProcess: Array<"none" | "interpolate" | "upscale" | "both">;
     startFrame: boolean;
     endFrame: boolean;
+    intermediateKeyframes?: boolean;
+    maxIntermediateKeyframes?: number;
+    referenceConditioning?: boolean;
+    maxSceneReferenceImages?: number;
     generatedOpeningFrame: boolean;
     previousFrameContinuity: boolean;
     sceneAssembly: boolean;
@@ -123,6 +234,8 @@ export interface RuntimeHealth {
     enhancementContractVersion?: "2" | null;
     featureStatus?: Record<string, "supported" | "partial" | "unavailable" | "client_managed">;
     instructionBundle?: { directorVersion: string; enhancerVersion: string; framePromptVersion: string; hash: string };
+    defaultVideoModel?: LongFormVideoModel;
+    videoModels?: LongFormVideoModelCapability[];
   };
 }
 
@@ -147,6 +260,46 @@ export class RuntimeCapacityPendingError extends Error {
   }
 }
 
+export class RuntimeLeaseUnavailableError extends Error {
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds = 20) {
+    super("runtime_lease_unavailable");
+    this.name = "RuntimeLeaseUnavailableError";
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+async function runtimeLeaseUnavailableResponse(
+  response: Response,
+): Promise<RuntimeLeaseUnavailableError | undefined> {
+  if (![404, 409, 503].includes(response.status)) return undefined;
+  let code = "";
+  try {
+    const body = (await response.clone().json()) as { code?: unknown };
+    code = typeof body.code === "string" ? body.code : "";
+  } catch {
+    // A 503 is still an unavailable lease even when the upstream body is empty.
+  }
+  if (
+    response.status === 503 ||
+    [
+      "job_not_found",
+      "runtime_job_lost",
+      "runtime_job_not_found",
+      "runtime_unavailable",
+      "runtime_warming",
+      "runtime_capacity_pending",
+      "runtime_lease_expired",
+    ].includes(code)
+  ) {
+    return new RuntimeLeaseUnavailableError(
+      Number(response.headers.get("retry-after")) || 20,
+    );
+  }
+  return undefined;
+}
+
 export interface RuntimeGenerationStatus {
   state:
     | "queued"
@@ -158,6 +311,7 @@ export interface RuntimeGenerationStatus {
     | "cancelled";
   progress: number;
   message?: string | undefined;
+  failureCode?: string | undefined;
   framesRendered?: number;
   totalFrames?: number;
   currentScene?: number;
@@ -168,6 +322,7 @@ export interface RuntimeGenerationStatus {
 
 export interface RuntimeCancelResult {
   cancelled: boolean;
+  accepted?: boolean;
 }
 
 export interface RuntimeOutput {
@@ -383,7 +538,12 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     init: RequestInit = {},
     timeoutOverrideMs?: number,
   ) {
-    const timeoutMs = timeoutOverrideMs ?? this.cfg.timeoutMs ?? 120_000;
+    const timeoutMs = boundedInteger(
+      timeoutOverrideMs ?? this.cfg.timeoutMs,
+      120_000,
+      1_000,
+      15 * 60_000,
+    );
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -468,6 +628,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
 
         return {
           project_id: settings.projectId,
+          video_model: settings.videoModel ?? "ltx-2.3",
           operation_scope: settings.operationScope ?? "project",
           operation_scene_id: settings.operationSceneId,
           frame_prompt: settings.framePrompt,
@@ -498,6 +659,13 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
             sha256: source.sha256,
           })),
           global_visual_anchor_base64: settings.globalVisualAnchorBase64,
+          reference_conditioning: settings.referenceConditioning?.map((reference) => ({
+            id: reference.id,
+            type: reference.type,
+            version: reference.version,
+            image_base64: reference.imageBase64,
+            scene_ids: reference.sceneIds,
+          })),
           storyboard: storyboard.map((scene) => ({
             id: scene.id,
             title: scene.title,
@@ -512,8 +680,15 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
             transition: scene.transition,
             transition_duration: scene.transitionDuration,
             carry_previous_frame: scene.carryPreviousFrame,
+            reference_ids: scene.referenceIds,
             start_frame_base64: scene.startFrameBase64,
             end_frame_base64: scene.endFrameBase64,
+            keyframes: scene.keyframes?.map((keyframe) => ({
+              id: keyframe.id,
+              time_seconds: keyframe.timeSeconds,
+              strength: keyframe.strength,
+              image_base64: keyframe.temporalKeyframeBase64,
+            })),
           })),
         };
       }
@@ -560,12 +735,20 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       error?: string | null;
       capabilities?: {
         workflow_modes?: unknown;
+        default_video_model?: unknown;
+        video_models?: unknown;
         style_reference?: unknown;
         subject_reference?: unknown;
+        reference_conditioning?: unknown;
+        project_reference_planning?: unknown;
       };
       advanced_video_controls?: {
         start_frame_supported?: unknown;
         end_frame_supported?: unknown;
+        intermediate_keyframes_supported?: unknown;
+        max_intermediate_keyframes?: unknown;
+        reference_conditioning_supported?: unknown;
+        max_scene_reference_images?: unknown;
       };
       storyboard?: {
         max_scenes?: unknown;
@@ -601,12 +784,12 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
             : `${res.status} ${res.statusText}`,
       };
     }
-    const workflowModes: Array<"text" | "start" | "start_end"> = Array.isArray(
+    const workflowModes: Array<"text" | "start" | "start_end" | "multi_keyframe" | "reference"> = Array.isArray(
       body.capabilities?.workflow_modes,
     )
       ? body.capabilities.workflow_modes.filter(
-          (value): value is "text" | "start" | "start_end" =>
-            ["text", "start", "start_end"].includes(String(value)),
+          (value): value is "text" | "start" | "start_end" | "multi_keyframe" | "reference" =>
+            ["text", "start", "start_end", "multi_keyframe", "reference"].includes(String(value)),
         )
       : ["text", "start", "start_end"];
     const postProcess: Array<"none" | "interpolate" | "upscale" | "both"> =
@@ -618,6 +801,50 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
               ),
           )
         : ["none", "interpolate", "upscale", "both"];
+    const videoModels: LongFormVideoModelCapability[] = Array.isArray(
+      body.capabilities?.video_models,
+    )
+      ? body.capabilities.video_models.flatMap((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+          const model = entry as Record<string, unknown>;
+          const id = String(model.id);
+          const status = String(model.status);
+          if (!(["ltx-2.3", "ltx-2.5"] as string[]).includes(id)) return [];
+          if (!(["proven", "preview", "unavailable"] as string[]).includes(status)) return [];
+          const modelModes = Array.isArray(model.workflow_modes)
+            ? model.workflow_modes.filter(
+                (value): value is "text" | "start" | "start_end" | "multi_keyframe" | "reference" =>
+                  ["text", "start", "start_end", "multi_keyframe", "reference"].includes(String(value)),
+              )
+            : [];
+          return [{
+            id: id as LongFormVideoModel,
+            label: safePublicRuntimeText(model.label, 80) ?? id.toUpperCase(),
+            status: status as LongFormVideoModelCapability["status"],
+            available: model.available === true,
+            recommended: model.recommended === true,
+            workflowModes: modelModes,
+            ...(safePublicRuntimeText(model.reason, 180)
+              ? { reason: safePublicRuntimeText(model.reason, 180) }
+              : {}),
+          }];
+        })
+      : [{
+          id: "ltx-2.3",
+          label: "LTX 2.3",
+          status: "proven",
+          available: true,
+          recommended: true,
+          workflowModes,
+        }];
+    const requestedDefaultVideoModel = String(
+      body.capabilities?.default_video_model ?? "ltx-2.3",
+    );
+    const defaultVideoModel: LongFormVideoModel =
+      requestedDefaultVideoModel === "ltx-2.5" &&
+      videoModels.some((model) => model.id === "ltx-2.5" && model.available)
+        ? "ltx-2.5"
+        : "ltx-2.3";
     return {
       ok: res.ok && ready,
       provider: body.worker ?? "sulphur-ltx",
@@ -641,6 +868,20 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
         startFrame:
           body.advanced_video_controls?.start_frame_supported !== false,
         endFrame: body.advanced_video_controls?.end_frame_supported !== false,
+        intermediateKeyframes:
+          body.advanced_video_controls?.intermediate_keyframes_supported === true &&
+          workflowModes.includes("multi_keyframe"),
+        maxIntermediateKeyframes: Math.min(
+          6,
+          Math.max(0, Number(body.advanced_video_controls?.max_intermediate_keyframes) || 0),
+        ),
+        referenceConditioning:
+          body.capabilities?.reference_conditioning === "supported" &&
+          body.advanced_video_controls?.reference_conditioning_supported === true,
+        maxSceneReferenceImages: Math.min(
+          6,
+          Math.max(0, Number(body.advanced_video_controls?.max_scene_reference_images) || 0),
+        ),
         generatedOpeningFrame: true,
         previousFrameContinuity:
           body.storyboard?.continuity === "actual_previous_clip_last_frame",
@@ -653,10 +894,26 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
           body.capabilities?.subject_reference !==
           "not_supported_by_this_runtime",
         audioPolicyModes: ["silent", "intent_only", "directed"],
+        defaultVideoModel,
+        videoModels,
         featureStatus: {
           startEndFrames: "supported",
-          referencePlanning: "partial",
-          referenceConditioning: "unavailable",
+          multipleKeyframes:
+            body.advanced_video_controls?.intermediate_keyframes_supported === true &&
+            workflowModes.includes("multi_keyframe")
+              ? "supported"
+              : "unavailable",
+          referencePlanning:
+            body.capabilities?.project_reference_planning === "director_and_runtime"
+              ? "supported"
+              : body.capabilities?.project_reference_planning === "director_only"
+                ? "partial"
+                : "unavailable",
+          referenceConditioning:
+            body.capabilities?.reference_conditioning === "supported" &&
+            body.advanced_video_controls?.reference_conditioning_supported === true
+              ? "supported"
+              : "unavailable",
           candidateVersions: "client_managed",
           qualityAssessment: "partial",
           retake: "unavailable",
@@ -753,18 +1010,56 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
   async submitGeneration(
     input: RuntimeGenerationInput,
   ): Promise<RuntimeSubmission> {
-    const res = await this.request(
-      this.cfg.submitPath ?? this.defaultPath("submit"),
-      {
-        method: "POST",
-        headers: input.idempotencyKey
-          ? { "Idempotency-Key": input.idempotencyKey }
-          : undefined,
-        body: JSON.stringify(this.payload(input)),
-      },
-    );
+    const requestPath = this.cfg.submitPath ?? this.defaultPath("submit");
+    const requestInit: RequestInit = {
+      method: "POST",
+      headers: input.idempotencyKey
+        ? { "Idempotency-Key": input.idempotencyKey }
+        : undefined,
+      body: JSON.stringify(this.payload(input)),
+    };
+    let res: Response;
+    try {
+      res = await this.request(requestPath, requestInit);
+    } catch (error) {
+      if (input.idempotencyKey) {
+        try {
+          // A paid worker may have accepted the first request before its HTTP
+          // response was lost. Replay the exact request once with the same
+          // durable key so Deploy Studio resolves the original assignment.
+          res = await this.request(requestPath, requestInit);
+        } catch {
+          if (input.settings.operationScope === "assembly") {
+            throw new RuntimeLeaseUnavailableError();
+          }
+          throw error;
+        }
+      } else {
+        if (input.settings.operationScope === "assembly") {
+          throw new RuntimeLeaseUnavailableError();
+        }
+        throw error;
+      }
+    }
 
     if (!res.ok) {
+      let responseCode = "";
+      try {
+        const body = (await res.clone().json()) as { code?: unknown };
+        responseCode = typeof body.code === "string" ? body.code : "";
+      } catch {
+        // Fall through to the normal status-based classification.
+      }
+      if (
+        responseCode === "runtime_submission_uncertain" ||
+        responseCode === "idempotency_in_progress"
+      ) {
+        throw new RuntimeCapacityPendingError(
+          Number(res.headers.get("retry-after")) || 5,
+        );
+      }
+      const leaseError = await runtimeLeaseUnavailableResponse(res);
+      if (leaseError) throw new RuntimeCapacityPendingError(leaseError.retryAfterSeconds);
       const responseText = await res.text();
       if (res.status === 429 && /runtime_capacity_pending|rate_limited/i.test(responseText)) {
         throw new RuntimeCapacityPendingError(Number(res.headers.get("retry-after")) || 20);
@@ -789,8 +1084,17 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       this.cfg.statusPath ?? this.defaultPath("status"),
       runtimeJobId,
     );
-    const res = await this.request(path);
-    if (!res.ok) throw new Error(`Sulphur status failed: ${await res.text()}`);
+    let res: Response;
+    try {
+      res = await this.request(path);
+    } catch {
+      throw new RuntimeLeaseUnavailableError();
+    }
+    if (!res.ok) {
+      const leaseError = await runtimeLeaseUnavailableResponse(res);
+      if (leaseError) throw leaseError;
+      throw new Error(`Sulphur status failed: ${await res.text()}`);
+    }
 
     const json = (await res.json()) as {
       status?: string;
@@ -804,7 +1108,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       stage?: string;
       quality_report?: unknown;
       qualityAssessment?: unknown;
-      error?: string | { title?: string; detail?: string; code?: string };
+      error?: string | { title?: string; message?: string; detail?: string; code?: string };
     };
     const rawState = json.status ?? json.state ?? "failed";
     const map: Record<string, RuntimeGenerationStatus["state"]> = {
@@ -823,31 +1127,35 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       error: "failed",
       cancelled: "cancelled",
       canceled: "cancelled",
+      cancelling: "generating",
     };
 
     const rawProgress = Number(json.progress ?? 0);
-    const progress =
-      this.cfg.payloadMode === "intelligensi-api" && rawProgress <= 1
-        ? Math.round(rawProgress * 10_000) / 100
-        : rawProgress;
-    const errorMessage =
-      typeof json.error === "string"
-        ? json.error
-        : json.error?.detail ?? json.error?.title ?? json.error?.code;
+    const normalizedProgress = Number.isFinite(rawProgress) ? rawProgress : 0;
+    const scaledProgress =
+      this.cfg.payloadMode === "intelligensi-api" && normalizedProgress <= 1
+        ? Math.round(normalizedProgress * 10_000) / 100
+        : normalizedProgress;
+    const progress = Math.min(100, Math.max(0, scaledProgress));
+    const state = map[rawState.toLowerCase()] ?? "failed";
+    const failureCode =
+      typeof json.error === "object" && json.error
+        ? safeRuntimeFailureCode(json.error.code)
+        : undefined;
+    const stage = safeRuntimeStage(json.stage);
     const qualityAssessment = safeQualityAssessment(
       json.quality_report ?? json.qualityAssessment,
     );
     return {
-      state: map[rawState.toLowerCase()] ?? "failed",
+      state,
       progress,
-      message: json.message ?? errorMessage,
+      message: publicRuntimeMessage(state, stage, failureCode),
+      ...(state === "failed" && failureCode ? { failureCode } : {}),
       ...optionalPositiveInteger("framesRendered", json.framesRendered),
       ...optionalPositiveInteger("totalFrames", json.totalFrames),
       ...optionalPositiveInteger("currentScene", json.currentScene),
       ...optionalPositiveInteger("totalScenes", json.totalScenes),
-      ...(typeof json.stage === "string" && json.stage.trim()
-        ? { stage: json.stage.trim() }
-        : {}),
+      ...(stage ? { stage } : {}),
       ...(qualityAssessment
         ? { qualityAssessment }
         : {}),
@@ -860,7 +1168,31 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       runtimeJobId,
     );
     const res = await this.request(path, { method: "POST" });
-    return { cancelled: res.ok };
+    if (!res.ok) return { cancelled: false, accepted: false };
+    let state = "";
+    let stage = "";
+    try {
+      const body = (await res.clone().json()) as {
+        status?: unknown;
+        state?: unknown;
+        stage?: unknown;
+      };
+      state = String(body.status ?? body.state ?? "").toLowerCase();
+      stage = String(body.stage ?? "").toLowerCase();
+    } catch {
+      // A successful but empty response acknowledges the request without
+      // proving that the worker has reached a terminal state.
+    }
+    const cancelled = state === "cancelled" || state === "canceled";
+    return {
+      cancelled,
+      accepted:
+        cancelled ||
+        state === "cancelling" ||
+        state === "canceling" ||
+        stage === "cancelling" ||
+        stage === "canceling",
+    };
   }
 
   async fetchOutput(runtimeJobId: string): Promise<RuntimeOutput> {
@@ -868,13 +1200,21 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       this.cfg.outputPath ?? this.defaultPath("output"),
       runtimeJobId,
     );
-    let res = await this.request(path, {
-      headers: {
-        accept:
-          "video/mp4, video/webm, image/png, image/jpeg, image/webp, application/octet-stream",
-      },
-    });
+    let res: Response;
+    try {
+      res = await this.request(path, {
+        headers: {
+          accept:
+            "video/mp4, video/webm, image/png, image/jpeg, image/webp, application/octet-stream",
+        },
+      });
+    } catch {
+      throw new RuntimeLeaseUnavailableError();
+    }
     let durationSeconds = 0;
+
+    const leaseError = await runtimeLeaseUnavailableResponse(res);
+    if (leaseError) throw leaseError;
 
     if (!res.ok && this.cfg.payloadMode === "deploy-studio") {
       const statusPath = this.path(
@@ -963,12 +1303,6 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
   }
 }
 
-function numberFromEnv(value: string | undefined) {
-  if (!value) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 function payloadModeFromEnv(
   value: string | undefined,
 ): RuntimePayloadMode | undefined {
@@ -1005,7 +1339,12 @@ export function createRuntimeFromEnv(): VideoRuntimeAdapter {
           process.env.VIDEO_RUNTIME_PROVIDER === "intelligensi-api"
             ? "intelligensi-api"
             : payloadModeFromEnv(process.env.VIDEO_RUNTIME_PAYLOAD_MODE),
-        timeoutMs: numberFromEnv(process.env.VIDEO_RUNTIME_TIMEOUT_MS),
+        timeoutMs: boundedInteger(
+          process.env.VIDEO_RUNTIME_TIMEOUT_MS,
+          120_000,
+          1_000,
+          15 * 60_000,
+        ),
       })
     : new MockVideoRuntimeAdapter();
 }

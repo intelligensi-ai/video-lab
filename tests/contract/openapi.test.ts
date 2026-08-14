@@ -54,6 +54,14 @@ describe("openapi contract", () => {
   it("requires idempotency key on generation submission", () => {
     expect(doc.paths["/v1/generations"].post.parameters[0].required).toBe(true);
   });
+  it("documents non-terminal cancellation and fail-closed deletion", () => {
+    expect(
+      doc.paths["/v1/generations/{generationId}/cancel"].post.responses,
+    ).toHaveProperty("202");
+    expect(
+      doc.paths["/v1/generations/{generationId}"].delete.responses,
+    ).toEqual(expect.objectContaining({ "204": expect.any(Object), "409": expect.any(Object), "503": expect.any(Object) }));
+  });
   it("matches the LongForm 24-scene and safe-capability contract", () => {
     expect(
       doc.components.schemas.StoryboardEnhancementRequest.properties.shotCount
@@ -65,6 +73,15 @@ describe("openapi contract", () => {
     expect(
       doc.components.schemas.RuntimeStatus.properties.capabilities.$ref,
     ).toBe("#/components/schemas/RuntimeCapabilities");
+    expect(
+      doc.components.schemas.RuntimeCapabilities.properties.workflowModes.items.enum,
+    ).toContain("reference");
+    expect(
+      doc.components.schemas.RuntimeCapabilities.properties.referenceConditioning,
+    ).toEqual({ type: "boolean" });
+    expect(
+      doc.components.schemas.RuntimeCapabilities.properties.maxSceneReferenceImages,
+    ).toMatchObject({ type: "integer", maximum: 6 });
   });
   it("defines a closed Director proposal contract", () => {
     expect(doc.components.schemas.DirectorProposalRequest.additionalProperties).toBe(false);
@@ -90,7 +107,7 @@ describe("Deploy Studio runtime API compatibility", () => {
 
   contractIt("matches the authoritative LongForm gateway surface", () => {
     const runtime = YAML.parse(fs.readFileSync(deployContractPath, "utf8"));
-    expect(runtime.info.version).toBe("1.5.0");
+    expect(runtime.info.version).toBe("1.6.0");
     expect(runtime.components.securitySchemes.ApiKeyAuth).toMatchObject({
       type: "apiKey",
       in: "header",
@@ -120,5 +137,17 @@ describe("Deploy Studio runtime API compatibility", () => {
       runtime.components.schemas.StoryboardEnhancementRequest.properties
         .shotCount.maximum,
     ).toBe(24);
+    expect(
+      runtime.components.schemas.RuntimeFeatures.properties.workflowModes.items.enum,
+    ).toContain("reference");
+    expect(
+      runtime.components.schemas.RuntimeFeatures.properties.referenceConditioning,
+    ).toEqual({ type: "boolean" });
+    expect(
+      runtime.components.schemas.RuntimeFeatures.properties.defaultVideoModel.enum,
+    ).toEqual(["ltx-2.3", "ltx-2.5"]);
+    expect(
+      runtime.components.schemas.StoryboardEnhancementRequest.properties.videoModel.enum,
+    ).toEqual(["ltx-2.3", "ltx-2.5"]);
   });
 });

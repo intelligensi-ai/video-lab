@@ -282,7 +282,8 @@ export interface paths {
         get: operations["getGeneration"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete an owner-authorized generation after active runtime work stops */
+        delete: operations["deleteGeneration"];
         options?: never;
         head?: never;
         patch?: never;
@@ -488,6 +489,8 @@ export interface components {
             quality: "draft" | "standard" | "high";
             seed?: number;
             runtime?: string;
+            /** @enum {string} */
+            videoModel?: "ltx-2.3" | "ltx-2.5";
             resolution?: string;
             overallGoal?: string;
             originalMasterPrompt?: string;
@@ -556,6 +559,8 @@ export interface components {
                 durationSeconds?: number;
             };
             safeErrorMessage?: string;
+            /** @description Stable, allow-listed failure classification safe to expose to the creator. */
+            failureCode?: string;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -706,6 +711,11 @@ export interface components {
             availableControls: string[];
             audioPolicy: components["schemas"]["StoryboardAudioPolicy"];
             requestedCandidateCount: number;
+            /**
+             * @default ltx-2.3
+             * @enum {string}
+             */
+            videoModel: "ltx-2.3" | "ltx-2.5";
         };
         EnhancedStoryboardShot: {
             shotNumber: number;
@@ -815,11 +825,15 @@ export interface components {
         RuntimeCapabilities: {
             maxScenes: number;
             maxSceneDurationSeconds: number;
-            workflowModes: ("text" | "start" | "start_end")[];
+            workflowModes: ("text" | "start" | "start_end" | "multi_keyframe" | "reference")[];
             operationScopes: ("project" | "scene" | "start_frame" | "end_frame" | "assembly")[];
             postProcess: ("none" | "interpolate" | "upscale" | "both")[];
             startFrame: boolean;
             endFrame: boolean;
+            intermediateKeyframes?: boolean;
+            maxIntermediateKeyframes?: number;
+            referenceConditioning?: boolean;
+            maxSceneReferenceImages?: number;
             generatedOpeningFrame: boolean;
             previousFrameContinuity: boolean;
             sceneAssembly: boolean;
@@ -833,6 +847,20 @@ export interface components {
                 [key: string]: "supported" | "partial" | "unavailable" | "client_managed";
             };
             instructionBundle?: components["schemas"]["InstructionBundle"];
+            /** @enum {string} */
+            defaultVideoModel?: "ltx-2.3" | "ltx-2.5";
+            videoModels?: components["schemas"]["LongFormVideoModelCapability"][];
+        };
+        LongFormVideoModelCapability: {
+            /** @enum {string} */
+            id: "ltx-2.3" | "ltx-2.5";
+            label: string;
+            /** @enum {string} */
+            status: "proven" | "preview" | "unavailable";
+            available: boolean;
+            recommended: boolean;
+            workflowModes: ("text" | "start" | "start_end" | "multi_keyframe" | "reference")[];
+            reason?: string;
         };
         RuntimeStatus: {
             provider: string;
@@ -1537,6 +1565,46 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    deleteGeneration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                generationId: components["parameters"]["generationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Generation deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            /** @description Runtime cancellation was accepted but is not terminal */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Active runtime work could not be stopped safely */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     downloadGeneration: {
         parameters: {
             query?: never;
@@ -1586,8 +1654,26 @@ export interface operations {
                     "application/json": components["schemas"]["Generation"];
                 };
             };
+            /** @description Cancellation accepted; generation remains active until the runtime confirms termination */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Generation"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            /** @description Runtime cancellation could not be confirmed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     listGallery: {

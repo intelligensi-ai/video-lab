@@ -246,6 +246,7 @@ describe("storyboard enhancer contract", () => {
           masterPrompt: request.masterPrompt,
           shotCount: request.shotCount,
           generationMode: request.generationMode,
+          videoModel: "ltx-2.3",
           continuityBible: request.continuityBible,
           shots: request.shots.map((shot) => ({
             shotNumber: shot.shotNumber,

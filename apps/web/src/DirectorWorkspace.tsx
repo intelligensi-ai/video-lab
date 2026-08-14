@@ -1,13 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
-import type { DirectorProposal, Generation } from "@video-lab/contracts";
+import type {
+  DirectorProposal,
+  Generation,
+  LongFormVideoModel,
+} from "@video-lab/contracts";
 import {
   fetchGenerationOutput,
   fetchUserAsset,
   getGeneration,
   type StoryboardProjectReference,
   type StoryboardScenePayload,
+  type StoryboardTemporalKeyframePayload,
 } from "./api.js";
 import { AuthenticatedVideo } from "./AuthenticatedVideo.js";
 import {
@@ -15,6 +20,10 @@ import {
   type WorkspaceFrameState,
 } from "./useDirectorWorkspace.js";
 import "./DirectorWorkspace.css";
+import {
+  longFormVideoModelLabel,
+  longFormVideoModelsForRuntime,
+} from "./longFormVideoModels.js";
 
 type Stage = {
   label: string;
@@ -118,6 +127,20 @@ export default function DirectorWorkspace() {
   const selectedScene =
     scenes.find((scene) => scene.id === selectedSceneId) ?? scenes[0];
   const selectedIndex = Math.max(0, scenes.findIndex((scene) => scene.id === selectedScene?.id));
+  const minimumSceneDuration = Math.min(
+    8,
+    Math.max(
+      1,
+      Math.ceil(
+        Math.max(
+          0,
+          ...(selectedScene?.keyframes ?? []).map(
+            (keyframe) => keyframe.timeSeconds,
+          ),
+        ) + 0.1,
+      ),
+    ),
+  );
 
   useEffect(() => {
     if (!selectedSceneId && scenes[0]) setSelectedSceneId(scenes[0].id);
@@ -208,6 +231,7 @@ export default function DirectorWorkspace() {
 
   const runtimeReady = workspace.runtime?.status === "healthy" && workspace.runtime.acceptingSubmissions;
   const assemblySupported = workspace.runtime?.capabilities?.sceneAssembly === true;
+  const videoModels = longFormVideoModelsForRuntime(workspace.runtime);
 
   return (
     <main className="vlx-shell" data-mobile-pane={mobilePane}>
@@ -344,6 +368,7 @@ export default function DirectorWorkspace() {
                 <small>No cinematic prompting knowledge needed. Suggestions stay editable.</small>
               </label>
               <div className="vlx-setting-grid">
+                <label className="vlx-field"><span>Video model</span><select aria-label="Video model" value={workspace.form.videoModel ?? "ltx-2.3"} onChange={(event) => void workspace.changeVideoModel(event.target.value as LongFormVideoModel)}>{videoModels.map((model) => <option key={model.id} value={model.id} disabled={!model.available}>{longFormVideoModelLabel(model)}</option>)}</select><small>{videoModels.find((model) => model.id === (workspace.form.videoModel ?? "ltx-2.3"))?.reason ?? "Existing projects stay pinned; switching a rendered project creates a separate copy."}</small></label>
                 <label className="vlx-field"><span>Format</span><select value={format} onChange={(event) => setFormat(event.target.value)}><option>Short film</option><option>Product story</option><option>Social video</option><option>Film trailer</option></select></label>
                 <label className="vlx-field"><span>Scenes</span><select value={scenes.length} onChange={(event) => workspace.resizeScenes(Number(event.target.value))}>{Array.from({ length: Math.min(24, workspace.runtime?.capabilities?.maxScenes ?? 24) }, (_, index) => <option key={index + 1}>{index + 1}</option>)}</select></label>
                 <label className="vlx-field"><span>Frame</span><select value={workspace.form.resolution} onChange={(event) => workspace.setForm((current) => ({ ...current, resolution: event.target.value }))}><option value="1280x720">Landscape 16:9</option><option value="720x1280">Vertical 9:16</option><option value="1080x1080">Square 1:1</option></select></label>
@@ -385,13 +410,23 @@ export default function DirectorWorkspace() {
             <section className="vlx-scene-workspace">
               <div className="vlx-scene-header">
                 <div><span className="vlx-scene-index">Scene {selectedIndex + 1} of {scenes.length}</span><input aria-label="Scene title" value={selectedScene.title} onChange={(event) => markPromptChanged({ title: event.target.value })} /><textarea className="vlx-purpose" aria-label="Narrative purpose" value={selectedScene.narrativePurpose ?? ""} placeholder="What should this scene accomplish?" onChange={(event) => markPromptChanged({ narrativePurpose: event.target.value })} /></div>
-                <div className="vlx-scene-meta"><label><span className="sr-only">Duration</span><input type="number" min={1} max={8} value={selectedScene.duration} onChange={(event) => markPromptChanged({ duration: Math.min(8, Math.max(1, Number(event.target.value))) })} /> seconds</label><b>{statusLabel(selectedScene)}</b></div>
+                <div className="vlx-scene-meta"><label><span className="sr-only">Duration</span><input type="number" min={minimumSceneDuration} max={8} value={selectedScene.duration} onChange={(event) => markPromptChanged({ duration: Math.min(8, Math.max(minimumSceneDuration, Number(event.target.value))) })} /> seconds</label><b>{statusLabel(selectedScene)}</b></div>
               </div>
               <div className="vlx-frame-pair">
                 <FrameCard edge="First frame" prompt={selectedScene.firstFramePrompt ?? ""} file={selectedScene.startFrame} state={workspace.frameStates[`${selectedScene.id}:start`] ?? { status: "idle" }} position="first" onPrompt={(firstFramePrompt) => markPromptChanged({ firstFramePrompt })} onRegenerate={() => requestFrame("start")} />
                 <div className="vlx-motion-bridge"><span>Camera and action</span><i><b /></i><p>{selectedScene.continuityNotes || "The LTX prompt defines the movement between these still-image anchors."}</p></div>
                 <FrameCard edge="Last frame" prompt={selectedScene.lastFramePrompt ?? ""} file={selectedScene.endFrame} state={workspace.frameStates[`${selectedScene.id}:end`] ?? { status: "idle" }} position="last" onPrompt={(lastFramePrompt) => markPromptChanged({ lastFramePrompt })} onRegenerate={() => requestFrame("end")} />
               </div>
+              {workspace.runtime?.capabilities?.intermediateKeyframes ? (
+                <TemporalKeyframeEditor
+                  scene={selectedScene}
+                  maximum={workspace.runtime.capabilities.maxIntermediateKeyframes ?? 6}
+                  onAdd={(file) => workspace.addTemporalKeyframe(selectedScene.id, file)}
+                  onChange={(keyframes) => markPromptChanged({ keyframes })}
+                />
+              ) : (
+                <p className="vlx-capability-truth">Intermediate frame anchors stay hidden until the connected runtime advertises and verifies its ordered multi-keyframe workflow.</p>
+              )}
               <details className="vlx-prompt-editor" open={activeStage === 2}>
                 <summary><span><small>Editable LTX direction</small><b>Scene video prompt</b></span><em>{selectedScene.promptOrigin === "agent" ? "Director suggested" : "User authored"}</em></summary>
                 <textarea value={selectedScene.prompt} onChange={(event) => markPromptChanged({ prompt: event.target.value })} />
@@ -460,10 +495,160 @@ export default function DirectorWorkspace() {
 
 type StoryboardAudioPolicyMode = "silent" | "intent_only" | "directed";
 
+function TemporalKeyframeEditor({
+  scene,
+  maximum,
+  onAdd,
+  onChange,
+}: {
+  scene: StoryboardScenePayload;
+  maximum: number;
+  onAdd: (file: File) => Promise<void>;
+  onChange: (keyframes: StoryboardTemporalKeyframePayload[]) => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const keyframes = [...(scene.keyframes ?? [])].sort(
+    (left, right) => left.timeSeconds - right.timeSeconds,
+  );
+  const update = (
+    id: string,
+    patch: Partial<StoryboardTemporalKeyframePayload>,
+  ) => {
+    onChange(
+      keyframes
+        .map((keyframe) =>
+          keyframe.id === id ? { ...keyframe, ...patch } : keyframe,
+        )
+        .sort((left, right) => left.timeSeconds - right.timeSeconds),
+    );
+  };
+  return (
+    <details className="vlx-keyframe-editor" open={keyframes.length > 0}>
+      <summary>
+        <span><small>Advanced visual control</small><b>Intermediate frame anchors</b></span>
+        <em>{keyframes.length}/{maximum}</em>
+      </summary>
+      <p>Guide exact compositions between the approved first and last frames. Existing anchors are never retimed automatically.</p>
+      <div className="vlx-keyframe-list">
+        {keyframes.map((keyframe, index) => {
+          const previous = keyframes[index - 1]?.timeSeconds ?? 0;
+          const next = keyframes[index + 1]?.timeSeconds ?? scene.duration;
+          return (
+            <article key={keyframe.id}>
+              <PrivateTemporalKeyframeArt keyframe={keyframe} index={index} />
+              <div>
+                <strong>Anchor {index + 1}</strong>
+                <label>
+                  <span>Time in scene</span>
+                  <input
+                    type="number"
+                    min={Number((previous + 0.04).toFixed(2))}
+                    max={Number((next - 0.04).toFixed(2))}
+                    step={0.05}
+                    value={keyframe.timeSeconds}
+                    onChange={(event) => update(keyframe.id, {
+                      timeSeconds: Math.min(
+                        next - 0.04,
+                        Math.max(previous + 0.04, Number(event.target.value)),
+                      ),
+                    })}
+                  />
+                  <small>seconds</small>
+                </label>
+                <label>
+                  <span>Anchor strength</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={keyframe.strength}
+                    onChange={(event) => update(keyframe.id, { strength: Number(event.target.value) })}
+                  />
+                  <small>{keyframe.strength.toFixed(2)}</small>
+                </label>
+              </div>
+              <button
+                type="button"
+                className="vlx-secondary"
+                onClick={() => onChange(keyframes.filter((candidate) => candidate.id !== keyframe.id))}
+              >
+                Remove
+              </button>
+            </article>
+          );
+        })}
+      </div>
+      <input
+        ref={input}
+        className="sr-only"
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (!file) return;
+          setBusy(true);
+          setError("");
+          void onAdd(file)
+            .catch((caught) => setError(caught instanceof Error ? caught.message : "The frame anchor could not be added."))
+            .finally(() => setBusy(false));
+        }}
+      />
+      <button
+        type="button"
+        className="vlx-secondary"
+        disabled={busy || keyframes.length >= maximum}
+        onClick={() => input.current?.click()}
+      >
+        {busy ? "Uploadingâ€¦" : "Add intermediate frame"}
+      </button>
+      {error && <p className="vlx-error" role="alert">{error}</p>}
+    </details>
+  );
+}
+
+function PrivateTemporalKeyframeArt({
+  keyframe,
+  index,
+}: {
+  keyframe: StoryboardTemporalKeyframePayload;
+  index: number;
+}) {
+  const localUrl = objectUrl(keyframe.frame);
+  const [storedUrl, setStoredUrl] = useState<string>();
+  useEffect(() => {
+    if (keyframe.frame || !keyframe.frameAssetId) {
+      setStoredUrl(undefined);
+      return;
+    }
+    let active = true;
+    let object: string | undefined;
+    void fetchUserAsset(keyframe.frameAssetId)
+      .then((blob) => {
+        if (!active || !blob.type.startsWith("image/")) return;
+        object = URL.createObjectURL(blob);
+        setStoredUrl(object);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      if (object) URL.revokeObjectURL(object);
+    };
+  }, [keyframe.frame, keyframe.frameAssetId]);
+  const url = localUrl ?? storedUrl;
+  return url
+    ? <img src={url} alt={`Private intermediate frame anchor ${index + 1}`} />
+    : <div className="vlx-frame-empty">Private frame unavailable</div>;
+}
+
 function FrameCard({ edge, prompt, file, state, position, onPrompt, onRegenerate }: { edge: string; prompt: string; file?: File; state: WorkspaceFrameState; position: "first" | "last"; onPrompt: (value: string) => void; onRegenerate: () => void }) {
   const url = objectUrl(file);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const busy = state.status === "queued" || state.status === "generating";
-  return <article className={`vlx-frame-card ${position}`}><div className="vlx-frame-image">{url ? <img src={url} alt={`${edge} private preview`} /> : <div className="vlx-frame-empty">No approved frame yet</div>}<span>{busy ? "Replacement in progress" : edge}</span>{busy && <i className="vlx-frame-loading" />}</div><div className="vlx-frame-copy"><label><span>{edge} prompt · Z-Image Turbo</span><textarea value={prompt} onChange={(event) => onPrompt(event.target.value)} /></label><button type="button" disabled={busy || prompt.trim().length < 8} onClick={onRegenerate}>{busy ? state.status === "queued" ? "Queued…" : "Generating…" : file ? "Review regeneration" : "Review generation"}</button>{state.status === "failed" && <p className="vlx-error" role="alert">{state.error} The previous frame is unchanged.</p>}</div></article>;
+  return <article className={`vlx-frame-card ${position}`}><div className={`vlx-frame-image ${url ? "can-preview" : ""}`} onDoubleClick={() => url && setPreviewOpen(true)} title={url ? "Double-click to preview" : undefined}>{url ? <img src={url} alt={`${edge} private preview`} /> : <div className="vlx-frame-empty">No approved frame yet</div>}<span>{busy ? "Replacement in progress" : edge}</span>{busy && <i className="vlx-frame-loading" />}</div><div className="vlx-frame-copy"><label><span>{edge} prompt · Z-Image Turbo</span><textarea value={prompt} onChange={(event) => onPrompt(event.target.value)} /></label><button type="button" disabled={busy || prompt.trim().length < 8} onClick={onRegenerate}>{busy ? state.status === "queued" ? "Queued…" : "Generating…" : file ? "Review regeneration" : "Review generation"}</button>{state.status === "failed" && <p className="vlx-error" role="alert">{state.error} The previous frame is unchanged.</p>}</div>{previewOpen && url && <div className="vlx-image-lightbox" role="dialog" aria-modal="true" aria-label={`${edge} preview`} onMouseDown={() => setPreviewOpen(false)}><button type="button" aria-label="Close image preview" onClick={() => setPreviewOpen(false)}>Close</button><img src={url} alt={`${edge} full preview`} onMouseDown={(event) => event.stopPropagation()} /></div>}</article>;
 }
 
 function DirectorReferenceEvidence({

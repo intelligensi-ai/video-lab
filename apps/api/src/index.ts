@@ -7,7 +7,7 @@ import YAML from "yaml";
 import { nanoid } from "nanoid";
 import { applicationDefault, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
+import { longFormVideoModels, MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
 import type {
   CreditWallet,
   DirectorProposal,
@@ -40,7 +40,10 @@ import {
   mockStoryboardEnhancement,
   SulphurLtxRuntimeAdapter,
   RuntimeCapacityPendingError,
+  RuntimeLeaseUnavailableError,
+  boundedInteger,
   type RuntimeGenerationInput,
+  type RuntimeVideoSettings,
 } from "@video-lab/runtime-adapter";
 import { log, nowIso, problem } from "@video-lab/shared";
 import { getFirestore } from "firebase-admin/firestore";
@@ -70,6 +73,8 @@ let runtime = createRuntimeFromEnv();
 type StoredGeneration = Generation & {
   uid: string;
   runtimeJobId?: string;
+  assemblyRuntimeAttempt?: number;
+  referenceSnapshot?: StoredGenerationReferenceSnapshot[];
   outputBytes?: Uint8Array;
   outputContentType?: string;
   outputObjectPath?: string;
@@ -92,6 +97,15 @@ type StoredAsset = {
   sourceHeight?: number;
   sourcePixelCount?: number;
   bytes?: Uint8Array;
+};
+type StoredGenerationReferenceSnapshot = {
+  id: string;
+  type: "character" | "location" | "product" | "style";
+  version: number;
+  assetId: string;
+  normalizedSha256: string;
+  normalizedByteLength: number;
+  sceneIds: string[];
 };
 type StoredStoryboardProject = {
   id: string;
@@ -129,6 +143,10 @@ let runtimeState: RuntimeStatus = {
 };
 let runtimeControlCheckedAt = 0;
 function operationalErrorCode(error: unknown) {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = String((error as { code?: unknown }).code ?? "");
+    if (/^runtime_[a-z0-9_]+$/.test(code)) return code;
+  }
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (message.includes("timeout")) return "runtime_timeout";
   if (/unauthori[sz]ed|forbidden|\b401\b|\b403\b/.test(message))
@@ -146,6 +164,7 @@ const base64FieldByObjectPathField: Record<string, string> = {
   referenceImageObjectPath: "referenceImageBase64",
   styleReferenceObjectPath: "styleReferenceBase64",
   subjectReferenceObjectPath: "subjectReferenceBase64",
+  temporalKeyframeObjectPath: "temporalKeyframeBase64",
 };
 const assetIdFieldByObjectPathField: Record<string, string> =
   Object.fromEntries(
@@ -167,6 +186,8 @@ function publicGeneration(g: StoredGeneration): Generation {
   const {
     uid: _uid,
     runtimeJobId: _runtimeJobId,
+    assemblyRuntimeAttempt: _assemblyRuntimeAttempt,
+    referenceSnapshot: _referenceSnapshot,
     outputBytes: _outputBytes,
     outputContentType: _outputContentType,
     outputObjectPath: _outputObjectPath,
@@ -211,6 +232,58 @@ async function persistAsset(asset: StoredAsset) {
   adminApp();
   const { bytes: _bytes, ...stored } = asset;
   await getFirestore().collection("assets").doc(asset.id).set(stored);
+}
+
+function validateRuntimeTemporalKeyframes(
+  value: unknown,
+  duration: number,
+  sceneNumber: number,
+  uid: string,
+) {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length > MAX_INTERMEDIATE_KEYFRAMES) {
+    throw problem(
+      400,
+      "invalid_temporal_keyframes",
+      `Scene ${sceneNumber} supports up to ${MAX_INTERMEDIATE_KEYFRAMES} intermediate frame anchors`,
+    );
+  }
+  if (value.length > 0 && runtimeState.capabilities?.intermediateKeyframes !== true) {
+    throw problem(
+      409,
+      "capability_unavailable",
+      "The connected runtime has not verified intermediate frame anchors",
+    );
+  }
+  let previousTime = 0;
+  const identifiers = new Set<string>();
+  value.forEach((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw problem(400, "invalid_temporal_keyframes", `Scene ${sceneNumber} intermediate frame ${index + 1} is invalid`);
+    }
+    const source = entry as Record<string, unknown>;
+    if (Object.keys(source).some((key) => !["id", "timeSeconds", "strength", "temporalKeyframeObjectPath"].includes(key))) {
+      throw problem(400, "invalid_temporal_keyframes", `Scene ${sceneNumber} intermediate frame ${index + 1} contains unsupported fields`);
+    }
+    const id = String(source.id ?? "");
+    const timeSeconds = Number(source.timeSeconds);
+    const strength = Number(source.strength);
+    const objectPath = String(source.temporalKeyframeObjectPath ?? "");
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || identifiers.has(id)) {
+      throw problem(400, "invalid_temporal_keyframes", "Intermediate frame identifiers must be unique and valid");
+    }
+    if (!Number.isFinite(duration) || !Number.isFinite(timeSeconds) || timeSeconds <= previousTime || timeSeconds >= duration) {
+      throw problem(400, "invalid_temporal_keyframes", "Intermediate frame times must be ordered inside the scene duration");
+    }
+    if (!Number.isFinite(strength) || strength < 0 || strength > 1) {
+      throw problem(400, "invalid_temporal_keyframes", "Intermediate frame strength must be between 0 and 1");
+    }
+    if (!objectPath || !isOwnedUploadPath(objectPath, uid)) {
+      throw problem(403, "asset_forbidden", "An intermediate-frame asset is not owned by the caller");
+    }
+    identifiers.add(id);
+    previousTime = timeSeconds;
+  });
 }
 async function findAsset(id: string): Promise<StoredAsset | undefined> {
   const memory = assets.get(id);
@@ -323,6 +396,219 @@ async function ensureNormalizedReference(asset: StoredAsset) {
     height: normalized.height,
     pixelCount: normalized.pixelCount,
   } as const;
+}
+
+async function captureGenerationReferenceSnapshot(
+  settings: Generation["settings"],
+  project: StoredStoryboardProject | undefined,
+  uid: string,
+): Promise<StoredGenerationReferenceSnapshot[]> {
+  if (Object.prototype.hasOwnProperty.call(settings, "referenceConditioning")) {
+    throw problem(
+      400,
+      "invalid_reference_conditioning",
+      "Private generation references are resolved by Video Lab",
+    );
+  }
+  const storyboard = Array.isArray(settings.storyboard)
+    ? (settings.storyboard as Array<Record<string, unknown>>)
+    : [];
+  const operationScope = String(settings.operationScope ?? "project");
+  if (!["project", "scene"].includes(operationScope)) {
+    storyboard.forEach((scene) => {
+      scene.referenceIds = [];
+    });
+    return [];
+  }
+  if (!project) {
+    if (
+      storyboard.some(
+        (scene) => Array.isArray(scene.referenceIds) && scene.referenceIds.length > 0,
+      )
+    ) {
+      throw problem(
+        400,
+        "project_required",
+        "Reference-conditioned generation requires a saved project",
+      );
+    }
+    storyboard.forEach((scene) => {
+      scene.referenceIds = [];
+    });
+    return [];
+  }
+
+  const projectScenes = Array.isArray(project.form.scenes)
+    ? (project.form.scenes as Array<Record<string, unknown>>)
+    : [];
+  const projectSceneById = new Map(
+    projectScenes.map((scene) => [String(scene.id ?? ""), scene]),
+  );
+  const rawReferences = Array.isArray(project.form.projectReferences)
+    ? (project.form.projectReferences as Array<Record<string, unknown>>)
+    : [];
+  if (rawReferences.length > 0 && runtimeState.provider !== "mock") {
+    await refreshRuntimeHealth();
+  }
+  const supportedReferences = new Map<string, Record<string, unknown>>();
+  for (const reference of rawReferences) {
+    const id = String(reference.id ?? "");
+    const type = String(reference.type ?? "");
+    const assetId = String(reference.assetId ?? "");
+    if (
+      /^[A-Za-z0-9_-]{8,64}$/.test(id) &&
+      ["character", "location", "product", "style"].includes(type) &&
+      /^[A-Za-z0-9_-]{8,64}$/.test(assetId)
+    ) {
+      supportedReferences.set(id, reference);
+    }
+  }
+
+  const selectedSceneIdsByReference = new Map<string, Set<string>>();
+  const targetedSceneId = operationScope === "scene"
+    ? String(settings.operationSceneId ?? "")
+    : "";
+  const runtimeReferenceLimit = runtimeState.provider === "mock"
+    ? MAX_DIRECTOR_VISUAL_REFERENCES
+    : Math.min(
+        MAX_DIRECTOR_VISUAL_REFERENCES,
+        Math.max(0, Number(runtimeState.capabilities?.maxSceneReferenceImages) || 0),
+      );
+  const runtimeReferenceConditioningReady = runtimeState.provider === "mock" || (
+    runtimeState.capabilities?.referenceConditioning === true &&
+    runtimeState.capabilities?.featureStatus?.referenceConditioning === "supported" &&
+    runtimeReferenceLimit > 0
+  );
+  for (const scene of storyboard) {
+    const sceneId = String(scene.id ?? "");
+    const canonicalScene = projectSceneById.get(sceneId);
+    if (!canonicalScene) {
+      throw problem(
+        400,
+        "invalid_scene_job",
+        "Generation scenes must belong to the saved project",
+      );
+    }
+    if (targetedSceneId && sceneId !== targetedSceneId) {
+      scene.referenceIds = [];
+      continue;
+    }
+    const explicitIds = new Set(
+      Array.isArray(canonicalScene.referenceIds)
+        ? canonicalScene.referenceIds.map(String)
+        : [],
+    );
+    const selectedIds = [...supportedReferences.entries()]
+      .filter(([id, reference]) => {
+        const sceneIds = Array.isArray(reference.sceneIds)
+          ? reference.sceneIds.map(String)
+          : [];
+        return explicitIds.has(id) || sceneIds.length === 0 || sceneIds.includes(sceneId);
+      })
+      .map(([id]) => id)
+      .sort();
+    if (runtimeReferenceConditioningReady && selectedIds.length > runtimeReferenceLimit) {
+      throw problem(
+        400,
+        "reference_limit_exceeded",
+        `The connected runtime supports at most ${runtimeReferenceLimit} visual references per scene`,
+      );
+    }
+    scene.referenceIds = selectedIds;
+    selectedIds.forEach((id) => {
+      const sceneIds = selectedSceneIdsByReference.get(id) ?? new Set<string>();
+      sceneIds.add(sceneId);
+      selectedSceneIdsByReference.set(id, sceneIds);
+    });
+  }
+
+  if (
+    selectedSceneIdsByReference.size > 0 &&
+    !runtimeReferenceConditioningReady
+  ) {
+    throw problem(
+      409,
+      "capability_unavailable",
+      "The connected runtime has not verified visual reference conditioning",
+    );
+  }
+
+  let totalBytes = 0;
+  const snapshots: StoredGenerationReferenceSnapshot[] = [];
+  for (const id of [...selectedSceneIdsByReference.keys()].sort()) {
+    const reference = supportedReferences.get(id)!;
+    const assetId = String(reference.assetId);
+    const asset = await findAsset(assetId);
+    if (
+      !asset ||
+      asset.uid !== uid ||
+      !asset.uploadedAt ||
+      asset.purpose !== "reference"
+    ) {
+      throw problem(
+        403,
+        "reference_forbidden",
+        "A generation reference asset is not owned by the caller",
+      );
+    }
+    const normalized = await ensureNormalizedReference(asset);
+    totalBytes += normalized.byteLength;
+    if (totalBytes > MAX_DIRECTOR_VISUAL_BYTES) {
+      throw problem(
+        400,
+        "reference_limit_exceeded",
+        "Generation references exceed the allowed aggregate size",
+      );
+    }
+    snapshots.push({
+      id,
+      type: String(reference.type) as StoredGenerationReferenceSnapshot["type"],
+      version: Math.min(1_000, Math.max(1, Math.round(Number(reference.version) || 1))),
+      assetId,
+      normalizedSha256: normalized.sha256,
+      normalizedByteLength: normalized.byteLength,
+      sceneIds: [...selectedSceneIdsByReference.get(id)!].sort(),
+    });
+  }
+  return snapshots;
+}
+
+async function hydrateGenerationReferences(
+  g: StoredGeneration,
+): Promise<NonNullable<RuntimeVideoSettings["referenceConditioning"]>> {
+  const snapshots = g.referenceSnapshot ?? [];
+  const references: NonNullable<RuntimeVideoSettings["referenceConditioning"]> = [];
+  let totalBytes = 0;
+  for (const snapshot of snapshots) {
+    const asset = await findAsset(snapshot.assetId);
+    if (
+      !asset ||
+      asset.uid !== g.uid ||
+      !asset.uploadedAt ||
+      asset.purpose !== "reference"
+    ) {
+      throw new Error("reference_snapshot_unavailable");
+    }
+    const normalized = await ensureNormalizedReference(asset);
+    if (
+      normalized.sha256 !== snapshot.normalizedSha256 ||
+      normalized.byteLength !== snapshot.normalizedByteLength
+    ) {
+      throw new Error("reference_snapshot_changed");
+    }
+    totalBytes += normalized.byteLength;
+    if (totalBytes > MAX_DIRECTOR_VISUAL_BYTES) {
+      throw new Error("reference_snapshot_too_large");
+    }
+    references.push({
+      id: snapshot.id,
+      type: snapshot.type,
+      version: snapshot.version,
+      imageBase64: `data:${normalized.contentType};base64,${normalized.bytes.toString("base64")}`,
+      sceneIds: [...snapshot.sceneIds],
+    });
+  }
+  return references;
 }
 async function uploadedAssetDataUrl(objectPath: string, uid: string) {
   if (!isOwnedUploadPath(objectPath, uid))
@@ -462,6 +748,22 @@ async function runtimeGeneration(
     assemblyJobIds?: string[];
     assemblySources?: PortableAssemblySource[];
   };
+  const referenceConditioning = await hydrateGenerationReferences(g);
+  settings.referenceConditioning = referenceConditioning;
+  if (Array.isArray(settings.storyboard)) {
+    const allowedByScene = new Map<string, string[]>();
+    referenceConditioning.forEach((reference) => {
+      reference.sceneIds.forEach((sceneId) => {
+        const ids = allowedByScene.get(sceneId) ?? [];
+        ids.push(reference.id);
+        allowedByScene.set(sceneId, ids);
+      });
+    });
+    settings.storyboard = settings.storyboard.map((scene) => ({
+      ...(scene as Record<string, unknown>),
+      referenceIds: [...new Set(allowedByScene.get(String((scene as { id?: unknown }).id ?? "")) ?? [])].sort(),
+    })) as typeof settings.storyboard;
+  }
   if (settings.operationScope === "assembly") {
     const acceptedIds = settings.acceptedSceneGenerationIds;
     const storyboard = Array.isArray(settings.storyboard)
@@ -513,7 +815,10 @@ async function runtimeGeneration(
     prompt: g.prompt,
     settings,
     inputAssetUrls: [],
-    idempotencyKey: `video-lab:${g.id}`,
+    idempotencyKey:
+      settings.operationScope === "assembly"
+        ? `video-lab:${g.id}:assembly-attempt-${Math.max(1, g.assemblyRuntimeAttempt ?? 1)}`
+        : `video-lab:${g.id}`,
   };
 }
 export function localAuthEnabled(env: NodeJS.ProcessEnv = process.env) {
@@ -553,9 +858,11 @@ let runtimeDiscovery: RuntimeDiscovery = {
 };
 let runtimeDiscoveryCheckedAt = 0;
 let runtimeDiscoveryPromise: Promise<void> | undefined;
-const runtimeDiscoveryRefreshMs = Math.max(
+const runtimeDiscoveryRefreshMs = boundedInteger(
+  process.env.VIDEO_RUNTIME_DISCOVERY_REFRESH_MS,
+  10_000,
   2_000,
-  Number(process.env.VIDEO_RUNTIME_DISCOVERY_REFRESH_MS ?? 10_000),
+  5 * 60_000,
 );
 let manualRuntimeBaseUrl: string | undefined;
 export function creditLimitsEnabled(_env: NodeJS.ProcessEnv = process.env) {
@@ -625,7 +932,12 @@ function createRuntimeAdapter(
         : process.env.VIDEO_RUNTIME_PAYLOAD_MODE === "sulphur"
           ? "sulphur"
           : "deploy-studio",
-    timeoutMs: Number(process.env.VIDEO_RUNTIME_TIMEOUT_MS ?? 120000),
+    timeoutMs: boundedInteger(
+      process.env.VIDEO_RUNTIME_TIMEOUT_MS,
+      120_000,
+      1_000,
+      15 * 60_000,
+    ),
   });
 }
 async function connectRuntimeEndpoint(
@@ -648,16 +960,14 @@ async function connectRuntimeEndpoint(
   try {
     health = await adapter.healthCheck();
   } catch (e) {
-    const detail =
-      e instanceof Error && e.name === "AbortError"
-        ? "Runtime health check timed out"
-        : e instanceof Error
-          ? e.message
-          : String(e);
+    log("runtime_health_unreachable", {
+      source,
+      errorCode: operationalErrorCode(e),
+    });
     throw problem(
       503,
       "runtime_health_unreachable",
-      `Could not reach runtime health endpoint: ${detail}`,
+      "Could not reach the managed generation runtime. Verify the server-side runtime connection and try again.",
     );
   }
   if (!health.ok)
@@ -672,7 +982,7 @@ async function connectRuntimeEndpoint(
       throw problem(
         401,
         "runtime_access_denied",
-        `Runtime health is ready, but protected job routes rejected Video Lab credentials (${protectedAccess.message ?? protectedAccess.status}). Configure VIDEO_RUNTIME_DIRECT_WORKER_TOKEN with the worker RUNTIME_ACCESS_TOKEN, or connect through Deploy Studio.`,
+        "Runtime health is ready, but protected generation routes rejected the server connection. Verify server-side runtime credentials or connect through Deploy Studio.",
       );
   }
   runtimeBaseUrl = baseUrl;
@@ -1043,7 +1353,8 @@ async function refreshRuntimeHealth() {
       runtimeDiscovery = {
         ...runtimeDiscovery,
         state: "unavailable",
-        message: `Manual runtime health is ready, but protected job routes rejected Video Lab credentials (${protectedAccess.message ?? protectedAccess.status}).`,
+        message:
+          "Manual runtime health is ready, but protected generation routes rejected the server connection.",
       };
       return;
     }
@@ -1248,6 +1559,35 @@ async function failGenerationFromRuntime(
   return failed;
 }
 
+async function requireRuntimeCancellation(
+  generation: StoredGeneration,
+  action: "cancel" | "delete",
+): Promise<"confirmed" | "accepted"> {
+  if (!generation.runtimeJobId) return "confirmed";
+  try {
+    const result = await runtime.cancelGeneration(generation.runtimeJobId);
+    if (result.cancelled) return "confirmed";
+    if (result.accepted) return "accepted";
+  } catch (error) {
+    log(
+      action === "delete"
+        ? "runtime_cancel_before_delete_failed"
+        : "runtime_cancel_failed",
+      {
+        generationId: generation.id,
+        errorCode: operationalErrorCode(error),
+      },
+    );
+  }
+  throw problem(
+    503,
+    "runtime_cancel_unconfirmed",
+    action === "delete"
+      ? "Deletion was not completed because the active generation could not be stopped safely. Retry shortly; the project record is unchanged."
+      : "Cancellation could not be confirmed by the generator. The job remains active; retry shortly.",
+  );
+}
+
 async function reconcileActiveGeneration(uid: string) {
   const active = localAuth
     ? [...gens.values()].find(
@@ -1423,11 +1763,17 @@ async function enqueueGeneration(
   return { generation, created: true };
 }
 
-function queueLeaseMs() {
-  const timeout = Math.max(
+function runtimeJobTimeoutMs() {
+  return boundedInteger(
+    process.env.VIDEO_RUNTIME_JOB_TIMEOUT_MS,
+    55 * 60_000,
     60_000,
-    Number(process.env.VIDEO_RUNTIME_JOB_TIMEOUT_MS ?? 55 * 60_000),
+    2 * 60 * 60_000,
   );
+}
+
+function queueLeaseMs() {
+  const timeout = runtimeJobTimeoutMs();
   return Math.min(2 * 60 * 60_000, timeout + 5 * 60_000);
 }
 
@@ -1437,29 +1783,32 @@ async function claimQueueItem(
   if (localAuth) return claimNext(queue, workerId, new Date(), queueLeaseMs());
   adminApp();
   const firestore = getFirestore();
-  const queued = await firestore
-    .collection(generationQueueCollection)
-    .where("status", "==", "queued")
-    .orderBy("createdAt", "asc")
-    .limit(10)
-    .get();
-  const expired = queued.empty
-    ? await firestore
+  const [queued, expired] = await Promise.all([
+    firestore
+      .collection(generationQueueCollection)
+      .where("status", "==", "queued")
+      .orderBy("createdAt", "asc")
+      .limit(100)
+      .get(),
+    firestore
         .collection(generationQueueCollection)
         .where("status", "==", "claimed")
         .where("leaseExpiresAt", "<", nowIso())
         .orderBy("leaseExpiresAt", "asc")
-        .limit(10)
-        .get()
-    : undefined;
-  for (const candidate of [...queued.docs, ...(expired?.docs ?? [])]) {
+        .limit(100)
+        .get(),
+  ]);
+  for (const candidate of [...queued.docs, ...expired.docs]) {
     let claimed: QueueItem | undefined;
     await firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(candidate.ref);
       if (!snapshot.exists) return;
       const item = snapshot.data() as QueueItem;
+      const capacityReady =
+        !item.capacityRetryAt ||
+        new Date(item.capacityRetryAt).getTime() <= Date.now();
       const eligible =
-        item.status === "queued" ||
+        (item.status === "queued" && capacityReady) ||
         (item.status === "claimed" &&
           Boolean(item.leaseExpiresAt) &&
           new Date(item.leaseExpiresAt!).getTime() < Date.now());
@@ -1470,12 +1819,14 @@ async function claimQueueItem(
         claimedBy: workerId,
         attempt: Number(item.attempt ?? 0) + 1,
         leaseExpiresAt: new Date(Date.now() + queueLeaseMs()).toISOString(),
+        capacityRetryAt: undefined,
       };
       transaction.update(candidate.ref, {
         status: claimed.status,
         claimedBy: claimed.claimedBy,
         attempt: claimed.attempt,
         leaseExpiresAt: claimed.leaseExpiresAt,
+        capacityRetryAt: null,
       });
     });
     if (claimed) return claimed;
@@ -1526,11 +1877,16 @@ async function finishQueueItem(item: QueueItem, uid?: string) {
   });
 }
 
-async function requeueQueueItem(item: QueueItem) {
+async function requeueQueueItem(item: QueueItem, retryAfterSeconds = 20) {
+  const retrySeconds = boundedInteger(retryAfterSeconds, 20, 1, 300);
+  const capacityRetryAt = new Date(
+    Date.now() + retrySeconds * 1_000,
+  ).toISOString();
   if (localAuth) {
     item.status = "queued";
     item.claimedBy = undefined;
     item.leaseExpiresAt = undefined;
+    item.capacityRetryAt = capacityRetryAt;
     return;
   }
   adminApp();
@@ -1542,7 +1898,7 @@ async function requeueQueueItem(item: QueueItem) {
         status: "queued",
         claimedBy: null,
         leaseExpiresAt: null,
-        capacityRetryAt: nowIso(),
+        capacityRetryAt,
       },
       { merge: true },
     );
@@ -1722,6 +2078,7 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
     "contractVersion", "projectId", "projectRevision", "operation", "userInstruction", "masterPrompt", "shotCount",
     "generationMode", "continuityBible", "shots", "targetShotNumber", "aspectRatio", "resolution", "references",
     "availableControls", "audioPolicy", "requestedCandidateCount",
+    "videoModel",
   ]), "Storyboard enhancement input");
   if (source.contractVersion !== "2") invalid("incompatible_runtime", "Storyboard enhancement contract version 2 is required");
   const operations = new Set(["enhance_master_prompt", "plan_storyboard", "revise_shot", "revise_first_frame", "revise_last_frame"]);
@@ -1832,6 +2189,8 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
   const audioPolicy = rawAudioPolicy as unknown as StoryboardAudioPolicy;
   if (audioPolicy.mode === "silent" && (audioPolicy.dialogue !== "off" || audioPolicy.soundEffects !== "off" || audioPolicy.ambience !== "off" || audioPolicy.music !== "off" || audioPolicy.preserveSourceAudio)) invalid("invalid_storyboard", "Silent audio policy contains enabled audio");
   if (!Number.isInteger(source.requestedCandidateCount) || Number(source.requestedCandidateCount) < 1 || Number(source.requestedCandidateCount) > 4) invalid("invalid_storyboard", "Candidate count is invalid");
+  const videoModel = String(source.videoModel ?? "ltx-2.3");
+  if (!(longFormVideoModels as readonly string[]).includes(videoModel)) invalid("invalid_video_model", "Video model is not supported");
   return {
     contractVersion: "2",
     projectId,
@@ -1850,7 +2209,12 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
     availableControls: [...allowedControls],
     audioPolicy,
     requestedCandidateCount: source.requestedCandidateCount as number,
+    videoModel: videoModel as StoryboardEnhancementRequest["videoModel"],
   };
+}
+
+function assemblyRecoveryAttemptLimit(env: NodeJS.ProcessEnv = process.env) {
+  return boundedInteger(env.VIDEO_LAB_ASSEMBLY_RECOVERY_ATTEMPTS, 3, 1, 5);
 }
 
 const draftKeys = new Set([
@@ -1876,6 +2240,7 @@ const draftKeys = new Set([
   "directorAssumptions",
   "instructionBundle",
   "referencePlanningEvidence",
+  "videoModel",
   "scenes",
 ]);
 const draftSceneKeys = new Set([
@@ -1906,7 +2271,55 @@ const draftSceneKeys = new Set([
   "continuityNotes",
   "promptOrigin",
   "staleReason",
+  "keyframes",
 ]);
+
+const MAX_INTERMEDIATE_KEYFRAMES = 6;
+
+function sanitizeDraftTemporalKeyframes(
+  value: unknown,
+  duration: number,
+  sceneNumber: number,
+) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_INTERMEDIATE_KEYFRAMES) {
+    throw problem(
+      400,
+      "invalid_storyboard_draft",
+      `Shot ${sceneNumber} has an invalid intermediate-frame count`,
+    );
+  }
+  let previousTime = 0;
+  const identifiers = new Set<string>();
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${sceneNumber} intermediate frame ${index + 1} is invalid`);
+    }
+    const source = entry as Record<string, unknown>;
+    if (Object.keys(source).some((key) => !["id", "timeSeconds", "strength", "frameAssetId"].includes(key))) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${sceneNumber} intermediate frame ${index + 1} contains unsupported fields`);
+    }
+    const id = String(source.id ?? "");
+    const timeSeconds = Number(source.timeSeconds);
+    const strength = Number(source.strength);
+    const frameAssetId = String(source.frameAssetId ?? "");
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || identifiers.has(id)) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${sceneNumber} intermediate frame identifiers must be unique and valid`);
+    }
+    if (!Number.isFinite(timeSeconds) || timeSeconds <= previousTime || timeSeconds >= duration) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${sceneNumber} intermediate frame times must be ordered inside the scene duration`);
+    }
+    if (!Number.isFinite(strength) || strength < 0 || strength > 1) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${sceneNumber} intermediate frame strength is invalid`);
+    }
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(frameAssetId)) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${sceneNumber} intermediate frame asset is invalid`);
+    }
+    identifiers.add(id);
+    previousTime = timeSeconds;
+    return { id, timeSeconds, strength, frameAssetId };
+  });
+}
 
 function sanitizeReferencePlanningEvidence(value: unknown) {
   if (value === undefined) return undefined;
@@ -1984,6 +2397,11 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
   const draft = Object.fromEntries(
     Object.entries(source).filter(([key]) => draftKeys.has(key)),
   );
+  const videoModel = String(draft.videoModel ?? "ltx-2.3");
+  if (!(longFormVideoModels as readonly string[]).includes(videoModel)) {
+    throw problem(400, "invalid_video_model", "Video model is not supported");
+  }
+  draft.videoModel = videoModel;
   if (
     typeof draft.overallGoal !== "string" ||
     draft.overallGoal.length > 12_000
@@ -2051,8 +2469,17 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
     scene.recommendedControls = Array.isArray(scene.recommendedControls)
       ? [...new Set(scene.recommendedControls
           .map((control) => String(control))
-          .filter((control) => ["start_frame", "end_frame"].includes(control)))]
+          .filter((control) => ["start_frame", "end_frame", "multi_keyframe"].includes(control)))]
       : [];
+    const sceneDuration = Number(scene.duration);
+    if (!Number.isFinite(sceneDuration) || sceneDuration < 1 || sceneDuration > 8) {
+      throw problem(400, "invalid_storyboard_draft", `Shot ${index + 1} duration is invalid`);
+    }
+    scene.keyframes = sanitizeDraftTemporalKeyframes(
+      scene.keyframes,
+      sceneDuration,
+      index + 1,
+    );
     return scene;
   });
   draft.candidateCount = Math.min(4, Math.max(1, Math.round(Number(draft.candidateCount) || 3)));
@@ -2116,6 +2543,16 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
   return draft;
 }
 
+function storyboardDraftHasRenderedVideo(form: Record<string, unknown>) {
+  const scenes = Array.isArray(form.scenes) ? form.scenes : [];
+  return scenes.some((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+    const scene = entry as Record<string, unknown>;
+    return Boolean(scene.acceptedVideoGenerationId)
+      || (Array.isArray(scene.candidateGenerationIds) && scene.candidateGenerationIds.length > 0);
+  });
+}
+
 async function validateStoryboardReferenceAssets(form: Record<string, unknown>, uid: string) {
   const references = Array.isArray(form.projectReferences)
     ? form.projectReferences as Array<Record<string, unknown>>
@@ -2131,6 +2568,20 @@ async function validateStoryboardReferenceAssets(form: Record<string, unknown>, 
       const asset = await findAsset(assetId);
       if (!asset || asset.uid !== uid || !asset.uploadedAt || asset.purpose !== "reference") {
         throw problem(403, "reference_forbidden", "A project reference asset is not owned by the caller");
+      }
+    }
+  }
+  const scenes = Array.isArray(form.scenes)
+    ? form.scenes as Array<Record<string, unknown>>
+    : [];
+  for (const scene of scenes) {
+    const keyframes = Array.isArray(scene.keyframes)
+      ? scene.keyframes as Array<Record<string, unknown>>
+      : [];
+    for (const keyframe of keyframes) {
+      const asset = await findAsset(String(keyframe.frameAssetId ?? ""));
+      if (!asset || asset.uid !== uid || !asset.uploadedAt || asset.purpose !== "reference") {
+        throw problem(403, "asset_forbidden", "An intermediate-frame asset is not owned by the caller");
       }
     }
   }
@@ -2526,6 +2977,7 @@ function directorControls() {
   return [
     capabilities?.startFrame ? "start_frame" : "",
     capabilities?.endFrame ? "end_frame" : "",
+    capabilities?.intermediateKeyframes ? "multi_keyframe" : "",
     capabilities?.previousFrameContinuity ? "previous_frame_continuity" : "",
   ].filter(Boolean);
 }
@@ -2739,8 +3191,11 @@ async function enhanceStoryboard(
         authScheme: useStableApi
           ? process.env.VIDEO_RUNTIME_AUTH_SCHEME
           : undefined,
-        timeoutMs: Number(
-          process.env.VIDEO_STORYBOARD_ENHANCER_TIMEOUT_MS ?? 250_000,
+        timeoutMs: boundedInteger(
+          process.env.VIDEO_STORYBOARD_ENHANCER_TIMEOUT_MS,
+          250_000,
+          30_000,
+          10 * 60_000,
         ),
       }).enhance(request, runtimeContext);
     } catch (error) {
@@ -2784,7 +3239,12 @@ app.use(
 app.use(
   rateLimit({
     name: "api",
-    limit: Number(process.env.VIDEO_LAB_RATE_LIMIT_PER_MINUTE ?? 180),
+    limit: boundedInteger(
+      process.env.VIDEO_LAB_RATE_LIMIT_PER_MINUTE,
+      180,
+      1,
+      10_000,
+    ),
   }),
 );
 app.use((req, _res, next) => {
@@ -2857,6 +3317,18 @@ app.put("/v1/storyboards/projects/:id", auth, async (req, res, next) => {
     if (!existing) throw problem(404, "project_not_found", "Project not found");
     const form = sanitizeStoryboardDraft(req.body?.form);
     await validateStoryboardReferenceAssets(form, uid);
+    const existingVideoModel = String(existing.form.videoModel ?? "ltx-2.3");
+    const nextVideoModel = String(form.videoModel ?? "ltx-2.3");
+    if (
+      existingVideoModel !== nextVideoModel
+      && (storyboardDraftHasRenderedVideo(existing.form) || storyboardDraftHasRenderedVideo(form))
+    ) {
+      throw problem(
+        409,
+        "rendered_project_model_change",
+        "Create a separate project copy before changing the video model",
+      );
+    }
     res.json(
       await persistStoryboardProject({
         ...existing,
@@ -3422,6 +3894,26 @@ app.post(
         requestedSettings,
         p.uid,
       )) as Generation["settings"];
+      const requestedVideoModel = String(settings.videoModel ?? "ltx-2.3");
+      if (!(longFormVideoModels as readonly string[]).includes(requestedVideoModel)) {
+        throw problem(400, "invalid_video_model", "Video model is not supported");
+      }
+      const advertisedVideoModels = runtimeState.capabilities?.videoModels;
+      const advertisedVideoModel = advertisedVideoModels?.find(
+        (model) => model.id === requestedVideoModel,
+      );
+      const requiresExplicitCapability = requestedVideoModel !== "ltx-2.3";
+      if (
+        (requiresExplicitCapability && !advertisedVideoModels?.length)
+        || (advertisedVideoModels?.length && !advertisedVideoModel?.available)
+      ) {
+        throw problem(
+          409,
+          "video_model_unavailable",
+          "The selected video model is not available on the active managed runtime",
+        );
+      }
+      settings.videoModel = requestedVideoModel;
       if (!Array.isArray(inputAssets) || inputAssets.length > 3) {
         throw problem(
           400,
@@ -3510,16 +4002,50 @@ app.post(
                 "Scene trim must preserve at least 0.25 seconds",
               );
           }
+          if (
+            Array.isArray(scene.keyframes) &&
+            scene.keyframes.length > 0 &&
+            !["project", "scene"].includes(String(operationScope))
+          ) {
+            throw problem(
+              400,
+              "invalid_temporal_keyframes",
+              "Intermediate frame anchors are supported only for scene rendering",
+            );
+          }
+          validateRuntimeTemporalKeyframes(
+            scene.keyframes,
+            duration,
+            index + 1,
+            p.uid,
+          );
         });
       }
       const projectId = String(
         (settings as { projectId?: unknown }).projectId ?? "",
       );
+      let project: StoredStoryboardProject | undefined;
       if (projectId) {
-        const project = await findStoryboardProject(p.uid, projectId);
+        project = await findStoryboardProject(p.uid, projectId);
         if (!project)
           throw problem(404, "project_not_found", "Project not found");
+        const projectVideoModel = String(project.form.videoModel ?? "ltx-2.3");
+        if (!(longFormVideoModels as readonly string[]).includes(projectVideoModel)) {
+          throw problem(409, "project_video_model_invalid", "The project video model is not supported");
+        }
+        if (projectVideoModel !== requestedVideoModel) {
+          throw problem(
+            409,
+            "project_video_model_mismatch",
+            "The generation model must match the project video model",
+          );
+        }
       }
+      const referenceSnapshot = await captureGenerationReferenceSnapshot(
+        settings,
+        project,
+        p.uid,
+      );
       if (
         Object.prototype.hasOwnProperty.call(settings, "assemblyJobIds") ||
         Object.prototype.hasOwnProperty.call(settings, "assemblySources")
@@ -3609,7 +4135,8 @@ app.post(
             accepted.status !== "completed" ||
             accepted.settings.operationScope !== "scene" ||
             accepted.settings.operationSceneId !== expectedSceneId ||
-            accepted.settings.projectId !== projectId
+            accepted.settings.projectId !== projectId ||
+            String(accepted.settings.videoModel ?? "ltx-2.3") !== requestedVideoModel
           )
             throw problem(
               400,
@@ -3618,9 +4145,11 @@ app.post(
             );
         }
       }
-      const globalQueueLimit = Math.max(
+      const globalQueueLimit = boundedInteger(
+        process.env.VIDEO_RUNTIME_GLOBAL_QUEUE_LIMIT,
+        100,
         1,
-        Number(process.env.VIDEO_RUNTIME_GLOBAL_QUEUE_LIMIT ?? 100),
+        10_000,
       );
       for (const a of inputAssets) {
         if ((await findAsset(String(a.assetId ?? "")))?.uid !== p.uid)
@@ -3634,6 +4163,7 @@ app.post(
         uid: p.uid,
         prompt,
         settings,
+        ...(referenceSnapshot.length > 0 ? { referenceSnapshot } : {}),
         inputAssets,
         status: "queued" as const,
         creditCost: cost,
@@ -3736,15 +4266,16 @@ app.post("/v1/generations/:id/cancel", auth, async (req, res, next) => {
       throw problem(404, "not_found", "Generation not found");
     if (["completed", "failed", "cancelled"].includes(g.status))
       return res.json(publicGeneration(g));
-    if (g.runtimeJobId) {
-      try {
-        await runtime.cancelGeneration(g.runtimeJobId);
-      } catch (e) {
-        log("runtime_cancel_failed", {
-          generationId: g.id,
-          errorCode: operationalErrorCode(e),
-        });
-      }
+    const cancellation = await requireRuntimeCancellation(g, "cancel");
+    if (cancellation === "accepted") {
+      const cancelling: StoredGeneration = {
+        ...g,
+        runtimeMessage: "Cancellation requested. Waiting for the generator to stop safely.",
+        updatedAt: nowIso(),
+      };
+      gens.set(g.id, cancelling);
+      await persistGeneration(cancelling);
+      return res.status(202).json(publicGeneration(cancelling));
     }
     const wallet = wallets.get(g.uid);
     if (creditLimitsEnabled() && wallet && wallet.reserved >= g.creditCost)
@@ -3777,14 +4308,14 @@ app.delete("/v1/generations/:id", auth, async (req, res, next) => {
     const g = await findGeneration(id);
     if (!g || g.uid !== res.locals.principal.uid)
       throw problem(404, "not_found", "Generation not found");
-    if (g.runtimeJobId && activeGenerationStatus(g.status)) {
-      try {
-        await runtime.cancelGeneration(g.runtimeJobId);
-      } catch (e) {
-        log("runtime_cancel_before_delete_failed", {
-          generationId: g.id,
-          errorCode: operationalErrorCode(e),
-        });
+    if (activeGenerationStatus(g.status)) {
+      const cancellation = await requireRuntimeCancellation(g, "delete");
+      if (cancellation === "accepted") {
+        throw problem(
+          409,
+          "runtime_cancel_pending",
+          "Deletion is waiting for the active generation to stop safely. Retry after cancellation completes.",
+        );
       }
     }
     await deleteStoredGeneration(g);
@@ -3995,15 +4526,48 @@ async function processQueueItem(workerId = "local-worker") {
   }
   let finishClaim = true;
   try {
+    const assemblyRuntimeAttempt =
+      g.settings.operationScope === "assembly"
+        ? Math.max(1, g.assemblyRuntimeAttempt ?? 1)
+        : undefined;
     const preparing = {
       ...g,
+      ...(assemblyRuntimeAttempt ? { assemblyRuntimeAttempt } : {}),
       status: "preparing" as const,
       queuePosition: 0,
       updatedAt: nowIso(),
     };
     gens.set(g.id, preparing);
     await persistGeneration(preparing);
-    const sub = await runtime.submitGeneration(await runtimeGeneration(g));
+    const runtimeInput = await runtimeGeneration(preparing);
+    log("generation_runtime_payload_shape", {
+      generationId: g.id,
+      operationScope: (runtimeInput.settings as { operationScope?: unknown })
+        .operationScope,
+      videoModel: (runtimeInput.settings as { videoModel?: unknown })
+        .videoModel,
+      durationSeconds: (runtimeInput.settings as { durationSeconds?: unknown })
+        .durationSeconds,
+      sceneCount: Array.isArray(
+        (runtimeInput.settings as { storyboard?: unknown[] }).storyboard,
+      )
+        ? (runtimeInput.settings as { storyboard: unknown[] }).storyboard
+            .length
+        : 0,
+      scenes: (
+        (runtimeInput.settings as { storyboard?: unknown[] }).storyboard ?? []
+      ).map((scene, index) => {
+        const s = scene as Record<string, unknown>;
+        return {
+          index,
+          durationSeconds: s.duration,
+          carryPreviousFrame: s.carryPreviousFrame,
+          transition: s.transition,
+          keyframeCount: Array.isArray(s.keyframes) ? s.keyframes.length : 0,
+        };
+      }),
+    });
+    const sub = await runtime.submitGeneration(runtimeInput);
     const submitted: StoredGeneration = {
       ...preparing,
       runtimeJobId: sub.runtimeJobId,
@@ -4012,12 +4576,7 @@ async function processQueueItem(workerId = "local-worker") {
     gens.set(g.id, submitted);
     await persistGeneration(submitted);
     let st = await runtime.getGenerationStatus(sub.runtimeJobId);
-    const deadline =
-      Date.now() +
-      Math.max(
-        60_000,
-        Number(process.env.VIDEO_RUNTIME_JOB_TIMEOUT_MS ?? 55 * 60_000),
-      );
+    const deadline = Date.now() + runtimeJobTimeoutMs();
     while (!["completed", "failed", "cancelled"].includes(st.state)) {
       if (Date.now() >= deadline) throw new Error("runtime_job_timeout");
       if (gens.get(g.id)?.status === "cancelled") break;
@@ -4046,28 +4605,51 @@ async function processQueueItem(workerId = "local-worker") {
       await persistGeneration(cancelled);
     } else if (st.state === "completed") {
       await completeGenerationFromRuntime(gens.get(g.id)!, sub.runtimeJobId, st.qualityAssessment);
-    } else throw new Error(st.message ?? st.state);
+    } else {
+      const runtimeFailure = new Error(st.message ?? "The runtime could not complete this generation.") as Error & { code?: string };
+      runtimeFailure.name = "RuntimeGenerationFailure";
+      runtimeFailure.code = st.failureCode ?? "runtime_job_failed";
+      throw runtimeFailure;
+    }
   } catch (e) {
-    if (e instanceof RuntimeCapacityPendingError) {
+    const currentAssemblyAttempt = Math.max(
+      1,
+      (gens.get(g.id) ?? g).assemblyRuntimeAttempt ?? 1,
+    );
+    const recoverableAssemblyLeaseLoss =
+      e instanceof RuntimeLeaseUnavailableError &&
+      g.settings.operationScope === "assembly" &&
+      currentAssemblyAttempt < assemblyRecoveryAttemptLimit();
+    if (e instanceof RuntimeCapacityPendingError || recoverableAssemblyLeaseLoss) {
       finishClaim = false;
       const waiting: StoredGeneration = {
         ...(gens.get(g.id) ?? g),
         status: "queued",
         queuePosition: Math.max(1, g.queuePosition ?? 1),
-        runtimeMessage: "Preparing generation capacity",
+        runtimeMessage: recoverableAssemblyLeaseLoss
+          ? "Runtime changed; preparing assembly recovery"
+          : "Preparing generation capacity",
+        ...(recoverableAssemblyLeaseLoss
+          ? { assemblyRuntimeAttempt: currentAssemblyAttempt + 1 }
+          : {}),
         safeErrorMessage: undefined,
         updatedAt: nowIso(),
       };
+      delete waiting.runtimeJobId;
       gens.set(g.id, waiting);
       await persistGeneration(waiting);
-      await requeueQueueItem(item);
-      log("generation_waiting_for_capacity", {
+      await requeueQueueItem(item, e.retryAfterSeconds);
+      log(recoverableAssemblyLeaseLoss ? "assembly_requeued_after_runtime_change" : "generation_waiting_for_capacity", {
         generationId: g.id,
         retryAfterSeconds: e.retryAfterSeconds,
+        queueAttempt: item.attempt,
+        ...(recoverableAssemblyLeaseLoss
+          ? { assemblyRuntimeAttempt: currentAssemblyAttempt }
+          : {}),
       });
       return true;
     }
-    const detail = e instanceof Error ? e.message : String(e);
+    const failureCode = operationalErrorCode(e);
     const wallet = wallets.get(g.uid);
     let creditsReturned = false;
     if (!creditLimitsEnabled()) {
@@ -4092,9 +4674,16 @@ async function processQueueItem(workerId = "local-worker") {
     const failed: StoredGeneration = {
       ...(gens.get(g.id) ?? g),
       status: "failed",
-      safeErrorMessage: localAuth
-        ? `Generation failed: ${detail}.${creditsReturned ? " Credits were returned." : ""}`
-        : "Generation failed safely. Please retry when the runtime is available.",
+      failureCode,
+      safeErrorMessage: `${
+        failureCode === "runtime_timeout"
+          ? "Generation timed out. Please retry when the runtime is available."
+          : failureCode === "runtime_authentication"
+            ? "Generation access could not be verified. Please retry shortly."
+            : failureCode === "runtime_invalid_response"
+              ? "The generator returned an invalid response. Your successful work is unchanged."
+              : "Generation failed safely. Please retry when the runtime is available."
+      }${creditsReturned ? " Credits were returned." : ""}`,
       updatedAt: nowIso(),
     };
     gens.set(g.id, failed);
@@ -4115,10 +4704,7 @@ export async function processOne(workerId = "local-worker") {
   await processQueueItem(workerId);
 }
 export function workerConcurrencyLimit(env: NodeJS.ProcessEnv = process.env) {
-  const configured = Number(env.VIDEO_LAB_WORKER_CONCURRENCY ?? 2);
-  return Number.isInteger(configured)
-    ? Math.max(1, Math.min(20, configured))
-    : 2;
+  return boundedInteger(env.VIDEO_LAB_WORKER_CONCURRENCY, 2, 1, 20);
 }
 const activeWorkerPromises = new Set<Promise<boolean>>();
 

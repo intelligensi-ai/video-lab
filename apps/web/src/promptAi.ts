@@ -55,6 +55,24 @@ export function getKnownReferenceFallback(
   return `An ancient Greek mythic epic follows Odysseus, a battle-worn king, across a hostile Mediterranean as he struggles home to Ithaca after the Trojan War. His journey begins in the wreckage of victory, escalates through tempests, strange islands, divine obstruction and the cost of his own pride, while Penelope and Telemachus resist the suitors consuming his household. The film moves between the vast danger of the voyage and the intimate suspense of a family holding its identity together, culminating in a wary homecoming, recognition and reckoning. Keep Odysseus weathered, ingenious and morally complicated; Penelope composed and strategically alert; Telemachus visibly maturing. Use sun-bleached limestone, salt-dark timber, oxidised bronze, indigo sea and ember-lit interiors. Shoot landscapes in restrained anamorphic wides with slow, tidal movement; reserve close, shallow-focus lenses for temptation, grief and recognition. Hard Mediterranean daylight yields to smoky oil-lamp chiaroscuro. Preserve scars, woven garments, ship damage, geography, weather direction and the passage of time across every scene.`;
 }
 
+export function getPromptExpansionFallback(
+  value: string,
+  kind: PromptSuggestionKind,
+) {
+  const seed = value.trim().replace(/\s+/g, " ");
+  if (!seed) return "";
+  if (kind === "negative") {
+    return `Avoid low quality, blurry frames, jittery motion, warped anatomy, duplicate subjects, identity drift, discontinuous lighting, unreadable text, watermarks, compression artefacts and abrupt unintended cuts.`;
+  }
+  if (kind === "film-brief") {
+    return `${seed}. Shape this into a coherent cinematic film with a clear opening, escalation and destination. Keep the central subject, setting and visual identity consistent across every scene. Use motivated camera movement, controlled lens language, deliberate lighting, a defined colour palette and tactile environmental detail. Preserve wardrobe, props, geography, weather direction and emotional continuity from scene to scene.`;
+  }
+  if (kind === "storyboard-scene") {
+    return `${seed}. Build this as one precise storyboard beat with a clear subject action, motivated camera movement, lens and framing, lighting progression and a final composition that hands visual continuity to the next scene.`;
+  }
+  return `${seed}. Create one production-ready cinematic shot with a clear subject action, specific setting, motivated camera movement, lens and framing, lighting direction, colour palette, tactile atmosphere and a deliberate final composition.`;
+}
+
 function trimAtWord(text: string, maxLength = 1200) {
   const cleaned = text
     .trim()
@@ -84,10 +102,7 @@ export async function generatePromptExpansion(
   } catch (error) {
     const knownReference = getKnownReferenceFallback(value, kind);
     if (knownReference) return knownReference;
-    throw new Error(
-      "Local prompt assistance is temporarily unavailable. Your original text has not been changed.",
-      { cause: error },
-    );
+    return getPromptExpansionFallback(value, kind);
   }
   throw new Error(
     "Local prompt assistance returned an empty suggestion. Your original text has not been changed.",

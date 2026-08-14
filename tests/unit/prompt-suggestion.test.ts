@@ -3,6 +3,7 @@ import { expandPrompt } from '../../apps/web/src/PromptSuggestion.js';
 import {
   buildPromptExpansionRequest,
   getKnownReferenceFallback,
+  getPromptExpansionFallback,
 } from '../../apps/web/src/promptAi.js';
 
 describe('prompt suggestion expansion', () => {
@@ -27,5 +28,12 @@ describe('prompt suggestion expansion', () => {
     expect(fallback).toContain('Odysseus');
     expect(fallback).toContain('Penelope and Telemachus');
     expect(fallback).toContain('anamorphic');
+  });
+
+  it('provides a generic cinematic fallback if prompt assistance is unavailable', () => {
+    const fallback = getPromptExpansionFallback('A diver finds a glowing cave', 'video-scene');
+    expect(fallback).toContain('A diver finds a glowing cave');
+    expect(fallback).toContain('production-ready cinematic shot');
+    expect(fallback).toContain('motivated camera movement');
   });
 });

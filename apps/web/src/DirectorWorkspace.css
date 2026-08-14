@@ -785,6 +785,9 @@ body:has(.vlx-shell) > #root > .site-nav {
   overflow: hidden;
   background: #111;
 }
+.vlx-frame-image.can-preview {
+  cursor: zoom-in;
+}
 .vlx-frame-image img {
   width: 100%;
   height: 100%;
@@ -2118,6 +2121,30 @@ body:has(.vlx-shell) .vlx-director-avatar i {
     repeating-linear-gradient(45deg, transparent 0 18px, rgba(20, 91, 88, 0.04) 18px 19px);
   color: #416563;
 }
+.vlx-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(4, 8, 8, 0.86);
+  padding: 2rem;
+  backdrop-filter: blur(12px);
+}
+.vlx-image-lightbox img {
+  display: block;
+  max-width: min(1100px, 94vw);
+  max-height: 86vh;
+  border-radius: 14px;
+  object-fit: contain;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.45);
+}
+.vlx-image-lightbox button {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 1;
+}
 
 .vlx-stale,
 .vlx-invalidation,
@@ -2274,6 +2301,123 @@ body:has(.vlx-shell) .vlx-director-avatar i {
 
   .vlx-diff {
     grid-template-columns: 1fr;
+  }
+}
+
+.vlx-keyframe-editor {
+  margin: 0 1.15rem 1rem;
+  overflow: hidden;
+  border: 1px solid #0a8f8330;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #eff8f6, #f7f7f2);
+}
+.vlx-keyframe-editor summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem;
+  cursor: pointer;
+  list-style: none;
+}
+.vlx-keyframe-editor summary::-webkit-details-marker {
+  display: none;
+}
+.vlx-keyframe-editor summary span {
+  display: grid;
+}
+.vlx-keyframe-editor summary small {
+  color: var(--teal);
+  font-size: 0.5rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.vlx-keyframe-editor summary b {
+  font-size: 0.72rem;
+}
+.vlx-keyframe-editor summary em {
+  border-radius: 999px;
+  background: #fff;
+  padding: 0.3rem 0.55rem;
+  color: var(--teal);
+  font-size: 0.55rem;
+  font-style: normal;
+  font-weight: 800;
+}
+.vlx-keyframe-editor > p {
+  margin: 0 0.8rem 0.75rem;
+  color: var(--muted);
+  font-size: 0.62rem;
+  line-height: 1.5;
+}
+.vlx-keyframe-editor > button {
+  margin: 0 0.8rem 0.8rem;
+}
+.vlx-keyframe-list {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0 0.8rem 0.75rem;
+}
+.vlx-keyframe-list article {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fffdfa;
+  padding: 0.55rem;
+}
+.vlx-keyframe-list article > img,
+.vlx-keyframe-list article > .vlx-frame-empty {
+  width: 112px;
+  height: 72px;
+  border-radius: 9px;
+  object-fit: cover;
+}
+.vlx-keyframe-list article > div:nth-child(2) {
+  display: grid;
+  gap: 0.42rem;
+}
+.vlx-keyframe-list article strong {
+  color: var(--ink);
+  font-size: 0.67rem;
+}
+.vlx-keyframe-list label {
+  display: grid;
+  grid-template-columns: 92px minmax(80px, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.56rem;
+}
+.vlx-keyframe-list input[type="number"] {
+  width: 86px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faf8;
+  padding: 0.35rem 0.45rem;
+}
+.vlx-keyframe-list input[type="range"] {
+  accent-color: var(--teal);
+}
+
+@media (max-width: 720px) {
+  .vlx-keyframe-list article {
+    grid-template-columns: 84px minmax(0, 1fr);
+  }
+  .vlx-keyframe-list article > img,
+  .vlx-keyframe-list article > .vlx-frame-empty {
+    width: 84px;
+    height: 84px;
+  }
+  .vlx-keyframe-list article > button {
+    grid-column: 1 / -1;
+  }
+  .vlx-keyframe-list label {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
   }
 }
 body:has(.vlx-shell) .vlx-director-thread small {
