@@ -44,7 +44,9 @@ export async function fetchGenerationOutput(downloadUrl: string) {
   const path = downloadUrl.startsWith("/api/")
     ? downloadUrl.slice(4)
     : downloadUrl;
-  if (!path.startsWith("/v1/generations/") || !path.endsWith("/download")) {
+  if (
+    !/^\/v1\/generations\/[^/]+(?:\/edits\/[^/]+)?\/download$/.test(path)
+  ) {
     throw new Error(
       "The generation output address is not a Video Lab address.",
     );
@@ -57,6 +59,34 @@ export async function fetchGenerationOutput(downloadUrl: string) {
     throw new Error(body.detail ?? body.title ?? response.statusText);
   }
   return response.blob();
+}
+
+export type GenerationEdit = {
+  id: string;
+  generationId: string;
+  startSeconds: number;
+  endSeconds: number;
+  status: "processing" | "completed" | "failed";
+  output?: {
+    downloadUrl: string;
+    durationSeconds: number;
+    contentType: "video/mp4";
+    kind: "video";
+  };
+  safeErrorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function createGenerationEdit(
+  generationId: string,
+  startSeconds: number,
+  endSeconds: number,
+) {
+  return api<GenerationEdit>(`/v1/generations/${generationId}/edits`, {
+    method: "POST",
+    body: JSON.stringify({ startSeconds, endSeconds }),
+  });
 }
 
 export type ReferenceRole =

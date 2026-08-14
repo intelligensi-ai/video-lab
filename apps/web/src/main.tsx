@@ -56,6 +56,22 @@ type GenerationRequest = {
   prompt: string;
   settings: Generation["settings"];
 };
+type GenerationEdit = {
+  id: string;
+  generationId: string;
+  startSeconds: number;
+  endSeconds: number;
+  status: "processing" | "completed" | "failed";
+  output?: {
+    downloadUrl: string;
+    durationSeconds: number;
+    contentType: "video/mp4";
+    kind: "video";
+  };
+  safeErrorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+};
 
 function nowIso() {
   return new Date().toISOString();
@@ -1269,53 +1285,47 @@ function GalleryVideoEditor({
     seek(trimStart);
   };
   const downloadEditedClip = async () => {
-    const element = videoRef.current as
-      | (HTMLVideoElement & {
-          captureStream?: () => MediaStream;
-          mozCaptureStream?: () => MediaStream;
-        })
-      | null;
-    if (!element) return;
-    const stream = element.captureStream?.() ?? element.mozCaptureStream?.();
-    if (!stream || typeof MediaRecorder === "undefined") {
-      setEditorError("This browser cannot export a trimmed video from the preview.");
-      return;
-    }
     setEditorError(undefined);
     setExporting(true);
-    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
-      ? "video/webm;codecs=vp9"
-      : MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
-        ? "video/webm;codecs=vp8"
-        : "video/webm";
-    const chunks: BlobPart[] = [];
-    const recorder = new MediaRecorder(stream, { mimeType });
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) chunks.push(event.data);
-    };
-    const finished = new Promise<void>((resolve) => {
-      recorder.onstop = () => resolve();
-    });
-    element.muted = true;
-    element.currentTime = trimStart;
-    recorder.start();
-    await element.play();
-    window.setTimeout(
-      () => {
-        element.pause();
-        if (recorder.state !== "inactive") recorder.stop();
-      },
-      Math.max(250, selectedDuration * 1000),
-    );
-    await finished;
-    const blob = new Blob(chunks, { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${generation.id}-trimmed.webm`;
-    link.click();
-    URL.revokeObjectURL(url);
-    setExporting(false);
+    try {
+      const edit = await api<GenerationEdit>(
+        `/v1/generations/${generation.id}/edits`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            startSeconds: trimStart,
+            endSeconds: trimEnd,
+          }),
+        },
+      );
+      if (edit.status !== "completed" || !edit.output?.downloadUrl) {
+        throw new Error(edit.safeErrorMessage ?? "The edited video is not ready.");
+      }
+      const apiToken = await getApiToken();
+      const path = edit.output.downloadUrl.startsWith("/api/")
+        ? edit.output.downloadUrl.slice(4)
+        : edit.output.downloadUrl;
+      const response = await fetch(`${API}${path}`, {
+        headers: { authorization: `Bearer ${apiToken}` },
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail ?? response.statusText);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${generation.id}-trimmed.mp4`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setEditorError(
+        error instanceof Error ? error.message : "The edited video could not be downloaded.",
+      );
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
