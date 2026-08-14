@@ -73,6 +73,18 @@ type GenerationEdit = {
   updatedAt: string;
 };
 
+function isVideoOutput(generation?: Generation) {
+  const output = generation?.output;
+  if (!output?.downloadUrl) return false;
+  return output.kind === "video" || output.contentType?.startsWith("video/");
+}
+
+function isFrameOutput(generation?: Generation) {
+  const output = generation?.output;
+  if (!output?.downloadUrl) return false;
+  return output.kind === "frame" || output.contentType?.startsWith("image/");
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -1099,14 +1111,16 @@ function GalleryArtifact({
   generation: Generation;
   onOpen: () => void;
 }) {
-  const video = useAuthenticatedVideo(generation.output?.downloadUrl);
+  const isVideo = isVideoOutput(generation);
+  const isFrame = isFrameOutput(generation);
+  const media = useAuthenticatedVideo(generation.output?.downloadUrl);
   const storageKey = `vl_thumbnail_${generation.id}`;
   const [thumbnail, setThumbnail] = useState(
     () => localStorage.getItem(storageKey) ?? "",
   );
 
   useEffect(() => {
-    if (thumbnail || !video.objectUrl) return;
+    if (!isVideo || thumbnail || !media.objectUrl) return;
     const source = document.createElement("video");
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d", { willReadFrequently: true });
@@ -1117,7 +1131,7 @@ function GalleryArtifact({
     const samplePositions = [0.12, 0.28, 0.44, 0.6, 0.76, 0.9];
     canvas.width = 640;
     canvas.height = 480;
-    source.src = video.objectUrl;
+    source.src = media.objectUrl;
     source.muted = true;
     source.playsInline = true;
     source.preload = "auto";
@@ -1194,9 +1208,17 @@ function GalleryArtifact({
       source.removeAttribute("src");
       source.load();
     };
-  }, [storageKey, thumbnail, video.objectUrl]);
+  }, [isVideo, storageKey, thumbnail, media.objectUrl]);
 
-  if (thumbnail) {
+  if (isFrame && media.objectUrl) {
+    return (
+      <div className="gallery-media gallery-frame">
+        <img src={media.objectUrl} alt="Generated frame" />
+      </div>
+    );
+  }
+
+  if (isVideo && thumbnail) {
     return (
       <button
         className="gallery-media gallery-thumbnail gallery-media-button"
@@ -1210,10 +1232,10 @@ function GalleryArtifact({
       </button>
     );
   }
-  if (video.error) {
+  if (media.error) {
     return (
       <div className="thumb error gallery-media">
-        Video unavailable: {video.error}
+        Output unavailable: {media.error}
       </div>
     );
   }
@@ -1244,6 +1266,7 @@ function GalleryVideoEditor({
   const [appliedEnd, setAppliedEnd] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [editorError, setEditorError] = useState<string>();
+  const editable = isVideoOutput(generation);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1343,6 +1366,10 @@ function GalleryVideoEditor({
             ×
           </button>
         </header>
+        {!editable ? (
+          <p className="error">This generation is a still frame, so it cannot be trimmed as video.</p>
+        ) : (
+          <>
         <div className="gallery-editor-screen">
           {video.objectUrl ? (
             <video
@@ -1431,12 +1458,15 @@ function GalleryVideoEditor({
             {exporting ? "Exporting…" : "Download edit"}
           </button>
         </footer>
+          </>
+        )}
       </section>
     </div>
   );
 }
 function Detail() {
   const { id } = useParams();
+  const [editorOpen, setEditorOpen] = useState(false);
   const q = useQuery({
     queryKey: ["gen", id],
     queryFn: () => api<Generation>(`/v1/generations/${id}`),
@@ -1452,27 +1482,37 @@ function Detail() {
     onSuccess: () => q.refetch(),
   });
   const g = q.data;
-  const video = useAuthenticatedVideo(g?.output?.downloadUrl);
+  const media = useAuthenticatedVideo(g?.output?.downloadUrl);
+  const isVideo = isVideoOutput(g);
+  const isFrame = isFrameOutput(g);
   return (
     <main>
       {g && (
         <>
           <h1>Generation</h1>
           <section className="panel generation-detail-panel">
-            {video.objectUrl ? (
+            {isVideo && media.objectUrl ? (
               <video
                 className="video-preview"
-                src={video.objectUrl}
+                src={media.objectUrl}
                 controls
-                autoPlay
+                playsInline
+                preload="metadata"
+                onDoubleClick={() => setEditorOpen(true)}
+              />
+            ) : isFrame && media.objectUrl ? (
+              <img
+                className="video-preview generation-frame-preview"
+                src={media.objectUrl}
+                alt="Generated frame"
               />
             ) : (
               <div className="thumb big">
                 {g.output?.downloadUrl ? <VideoRetrievalMark /> : g.status}
               </div>
             )}
-            {video.error && (
-              <p className="error">Video retrieval failed: {video.error}</p>
+            {media.error && (
+              <p className="error">Output retrieval failed: {media.error}</p>
             )}
             <p>{g.prompt}</p>
             <p>Created {new Date(g.createdAt).toLocaleString()}</p>
@@ -1480,11 +1520,16 @@ function Detail() {
               <p className="error">{g.safeErrorMessage}</p>
             )}
             <div className="generation-detail-actions">
-              {video.objectUrl && (
+              {isVideo && media.objectUrl && (
+                <button type="button" onClick={() => setEditorOpen(true)}>
+                  Edit / trim
+                </button>
+              )}
+              {media.objectUrl && (
                 <a
                   className="button"
-                  href={video.objectUrl}
-                  download={`${g.id}.mp4`}
+                  href={media.objectUrl}
+                  download={`${g.id}.${isFrame ? "png" : "mp4"}`}
                 >
                   Download
                 </a>
@@ -1506,6 +1551,12 @@ function Detail() {
                 )}
             </div>
           </section>
+          {isVideo && editorOpen && (
+            <GalleryVideoEditor
+              generation={g}
+              onClose={() => setEditorOpen(false)}
+            />
+          )}
         </>
       )}
     </main>
