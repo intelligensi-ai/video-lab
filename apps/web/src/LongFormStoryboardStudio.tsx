@@ -1212,7 +1212,7 @@ export default function LongFormStoryboardStudio({
             className={`lf-panel lf-goal ${isClassic ? "lf-minimal-director" : ""}`}
           >
             <span className="lf-label">
-              {isClassic ? "1 · Director" : "Creative brief"}
+              {isClassic ? "Director" : "Creative brief"}
             </span>
             <div className="prompt-field-heading">
               <h2>{isClassic ? "Describe your video" : "Overview"}</h2>
@@ -3878,7 +3878,7 @@ function Preview({
       <header data-help="This panel tracks the currently selected generation, including active render progress, playback and download once complete.">
         <div>
           <span className="lf-label">
-            {minimal ? "2 · Preview" : "Your creation"}
+            {minimal ? "Preview" : "Your creation"}
           </span>
           <h2>{minimal ? "Your video" : "Cinematic preview"}</h2>
         </div>
