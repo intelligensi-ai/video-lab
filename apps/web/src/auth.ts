@@ -17,14 +17,10 @@ import {
 import { doc, getDoc, getFirestore, setDoc } from 'firebase/firestore';
 
 export const isProductionFirebase = import.meta.env.PROD;
-const productionAuthDomain =
-  typeof window !== 'undefined' && window.location.hostname.endsWith('.web.app')
-    ? window.location.hostname
-    : import.meta.env.VITE_FIREBASE_AUTH_DOMAIN;
 export const firebaseApp = isProductionFirebase
   ? initializeApp({
       apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-      authDomain: productionAuthDomain,
+      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
       projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
       appId: import.meta.env.VITE_FIREBASE_APP_ID,
       storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
