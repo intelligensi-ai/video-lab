@@ -43,6 +43,7 @@ import {
   useAuthenticatedVideo,
 } from "./AuthenticatedVideo.js";
 import { PromptSuggestion } from "./PromptSuggestion.js";
+import { generatePromptExpansion } from "./promptAi.js";
 import { getFirebaseUser, isProductionFirebase } from "./auth.js";
 import {
   deleteStoryboardSession,
@@ -654,6 +655,23 @@ export default function LongFormStoryboardStudio({
       });
     },
   });
+  const classicBriefEnhancement = useMutation({
+    mutationFn: () => generatePromptExpansion(form.overallGoal, "video-scene"),
+    onSuccess: (expanded) => {
+      setUndoForm(form);
+      setForm((current) =>
+        markAcceptedClipsStale(
+          {
+            ...current,
+            originalOverallGoal:
+              current.originalOverallGoal ?? current.overallGoal,
+            overallGoal: expanded,
+          },
+          "The video brief changed after this clip was accepted. Render this scene again before assembly.",
+        ),
+      );
+    },
+  });
   useEffect(() => {
     const items = gallery.data?.items ?? [];
     setHistory(items.slice(0, 8));
@@ -1203,11 +1221,16 @@ export default function LongFormStoryboardStudio({
                 disabled={
                   !sessionReady ||
                   !form.overallGoal.trim() ||
-                  enhancement.isPending
+                  enhancement.isPending ||
+                  classicBriefEnhancement.isPending
                 }
-                onClick={() => enhancement.mutate({ apply: "master" })}
+                onClick={() =>
+                  isClassic
+                    ? classicBriefEnhancement.mutate()
+                    : enhancement.mutate({ apply: "master" })
+                }
               >
-                {enhancement.isPending
+                {enhancement.isPending || classicBriefEnhancement.isPending
                   ? "Director is working…"
                   : isClassic
                     ? "Improve with Director"
@@ -1288,6 +1311,11 @@ export default function LongFormStoryboardStudio({
             {enhancement.error && (
               <p className="lf-error" role="alert">
                 {enhancement.error.message}
+              </p>
+            )}
+            {classicBriefEnhancement.error && (
+              <p className="lf-error" role="alert">
+                {classicBriefEnhancement.error.message}
               </p>
             )}
             {isClassic && (
