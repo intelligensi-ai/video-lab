@@ -40,6 +40,7 @@ import {
 } from "./api.js";
 import {
   AuthenticatedVideo,
+  VideoRetrievalMark,
   useAuthenticatedVideo,
 } from "./AuthenticatedVideo.js";
 import { PromptSuggestion } from "./PromptSuggestion.js";
@@ -3919,7 +3920,7 @@ function Preview({
         {video.objectUrl ? (
           <video src={video.objectUrl} controls />
         ) : generation?.output?.downloadUrl ? (
-          <div className="thumb big">Retrieving completed video…</div>
+          <VideoRetrievalMark />
         ) : (
           <img
             src="/images/longform-ltx-storyboard-studio-film-roll.webp"

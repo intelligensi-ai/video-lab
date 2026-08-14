@@ -99,6 +99,58 @@ textarea {
   text-transform: uppercase;
   color: #9ff;
 }
+.video-retrieval-mark {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  width: 100%;
+}
+.video-retrieval-mark.compact {
+  min-height: 0;
+}
+.video-retrieval-mark > span {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+}
+.video-retrieval-mark.compact > span {
+  width: 48px;
+  height: 48px;
+}
+.video-retrieval-mark > span::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid #ffffff24;
+  border-top-color: #35ddce;
+  border-right-color: #35ddce;
+  border-radius: 50%;
+  animation: lf-render-spin 1s linear infinite;
+}
+.video-retrieval-mark > span::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  background: #35ddce18;
+  animation: lf-render-pulse 1.6s ease-in-out infinite;
+}
+.video-retrieval-mark > span img {
+  position: relative;
+  z-index: 1;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  object-fit: contain;
+  animation: lf-render-mark 1.8s ease-in-out infinite;
+}
+.video-retrieval-mark.compact > span img {
+  width: 30px;
+  height: 30px;
+}
 .big {
   min-height: 280px;
 }

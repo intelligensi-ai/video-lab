@@ -19,7 +19,10 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { Generation, RuntimeStatus, Me } from "@video-lab/contracts";
-import { useAuthenticatedVideo } from "./AuthenticatedVideo.js";
+import {
+  VideoRetrievalMark,
+  useAuthenticatedVideo,
+} from "./AuthenticatedVideo.js";
 import {
   completeGoogleRedirectSignIn,
   getApiToken,
@@ -1175,7 +1178,11 @@ function GalleryArtifact({ generation }: { generation: Generation }) {
   }
   return (
     <div className="thumb gallery-media">
-      {generation.output?.downloadUrl ? "Retrieving video…" : generation.status}
+      {generation.output?.downloadUrl ? (
+        <VideoRetrievalMark compact />
+      ) : (
+        generation.status
+      )}
     </div>
   );
 }
@@ -1212,9 +1219,7 @@ function Detail() {
               />
             ) : (
               <div className="thumb big">
-                {g.output?.downloadUrl
-                  ? "Retrieving completed video…"
-                  : g.status}
+                {g.output?.downloadUrl ? <VideoRetrievalMark /> : g.status}
               </div>
             )}
             {video.error && (
