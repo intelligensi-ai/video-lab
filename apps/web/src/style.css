@@ -926,23 +926,30 @@ body:has(.admin-page) .site-nav.logged-in .site-nav-inner {
   flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.55rem;
+  gap: 0.65rem;
 }
 .lf-preview-header-actions .lf-session {
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.45rem;
+  gap: 0.55rem;
 }
 .lf-preview-header-actions .lf-session-save {
   display: none;
 }
 .lf-preview-header-actions .lf-session span,
 .lf-preview-header-actions .lf-help-toggle {
-  min-height: 30px !important;
-  padding: 0.35rem 0.58rem !important;
-  font-size: 0.54rem !important;
+  min-height: 38px !important;
+  padding: 0.52rem 0.82rem !important;
+  font-size: 0.66rem !important;
+  font-weight: 850 !important;
+}
+.lf-preview-header-actions .lf-complete {
+  min-height: 38px;
+  padding: 0.52rem 0.82rem;
+  font-size: 0.66rem;
+  font-weight: 850;
 }
 .lf-preview-tabs {
   display: grid;
