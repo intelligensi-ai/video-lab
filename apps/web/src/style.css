@@ -361,7 +361,7 @@ body:has(.lf-page) {
   margin-right: auto;
   color: #11a99b;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1.7rem, 2.6vw, 2.65rem);
+  font-size: clamp(calc(1.7rem + 5px), calc(2.6vw + 5px), calc(2.65rem + 5px));
   font-style: italic;
   font-weight: 500;
   letter-spacing: -0.045em;
@@ -4700,7 +4700,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
 /* Storyboard Studio — editorial long-form workbench. */
 .lf-page {
   max-width: 1560px;
-  padding: 0 clamp(1rem, 2.5vw, 2.75rem) 7rem;
+  padding: 0.75rem clamp(1rem, 2.5vw, 2.75rem) 7rem;
   color: #171717;
 }
 .lf-page,
@@ -5515,7 +5515,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
 .lf-preview > header {
   align-items: center;
   padding: 1rem 1.15rem 0.85rem;
-  border-color: #1112;
+  border-bottom: 0;
 }
 .lf-preview header h2 {
   font-size: clamp(1.55rem, 2vw, 2.1rem);
@@ -5544,7 +5544,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
   color: #646c68;
 }
 .lf-screen {
-  margin: 0 0.9rem;
+  margin: 3px 0.9rem 0;
   border-color: #1112;
   border-radius: 1.15rem;
   background: #111;
@@ -5560,13 +5560,13 @@ body:not(:has(.home)) textarea:focus::placeholder {
   object-fit: cover;
 }
 .lf-screen.lf-screen-minimal {
-  margin-inline: auto;
+  margin: 3px 0.9rem 0;
   transition:
     width 180ms ease,
     aspect-ratio 180ms ease;
 }
 .lf-screen.lf-screen-minimal.lf-screen-16-9 {
-  width: 100%;
+  width: auto;
   height: auto;
   aspect-ratio: 16 / 9;
 }

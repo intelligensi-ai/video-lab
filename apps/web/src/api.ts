@@ -509,6 +509,8 @@ export function storyboardEnhancementRequest(
     ? "revise_shot"
     : "plan_storyboard",
 ): StoryboardEnhancementRequest {
+  const clean = (value: unknown) =>
+    typeof value === "string" ? value.trim() : "";
   const aspectRatio = payload.resolution.startsWith("576x") || payload.resolution.startsWith("720x1280")
     ? "9:16"
     : payload.resolution.startsWith("1080x1080") ? "1:1" : "16:9";
@@ -516,7 +518,7 @@ export function storyboardEnhancementRequest(
     contractVersion: "2",
     projectId,
     operation,
-    masterPrompt: payload.overallGoal,
+    masterPrompt: clean(payload.overallGoal),
     shotCount: payload.scenes.length,
     generationMode: payload.scenes.some(
       (scene) => scene.startFrame || scene.endFrame,
@@ -544,12 +546,12 @@ export function storyboardEnhancementRequest(
     videoModel: payload.videoModel ?? "ltx-2.3",
     shots: payload.scenes.map((scene, index) => ({
       shotNumber: index + 1,
-      title: scene.title,
-      narrativePurpose: scene.narrativePurpose ?? "",
-      prompt: scene.prompt,
-      firstFramePrompt: scene.firstFramePrompt ?? "",
-      lastFramePrompt: scene.lastFramePrompt ?? "",
-      continuityNotes: scene.continuityNotes ?? "",
+      title: clean(scene.title),
+      narrativePurpose: clean(scene.narrativePurpose),
+      prompt: clean(scene.prompt),
+      firstFramePrompt: clean(scene.firstFramePrompt),
+      lastFramePrompt: clean(scene.lastFramePrompt),
+      continuityNotes: clean(scene.continuityNotes),
       durationSeconds: scene.duration,
       generationMode:
         scene.startFrame || scene.endFrame ? "image_to_video" : "text_to_video",
