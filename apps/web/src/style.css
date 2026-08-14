@@ -5162,7 +5162,8 @@ body:not(:has(.home)) textarea:focus::placeholder {
 .lf-panel h2,
 .lf-scenes h2 {
   margin: 0.3rem 0;
-  color: #171717;
+  padding-top: 3px;
+  color: #343a38;
   font-size: clamp(1.35rem, 1.8vw, 1.85rem);
   font-weight: 800;
   letter-spacing: -0.05em;
@@ -5766,6 +5767,8 @@ body:not(:has(.home)) textarea:focus::placeholder {
   border-bottom: 0;
 }
 .lf-preview header h2 {
+  padding-top: 3px;
+  color: #343a38;
   font-size: clamp(1.55rem, 2vw, 2.1rem);
 }
 .lf-preview header p {
