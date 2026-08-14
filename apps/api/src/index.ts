@@ -224,6 +224,11 @@ function publicGeneration(g: StoredGeneration): Generation {
     outputSha256: _outputSha256,
     ...generation
   } = g;
+  if (["completed", "failed", "cancelled"].includes(generation.status)) {
+    delete generation.runtimeMessage;
+    delete generation.runtimeProgress;
+    generation.queuePosition = 0;
+  }
   return {
     ...generation,
     settings: stripEmbeddedMedia(generation.settings) as Generation["settings"],
@@ -1440,7 +1445,7 @@ async function persistGeneration(g: StoredGeneration) {
   await getFirestore()
     .collection("generations")
     .doc(g.id)
-    .set(clean, { merge: true });
+    .set(clean);
 }
 async function findGeneration(id: string) {
   const memory = gens.get(id);
