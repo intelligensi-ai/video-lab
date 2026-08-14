@@ -18,10 +18,14 @@ import {
 import { doc, getDoc, getFirestore, setDoc } from 'firebase/firestore';
 
 export const isProductionFirebase = import.meta.env.PROD;
+const productionAuthDomain =
+  typeof window !== 'undefined' && window.location.hostname.endsWith('.web.app')
+    ? window.location.hostname
+    : import.meta.env.VITE_FIREBASE_AUTH_DOMAIN;
 export const firebaseApp = isProductionFirebase
   ? initializeApp({
       apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+      authDomain: productionAuthDomain,
       projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
       appId: import.meta.env.VITE_FIREBASE_APP_ID,
       storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
@@ -102,6 +106,7 @@ export async function completeGoogleRedirectSignIn() {
 
 export function getFriendlyAuthError(error: unknown) {
   const code = (error as { code?: string }).code;
+  const message = error instanceof Error ? error.message : "";
   if (code === 'auth/unauthorized-domain') {
     return 'Google sign-in is not authorised for this domain. Please contact Video Lab support.';
   }
@@ -109,7 +114,7 @@ export function getFriendlyAuthError(error: unknown) {
     return 'Sign-in could not connect. Check your connection and try again.';
   }
   if (code === 'auth/internal-error') {
-    return 'Firebase sign-in failed internally. Refresh the page and try again; if it continues, use email login while we check the Firebase provider settings.';
+    return `Firebase sign-in failed internally${message ? `: ${message}` : ""}`;
   }
   if (code === 'auth/account-exists-with-different-credential') {
     return 'An account already exists with this email using another sign-in method.';
