@@ -434,7 +434,7 @@ export function storyboardEnhancementRequest(
     contractVersion: "2",
     projectId,
     operation,
-    masterPrompt: payload.overallGoal,
+    masterPrompt: payload.overallGoal.trim(),
     shotCount: payload.scenes.length,
     generationMode: payload.scenes.some(
       (scene) => scene.startFrame || scene.endFrame,
@@ -461,12 +461,12 @@ export function storyboardEnhancementRequest(
     requestedCandidateCount: payload.candidateCount,
     shots: payload.scenes.map((scene, index) => ({
       shotNumber: index + 1,
-      title: scene.title,
-      narrativePurpose: scene.narrativePurpose ?? "",
-      prompt: scene.prompt,
-      firstFramePrompt: scene.firstFramePrompt ?? "",
-      lastFramePrompt: scene.lastFramePrompt ?? "",
-      continuityNotes: scene.continuityNotes ?? "",
+      title: scene.title.trim(),
+      narrativePurpose: (scene.narrativePurpose ?? "").trim(),
+      prompt: scene.prompt.trim(),
+      firstFramePrompt: (scene.firstFramePrompt ?? "").trim(),
+      lastFramePrompt: (scene.lastFramePrompt ?? "").trim(),
+      continuityNotes: (scene.continuityNotes ?? "").trim(),
       durationSeconds: scene.duration,
       generationMode:
         scene.startFrame || scene.endFrame ? "image_to_video" : "text_to_video",
