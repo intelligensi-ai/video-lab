@@ -314,6 +314,9 @@ function Shell() {
       ? [{ to: "/admin", label: "Admin" }]
       : []),
   ];
+  const pageTitle =
+    navItems.find((item) => location.pathname === item.to)?.label ??
+    (location.pathname.startsWith("/generations/") ? "Details" : "");
   const logout = async () => {
     await signOutUser();
     navigate("/login", { replace: true });
@@ -329,6 +332,11 @@ function Shell() {
           <Link className="site-home-mark" to="/" aria-label="Video Lab home">
             <img src={homeMarkUrl} alt="" />
           </Link>
+          {signedIn && pageTitle && (
+            <span className="site-page-title" aria-current="page">
+              {pageTitle}<span>.</span>
+            </span>
+          )}
           {!isLanding && !signedIn && (
             <Link
               className="site-brand"
@@ -951,16 +959,24 @@ function Gallery() {
   });
   return (
     <main className="gallery-page">
-      <h1 className="editorial-page-title">
-        Gallery<span className="editorial-title-stop">.</span>
-      </h1>
+      <header className="gallery-toolbar">
+        <div>
+          <span className="gallery-eyebrow">Private video library</span>
+          <h1>Recent generations</h1>
+        </div>
+        <Link className="gallery-create-link" to="/videolab">
+          Create new video
+        </Link>
+      </header>
       {deletion.error && (
         <p className="error" role="alert">
           Delete failed: {deletion.error.message}
         </p>
       )}
       <div className="gallery-grid">
-        {q.data?.items.length ? (
+        {q.isLoading ? (
+          <p className="empty gallery-empty">Loading your gallery…</p>
+        ) : q.data?.items.length ? (
           q.data.items.map((g) => (
             <GalleryCard
               generation={g}
@@ -970,7 +986,7 @@ function Gallery() {
             />
           ))
         ) : (
-          <p className={q.error ? "error" : "empty"}>
+          <p className={q.error ? "error gallery-empty" : "empty gallery-empty"}>
             {q.error
               ? `Gallery unavailable: ${q.error.message}`
               : "No generations yet. Create your first cinematic clip."}
@@ -1019,7 +1035,11 @@ function GalleryCard({
         <div className="gallery-card-meta">
           <span>{generation.status}</span>
           <time dateTime={generation.createdAt}>
-            {new Date(generation.createdAt).toLocaleString()}
+            {new Date(generation.createdAt).toLocaleDateString(undefined, {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            })}
           </time>
         </div>
         <h3 className={expanded ? "expanded" : ""}>{generation.prompt}</h3>

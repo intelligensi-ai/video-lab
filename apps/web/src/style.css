@@ -355,6 +355,22 @@ body:has(.lf-page) {
   outline: 3px solid #159d9138;
   outline-offset: 3px;
 }
+.site-page-title {
+  display: inline-flex;
+  align-items: baseline;
+  margin-right: auto;
+  color: #11a99b;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.7rem, 2.6vw, 2.65rem);
+  font-style: italic;
+  font-weight: 500;
+  letter-spacing: -0.045em;
+  line-height: 1;
+  white-space: nowrap;
+}
+.site-page-title span {
+  color: #11a99b;
+}
 .site-nav-links {
   display: flex;
   align-items: center;
@@ -1950,8 +1966,60 @@ body:not(:has(.home)) .thumb {
 }
 .gallery-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: clamp(1rem, 2vw, 1.5rem);
+}
+.gallery-page {
+  max-width: 1380px;
+  padding-top: clamp(1rem, 2vw, 1.8rem) !important;
+}
+.gallery-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: clamp(1rem, 2vw, 1.4rem);
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #1112;
+}
+.gallery-eyebrow {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: #087f76;
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.gallery-toolbar h1 {
+  margin: 0;
+  color: #151a19;
+  font-size: clamp(1.75rem, 3vw, 2.7rem);
+  letter-spacing: -0.035em;
+  line-height: 1;
+}
+.gallery-create-link {
+  flex: 0 0 auto;
+  border: 1px solid #1112;
+  border-radius: 999px;
+  background: #101413;
+  color: #fff !important;
+  padding: 0.72rem 1rem;
+  font-size: 0.74rem;
+  font-weight: 850;
+  text-decoration: none;
+}
+.gallery-create-link:hover {
+  background: #087f76;
+}
+.gallery-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  border: 1px dashed #159d9140;
+  border-radius: 0.8rem;
+  background: #fff;
+  padding: 2rem;
+  text-align: center;
 }
 .gallery-card {
   position: relative;
@@ -1959,27 +2027,27 @@ body:not(:has(.home)) .thumb {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid #1112;
-  border-radius: 0.8rem;
-  background: #fff;
+  border: 1px solid #d8ddd8;
+  border-radius: 0.75rem;
+  background: #fbfbf8;
   padding: 0;
-  box-shadow: 0 18px 55px #173e370f;
+  box-shadow: 0 14px 34px #173e3710;
   transition:
     transform 180ms ease,
     box-shadow 180ms ease,
     border-color 180ms ease;
 }
 .gallery-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-3px);
   border-color: #159d9144;
-  box-shadow: 0 24px 70px #173e3718;
+  box-shadow: 0 22px 48px #173e3718;
 }
 .gallery-media {
   display: block;
   width: 100%;
   height: auto;
   min-height: 0;
-  aspect-ratio: 4/3;
+  aspect-ratio: 16/10;
   box-sizing: border-box;
   object-fit: cover;
   overflow: hidden;
@@ -1995,6 +2063,14 @@ body:not(:has(.home)) .thumb {
   position: relative;
   background: #111;
 }
+.gallery-thumbnail::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 42%;
+  background: linear-gradient(180deg, transparent, #0008);
+  pointer-events: none;
+}
 .gallery-thumbnail img {
   display: block;
   width: 100%;
@@ -2005,6 +2081,7 @@ body:not(:has(.home)) .thumb {
   position: absolute;
   right: 0.85rem;
   bottom: 0.85rem;
+  z-index: 1;
   display: grid;
   place-items: center;
   width: 2.35rem;
@@ -2061,15 +2138,15 @@ body:not(:has(.home)) .thumb {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 0.75rem;
-  padding: 0.95rem;
+  gap: 0.8rem;
+  padding: 1rem;
 }
 .gallery-card-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  color: #6a726e;
+  color: #68726f;
   font-size: 0.68rem;
   font-weight: 750;
 }
@@ -2078,7 +2155,7 @@ body:not(:has(.home)) .thumb {
   border-radius: 999px;
   background: #e8f3ef;
   color: #087f76;
-  padding: 0.26rem 0.5rem;
+  padding: 0.28rem 0.55rem;
   text-transform: capitalize;
 }
 .gallery-card-meta time {
@@ -2090,8 +2167,9 @@ body:not(:has(.home)) .thumb {
 }
 .gallery-card h3 {
   margin: 0;
-  color: #171717;
-  font-size: 0.95rem;
+  color: #161918;
+  font-size: 0.98rem;
+  font-weight: 780;
   line-height: 1.45;
   display: -webkit-box;
   min-height: calc(1.45em * 3);
@@ -2125,10 +2203,10 @@ body:not(:has(.home)) .thumb {
   justify-content: center;
   margin-top: auto;
   border: 1px solid #1112;
-  border-radius: 0.65rem;
-  background: #111;
+  border-radius: 0.55rem;
+  background: #101413;
   color: #fff;
-  padding: 0.7rem 0.85rem;
+  padding: 0.78rem 0.9rem;
   font-size: 0.74rem;
   font-weight: 850;
   text-decoration: none;
@@ -2140,10 +2218,31 @@ body:not(:has(.home)) .thumb {
   .gallery-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .site-page-title {
+    font-size: 1.85rem;
+  }
 }
 @media (max-width: 600px) {
+  .site-nav.logged-in .site-nav-inner {
+    flex-wrap: wrap;
+  }
+  .site-page-title {
+    order: 1;
+  }
+  .site-nav-links {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+  }
   .gallery-grid {
     grid-template-columns: 1fr;
+  }
+  .gallery-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .gallery-create-link {
+    text-align: center;
   }
 }
 body:not(:has(.home)) .prompts span,
@@ -4601,7 +4700,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
 /* Storyboard Studio — editorial long-form workbench. */
 .lf-page {
   max-width: 1560px;
-  padding: 3px clamp(1rem, 2.5vw, 2.75rem) 7rem;
+  padding: 0 clamp(1rem, 2.5vw, 2.75rem) 7rem;
   color: #171717;
 }
 .lf-page,
@@ -4840,10 +4939,10 @@ body:not(:has(.home)) textarea:focus::placeholder {
 }
 .lf-goal > .lf-help-target {
   display: block;
-  margin-top: 0.8rem;
+  margin-top: 0;
 }
 .lf-goal > .lf-help-target > textarea {
-  min-height: 150px;
+  min-height: 135px;
   border-radius: 1.1rem;
   background: #fff;
   padding: 0.9rem 1rem;
@@ -4857,23 +4956,44 @@ body:not(:has(.home)) textarea:focus::placeholder {
 .lf-layout-minimal {
   grid-template-columns: minmax(360px, 0.82fr) minmax(520px, 1.18fr);
   align-items: start;
+  gap: clamp(1rem, 1.9vw, 1.75rem);
 }
 .lf-minimal-director {
   display: grid;
-  gap: 0.25rem;
+  gap: 0;
+  padding: clamp(0.85rem, 1.25vw, 1.15rem);
+}
+.lf-classic-tools {
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid #1112;
+}
+.lf-classic-tools .lf-session {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.45rem;
+}
+.lf-classic-tools .lf-session span,
+.lf-classic-tools .lf-help-toggle {
+  min-height: 30px !important;
+  padding: 0.35rem 0.58rem !important;
+  font-size: 0.54rem !important;
 }
 .lf-minimal-director .prompt-field-heading {
   align-items: center;
   gap: 0.75rem;
+  margin-bottom: 0.65rem;
 }
 .lf-minimal-director .lf-polish-brief {
   flex: 0 0 auto;
 }
 .lf-minimal-output {
   display: grid;
-  gap: 0.65rem;
-  margin-top: 1rem;
-  padding-top: 1rem;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+  padding-top: 0.75rem;
   border-top: 1px solid #1112;
 }
 .lf-minimal-output-grid {
@@ -4899,21 +5019,9 @@ body:not(:has(.home)) textarea:focus::placeholder {
   font-weight: 750;
 }
 .lf-format-row {
-  margin-top: 1rem;
-  padding-top: 0.9rem;
+  margin-top: 0.7rem;
+  padding-top: 0.7rem;
   border-top: 1px solid #1112;
-}
-.lf-format-top {
-  display: flex;
-  align-items: flex-start;
-  gap: 1.25rem;
-}
-.lf-format-main {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-.lf-format-duration {
-  flex: 0 0 auto;
 }
 .lf-format-heading {
   display: flex;
@@ -4934,40 +5042,32 @@ body:not(:has(.home)) textarea:focus::placeholder {
   letter-spacing: 0;
   text-transform: none;
 }
-.lf-duration-dial {
+.lf-minimal-duration {
   display: flex;
   align-items: center;
-  justify-content: center;
-  height: 72px;
-  margin-top: 0.5rem;
+  gap: 1rem;
+  width: 100%;
+  min-height: 48px;
   border: 1px solid #159d9133;
   border-radius: 0.9rem;
   background: #e8efec;
-  padding: 0 0.9rem;
+  padding: 0.55rem 1rem;
 }
-.lf-duration-track {
-  position: relative;
-  width: 24px;
-  height: 56px;
+.lf-minimal-duration .lf-format-heading {
   flex: 0 0 auto;
 }
-.lf-duration-track input[type="range"] {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 56px;
-  height: 22px;
+.lf-minimal-duration-slider {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
   margin: 0;
-  padding: 0;
-  background: transparent;
   accent-color: #159d91;
-  transform: translate(-50%, -50%) rotate(-90deg);
 }
 .lf-format-presets {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin: 0.5rem 0 0.75rem;
+  margin: 0.45rem 0 0.6rem;
 }
 .lf-format-preset {
   position: relative;
@@ -5028,16 +5128,6 @@ body:not(:has(.home)) textarea:focus::placeholder {
 .lf-format-preset.active small {
   color: #087f76;
 }
-@media (max-width: 620px) {
-  .lf-format-top {
-    flex-direction: column;
-  }
-  .lf-format-duration {
-    flex: 1 1 auto;
-    width: 100%;
-    padding-top: 0;
-  }
-}
 .lf-ultra-toggle {
   align-items: center;
 }
@@ -5053,13 +5143,13 @@ body:not(:has(.home)) textarea:focus::placeholder {
   font-weight: 600;
 }
 .lf-reference-panel {
-  margin-top: 1.2rem;
+  margin-top: 0.7rem;
   border-color: #1112;
   border-radius: 1rem;
   background: #f2f0eb;
 }
 .lf-reference-summary {
-  min-height: 62px;
+  min-height: 56px;
   background: transparent;
   color: #171717;
 }
@@ -5395,7 +5485,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
   justify-content: center;
   gap: 0.7rem;
   flex-wrap: wrap;
-  padding: 1rem 1rem 0.35rem;
+  padding: 0.85rem 1rem 0.2rem;
 }
 .lf-generate {
   width: min(100%, 430px);
@@ -5424,7 +5514,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
 }
 .lf-preview > header {
   align-items: center;
-  padding: 1.3rem 1.35rem;
+  padding: 1rem 1.15rem 0.85rem;
   border-color: #1112;
 }
 .lf-preview header h2 {
@@ -5454,7 +5544,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
   color: #646c68;
 }
 .lf-screen {
-  margin: 0 1.1rem;
+  margin: 0 0.9rem;
   border-color: #1112;
   border-radius: 1.15rem;
   background: #111;
@@ -5586,7 +5676,8 @@ body:not(:has(.home)) textarea:focus::placeholder {
   padding: 0.6rem 0.9rem;
 }
 .lf-stats {
-  gap: 0.5rem;
+  gap: 0.45rem;
+  padding: 0 0.9rem 0.85rem;
 }
 .lf-stats span {
   border-color: #1112;
@@ -6095,6 +6186,7 @@ body:not(:has(.home)) h1.editorial-page-title {
   border: 1px solid #1112;
   border-radius: 0.65rem;
   background: #d9d9d4;
+  cursor: zoom-in;
   object-fit: cover;
   box-shadow: 0 5px 14px #17433d18;
 }
@@ -6145,10 +6237,34 @@ body:not(:has(.home)) h1.editorial-page-title {
   opacity: 0;
   pointer-events: none;
 }
+.lf-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(4, 8, 8, 0.86);
+  padding: 2rem;
+  backdrop-filter: blur(12px);
+}
+.lf-image-lightbox img {
+  display: block;
+  max-width: min(1100px, 94vw);
+  max-height: 86vh;
+  border-radius: 14px;
+  object-fit: contain;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.45);
+}
+.lf-image-lightbox button {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 1;
+}
 .lf-upload > .lf-upload-remove {
   position: absolute;
   right: 0.55rem;
-  bottom: 0.45rem;
+  top: 0.55rem;
   z-index: 2;
   width: auto !important;
   height: auto !important;
@@ -6162,7 +6278,34 @@ body:not(:has(.home)) h1.editorial-page-title {
   font-weight: 850 !important;
 }
 .lf-upload.has-file > .lf-upload-drop {
-  padding-right: 4.5rem !important;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "copy remove"
+    "image image";
+  align-items: start;
+  min-height: 0;
+  padding: 0.7rem 4.8rem 0.7rem 0.7rem !important;
+}
+.lf-upload.has-file > .lf-upload-drop > img {
+  grid-area: image;
+  width: 100%;
+  height: auto;
+  min-height: 150px;
+  max-height: 260px;
+  aspect-ratio: 16 / 9;
+  border-radius: 0.75rem;
+}
+.lf-upload.has-file > .lf-upload-drop > .lf-upload-copy {
+  grid-area: copy;
+}
+.lf-upload.has-file > .lf-upload-drop > .lf-upload-copy strong {
+  font-size: 0.78rem;
+}
+.lf-upload.has-file > .lf-upload-drop > i {
+  grid-area: remove;
+  align-self: start;
+  justify-self: end;
+  padding-top: 0.08rem;
 }
 .lf-upload.compact > .lf-upload-drop {
   min-height: 48px;

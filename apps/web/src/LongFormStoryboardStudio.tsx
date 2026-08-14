@@ -187,7 +187,7 @@ const initialScenes: StoryboardScenePayload[] = [
     continuityOverrides: {},
     transition: "cut",
     transitionDuration: 0.75,
-    carryPreviousFrame: true,
+    carryPreviousFrame: false,
   },
   {
     id: "scene-2",
@@ -209,6 +209,97 @@ function seedScenes(isClassic: boolean): StoryboardScenePayload[] {
   const scenes = initialScenes.slice(0, isClassic ? 1 : initialScenes.length);
   return isClassic ? scenes.map((scene) => ({ ...scene, title: "" })) : scenes;
 }
+
+const formatPresets: Array<{
+  key: string;
+  label: string;
+  sublabel: string;
+  resolution: string;
+  fps: number;
+  platform: "youtube" | "tiktok" | "instagram";
+}> = [
+  {
+    key: "landscape",
+    label: "YouTube",
+    sublabel: "Landscape 16:9",
+    resolution: "1280x720",
+    fps: 24,
+    platform: "youtube",
+  },
+  {
+    key: "portrait",
+    label: "TikTok · Reels · Shorts",
+    sublabel: "Portrait 9:16",
+    resolution: "720x1280",
+    fps: 30,
+    platform: "tiktok",
+  },
+  {
+    key: "square",
+    label: "Instagram",
+    sublabel: "Square 1:1",
+    resolution: "1080x1080",
+    fps: 30,
+    platform: "instagram",
+  },
+];
+
+function SocialIcon({
+  platform,
+}: {
+  platform: "youtube" | "tiktok" | "instagram";
+}) {
+  if (platform === "youtube") {
+    return (
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="4.5" width="20" height="15" rx="4.5" fill="#FF0033" />
+        <path d="M10 8.6l6 3.4-6 3.4z" fill="#fff" />
+      </svg>
+    );
+  }
+  if (platform === "tiktok") {
+    return (
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="2" width="20" height="20" rx="6" fill="#0A0A0A" />
+        <path
+          d="M14.6 6.2c.5 1.4 1.6 2.4 3.1 2.6v2.2a5.3 5.3 0 0 1-3.1-1v4.6a4 4 0 1 1-4-4c.2 0 .4 0 .6.03v2.2a1.9 1.9 0 1 0 1.3 1.8V6.2h2.1z"
+          fill="#25F4EE"
+        />
+        <path
+          d="M14.1 6.2c.5 1.4 1.6 2.4 3.1 2.6v2.2a5.3 5.3 0 0 1-3.1-1v4.6a4 4 0 1 1-4-4c.2 0 .4 0 .6.03v2.2a1.9 1.9 0 1 0 1.3 1.8V6.2h2.1z"
+          fill="#FE2C55"
+          opacity="0.75"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="ig-grad" x1="0" y1="24" x2="24" y2="0">
+          <stop offset="0" stopColor="#FEDA75" />
+          <stop offset="0.35" stopColor="#FA7E1E" />
+          <stop offset="0.65" stopColor="#D62976" />
+          <stop offset="1" stopColor="#962FBF" />
+        </linearGradient>
+      </defs>
+      <rect x="2" y="2" width="20" height="20" rx="6" fill="url(#ig-grad)" />
+      <rect
+        x="6.5"
+        y="6.5"
+        width="11"
+        height="11"
+        rx="3.5"
+        stroke="#fff"
+        strokeWidth="1.6"
+        fill="none"
+      />
+      <circle cx="12" cy="12" r="3" stroke="#fff" strokeWidth="1.6" fill="none" />
+      <circle cx="16.3" cy="7.7" r="1" fill="#fff" />
+    </svg>
+  );
+}
+
 const DEFAULT_SCENE_SEED = 1337;
 const continuityFields = [
   ["characters", "Characters"],
@@ -1040,57 +1131,62 @@ export default function LongFormStoryboardStudio({
     form.scenes.every(
       (scene) => scene.acceptedVideoGenerationId && !scene.staleReason,
     );
+  const sessionControls = (
+    <div className="lf-session">
+      <button
+        type="button"
+        className="lf-help-toggle"
+        aria-pressed={helpMode}
+        onClick={() => setHelpMode((enabled) => !enabled)}
+        data-help="Turn contextual explanations off."
+      >
+        {helpMode ? "✦ Help on" : "? Help"}
+      </button>
+      <span
+        className={
+          runtime.isLoading
+            ? "lf-status-pending"
+            : runtime.data?.status === "healthy"
+              ? "lf-status-ok"
+              : "lf-status-down"
+        }
+        data-help="Shows whether the remote video-generation runtime is available."
+      >
+        {runtime.isLoading
+          ? "Checking generator"
+          : runtime.data?.status === "healthy"
+            ? "Generator connected"
+            : "Generator unavailable"}
+      </span>
+      {sessionStatus === "error" && (
+        <span
+          className="lf-session-save error"
+          data-help="Your brief, prompts, titles, settings and uploaded frame images could not be saved in this browser."
+        >
+          Session save unavailable
+        </span>
+      )}
+    </div>
+  );
 
   return (
     <main className={`lf-page ${helpMode ? "help-mode" : ""}`}>
-      <header className="lf-hero">
-        <div>
-          <h1 className="editorial-page-title lf-storyboard-title">
-            {isClassic ? "VideoLab" : "Storyboard Studio"}
-            <span className="editorial-title-stop">.</span>
-          </h1>
-          <p>
-            {isClassic
-              ? "Describe your scene in plain language and generate a complete cinematic video clip — camera movement, lighting and motion are planned automatically."
-              : "Direct a longer film scene by scene. Upload frame anchors where they matter; otherwise the runtime generates the opening and carries each real final frame into the next clip."}
-          </p>
-        </div>
-        <div className="lf-session">
-          <button
-            type="button"
-            className="lf-help-toggle"
-            aria-pressed={helpMode}
-            onClick={() => setHelpMode((enabled) => !enabled)}
-            data-help="Turn contextual explanations off."
-          >
-            {helpMode ? "✦ Help on" : "? Help"}
-          </button>
-          <span
-            className={
-              runtime.isLoading
-                ? "lf-status-pending"
-                : runtime.data?.status === "healthy"
-                  ? "lf-status-ok"
-                  : "lf-status-down"
-            }
-            data-help="Shows whether the remote video-generation runtime is available."
-          >
-            {runtime.isLoading
-              ? "Checking generator"
-              : runtime.data?.status === "healthy"
-                ? "Generator connected"
-                : "Generator unavailable"}
-          </span>
-          {sessionStatus === "error" && (
-            <span
-              className="lf-session-save error"
-              data-help="Your brief, prompts, titles, settings and uploaded frame images could not be saved in this browser."
-            >
-              Session save unavailable
-            </span>
-          )}
-        </div>
-      </header>
+      {!isClassic && (
+        <header className="lf-hero">
+          <div>
+            <h1 className="editorial-page-title lf-storyboard-title">
+              Storyboard Studio
+              <span className="editorial-title-stop">.</span>
+            </h1>
+            <p>
+              Direct a longer film scene by scene. Upload frame anchors where they
+              matter; otherwise the runtime generates the opening and carries each
+              real final frame into the next clip.
+            </p>
+          </div>
+          {sessionControls}
+        </header>
+      )}
       <div className={`lf-layout ${isClassic ? "lf-layout-minimal" : ""}`}>
         <div className="lf-controls">
           <section
@@ -1146,6 +1242,9 @@ export default function LongFormStoryboardStudio({
                 ? "Use everyday language. The Director can turn your idea into production-ready cinematic direction before you generate."
                 : "Set the visual and narrative rules for the whole film. Each scene then contributes one clear action and camera beat."}
             </p>
+            {isClassic && (
+              <div className="lf-classic-tools">{sessionControls}</div>
+            )}
             {isClassic && !sessionReady && (
               <p className="lf-minimal-session-state" role="status">
                 Opening your private project…
@@ -1262,11 +1361,57 @@ export default function LongFormStoryboardStudio({
                       ))}
                     </select>
                   </Field>
+                </div>
+                <div className="lf-format-row">
+                  <div className="lf-format-presets">
+                    {formatPresets.map((preset) => {
+                      const active = form.resolution === preset.resolution;
+                      return (
+                        <button
+                          key={preset.key}
+                          type="button"
+                          aria-pressed={active}
+                          disabled={!sessionReady}
+                          className={`lf-format-preset ${active ? "active" : ""}`}
+                          onClick={() =>
+                            setForm((current) =>
+                              markAcceptedClipsStale(
+                                {
+                                  ...current,
+                                  resolution: preset.resolution,
+                                  fps: preset.fps,
+                                },
+                                "The output format changed after this clip was accepted. Render this scene again before assembly.",
+                              ),
+                            )
+                          }
+                        >
+                          <SocialIcon platform={preset.platform} />
+                          <span>
+                            <strong>{preset.label}</strong>
+                            <small>{preset.sublabel}</small>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                   {form.scenes[0] && (
-                    <Field label="Length">
-                      <select
+                    <div className="lf-minimal-duration">
+                      <span className="lf-label lf-format-heading">
+                        Length
+                        <output className="lf-duration-value">
+                          {form.scenes[0].duration}
+                          <small>s</small>
+                        </output>
+                      </span>
+                      <input
+                        type="range"
+                        className="lf-minimal-duration-slider"
                         aria-label="Video length"
                         disabled={!sessionReady}
+                        min={1}
+                        max={8}
+                        step={1}
                         value={form.scenes[0].duration}
                         onChange={(event) => {
                           const value = Number(event.target.value);
@@ -1280,23 +1425,14 @@ export default function LongFormStoryboardStudio({
                               : form.scenes[0].staleReason,
                           });
                         }}
-                      >
-                        {Array.from({ length: 8 }, (_, index) => index + 1).map(
-                          (seconds) => (
-                            <option key={seconds} value={seconds}>
-                              {seconds} second{seconds === 1 ? "" : "s"}
-                            </option>
-                          ),
-                        )}
-                      </select>
-                    </Field>
+                      />
+                    </div>
                   )}
                 </div>
               </div>
             )}
           </section>
-          {!isClassic && (
-            <>
+          <>
               <ProjectReferencePanel
                 references={form.projectReferences}
                 sceneIds={form.scenes.map((scene) => scene.id)}
@@ -1370,8 +1506,7 @@ export default function LongFormStoryboardStudio({
                   />
                 ))}
               </section>
-            </>
-          )}
+          </>
         </div>
         <aside className="lf-preview-col">
           {!isClassic && (
@@ -1870,15 +2005,15 @@ export default function LongFormStoryboardStudio({
                       }
                     >
                       <option value="none">
-                        Draft â€” no delivery transform
+                        Draft — no delivery transform
                       </option>
                       <option value="interpolate">
-                        Review â€” smooth motion
+                        Review — smooth motion
                       </option>
                       <option value="upscale">
-                        Final â€” delivery upscale
+                        Final — delivery upscale
                       </option>
-                      <option value="both">Final â€” smooth + upscale</option>
+                      <option value="both">Final — smooth + upscale</option>
                     </select>
                   </Field>
                   <Field
@@ -2228,15 +2363,15 @@ function ProjectReferencePanel({
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="lf-reference-icon">â–§</span>
+        <span className="lf-reference-icon">▧</span>
         <span>
           <strong>Project references</strong>
           <small>
-            Characters, places, products, style and voice direction Â·{" "}
+            Characters, places, products, style and voice direction ·{" "}
             {references.length} saved
           </small>
         </span>
-        <b>{open ? "âŒƒ" : "âŒ„"}</b>
+        <b>{open ? "⌃" : "⌄"}</b>
       </button>
       {open && (
         <div className="lf-project-references">
@@ -2308,7 +2443,7 @@ function ProjectReferencePanel({
               disabled={busy || !label.trim()}
               onClick={() => void addReference()}
             >
-              {busy ? "Savingâ€¦" : "Add reference"}
+              {busy ? "Saving…" : "Add reference"}
             </button>
           </div>
           {error && (
@@ -2330,7 +2465,7 @@ function ProjectReferencePanel({
                   evidence={evidence}
                 />
                 <small>
-                  {reference.type} Â· version {reference.version}
+                  {reference.type} · version {reference.version}
                 </small>
                 {reference.assetVersionIds.length > 1 && (
                   <select
@@ -3291,7 +3426,7 @@ function SceneCandidateVideo({
   if (generation.isLoading)
     return (
       <article className="lf-candidate-card">
-        Loading {label.toLowerCase()}â€¦
+        Loading {label.toLowerCase()}…
       </article>
     );
   if (
@@ -3385,6 +3520,7 @@ function UploadBox({
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
   useEffect(() => {
     if (!file) {
       setPreview("");
@@ -3432,7 +3568,17 @@ function UploadBox({
         onClick={() => inputRef.current?.click()}
       >
         {preview && !compact ? (
-          <img src={preview} alt={`${label} preview`} />
+          <img
+            src={preview}
+            alt={`${label} preview`}
+            title="Double-click to preview"
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setPreviewOpen(true);
+            }}
+          />
         ) : (
           <span aria-hidden="true" className="lf-upload-icon">
             <svg
@@ -3462,9 +3608,7 @@ function UploadBox({
         )}
         <span className="lf-upload-copy">
           <strong>{label}</strong>
-          <small>
-            {file?.name ?? "Drag and drop an image, or click to browse"}
-          </small>
+          {!file && <small>Click to browse or drop an image</small>}
         </span>
         <i>{file ? "Replace" : "+"}</i>
       </button>
@@ -3488,6 +3632,28 @@ function UploadBox({
         >
           Remove
         </button>
+      )}
+      {previewOpen && preview && (
+        <div
+          className="lf-image-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${label} preview`}
+          onMouseDown={() => setPreviewOpen(false)}
+        >
+          <button
+            type="button"
+            aria-label="Close image preview"
+            onClick={() => setPreviewOpen(false)}
+          >
+            Close
+          </button>
+          <img
+            src={preview}
+            alt={`${label} full preview`}
+            onMouseDown={(event) => event.stopPropagation()}
+          />
+        </div>
       )}
     </div>
   );

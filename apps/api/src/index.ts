@@ -4525,9 +4525,35 @@ async function processQueueItem(workerId = "local-worker") {
     };
     gens.set(g.id, preparing);
     await persistGeneration(preparing);
-    const sub = await runtime.submitGeneration(
-      await runtimeGeneration(preparing),
-    );
+    const runtimeInput = await runtimeGeneration(preparing);
+    log("generation_runtime_payload_shape", {
+      generationId: g.id,
+      operationScope: (runtimeInput.settings as { operationScope?: unknown })
+        .operationScope,
+      videoModel: (runtimeInput.settings as { videoModel?: unknown })
+        .videoModel,
+      durationSeconds: (runtimeInput.settings as { durationSeconds?: unknown })
+        .durationSeconds,
+      sceneCount: Array.isArray(
+        (runtimeInput.settings as { storyboard?: unknown[] }).storyboard,
+      )
+        ? (runtimeInput.settings as { storyboard: unknown[] }).storyboard
+            .length
+        : 0,
+      scenes: (
+        (runtimeInput.settings as { storyboard?: unknown[] }).storyboard ?? []
+      ).map((scene, index) => {
+        const s = scene as Record<string, unknown>;
+        return {
+          index,
+          durationSeconds: s.duration,
+          carryPreviousFrame: s.carryPreviousFrame,
+          transition: s.transition,
+          keyframeCount: Array.isArray(s.keyframes) ? s.keyframes.length : 0,
+        };
+      }),
+    });
+    const sub = await runtime.submitGeneration(runtimeInput);
     const submitted: StoredGeneration = {
       ...preparing,
       runtimeJobId: sub.runtimeJobId,

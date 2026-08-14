@@ -77,7 +77,7 @@ function newScene(index: number, globalSeed = 1337): StoryboardScenePayload {
     continuityOverrides: {},
     transition: index === 0 ? "cut" : "crossfade",
     transitionDuration: 0.75,
-    carryPreviousFrame: true,
+    carryPreviousFrame: index > 0,
   };
 }
 
