@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BrowserRouter,
@@ -1009,6 +1009,7 @@ function GalleryCard({
   onDelete: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
   const promptNeedsToggle = generation.prompt.length > 190;
   const requestDelete = () => {
     const confirmed = window.confirm(
@@ -1018,7 +1019,10 @@ function GalleryCard({
   };
   return (
     <article className="card gallery-card">
-      <GalleryArtifact generation={generation} />
+      <GalleryArtifact
+        generation={generation}
+        onOpen={() => setEditorOpen(true)}
+      />
       <button
         className="gallery-delete"
         type="button"
@@ -1060,10 +1064,22 @@ function GalleryCard({
           Open details
         </Link>
       </div>
+      {editorOpen && (
+        <GalleryVideoEditor
+          generation={generation}
+          onClose={() => setEditorOpen(false)}
+        />
+      )}
     </article>
   );
 }
-function GalleryArtifact({ generation }: { generation: Generation }) {
+function GalleryArtifact({
+  generation,
+  onOpen,
+}: {
+  generation: Generation;
+  onOpen: () => void;
+}) {
   const video = useAuthenticatedVideo(generation.output?.downloadUrl);
   const storageKey = `vl_thumbnail_${generation.id}`;
   const [thumbnail, setThumbnail] = useState(
@@ -1163,10 +1179,16 @@ function GalleryArtifact({ generation }: { generation: Generation }) {
 
   if (thumbnail) {
     return (
-      <div className="gallery-media gallery-thumbnail">
+      <button
+        className="gallery-media gallery-thumbnail gallery-media-button"
+        type="button"
+        onDoubleClick={onOpen}
+        aria-label="Open video preview editor"
+        title="Double-click to preview and trim"
+      >
         <img src={thumbnail} alt="Video thumbnail" />
         <span aria-hidden="true" />
-      </div>
+      </button>
     );
   }
   if (video.error) {
@@ -1183,6 +1205,220 @@ function GalleryArtifact({ generation }: { generation: Generation }) {
       ) : (
         generation.status
       )}
+    </div>
+  );
+}
+
+function GalleryVideoEditor({
+  generation,
+  onClose,
+}: {
+  generation: Generation;
+  onClose: () => void;
+}) {
+  const video = useAuthenticatedVideo(generation.output?.downloadUrl);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [duration, setDuration] = useState(0);
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(0);
+  const [appliedStart, setAppliedStart] = useState(0);
+  const [appliedEnd, setAppliedEnd] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const [editorError, setEditorError] = useState<string>();
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  const formatTime = (value: number) => {
+    if (!Number.isFinite(value)) return "0:00";
+    const minutes = Math.floor(value / 60);
+    const seconds = Math.floor(value % 60);
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  };
+  const selectedDuration = Math.max(0, trimEnd - trimStart);
+  const leftPercent = duration ? (trimStart / duration) * 100 : 0;
+  const rightPercent = duration ? 100 - (trimEnd / duration) * 100 : 0;
+
+  const seek = (value: number) => {
+    const element = videoRef.current;
+    if (!element) return;
+    element.currentTime = Math.max(0, Math.min(duration || 0, value));
+  };
+  const play = () => {
+    const element = videoRef.current;
+    if (!element) return;
+    if (element.currentTime < appliedStart || element.currentTime >= appliedEnd) {
+      element.currentTime = appliedStart;
+    }
+    void element.play();
+  };
+  const stop = () => {
+    const element = videoRef.current;
+    if (!element) return;
+    element.pause();
+    element.currentTime = appliedStart;
+  };
+  const applyCut = () => {
+    setAppliedStart(trimStart);
+    setAppliedEnd(trimEnd);
+    seek(trimStart);
+  };
+  const downloadEditedClip = async () => {
+    const element = videoRef.current as
+      | (HTMLVideoElement & {
+          captureStream?: () => MediaStream;
+          mozCaptureStream?: () => MediaStream;
+        })
+      | null;
+    if (!element) return;
+    const stream = element.captureStream?.() ?? element.mozCaptureStream?.();
+    if (!stream || typeof MediaRecorder === "undefined") {
+      setEditorError("This browser cannot export a trimmed video from the preview.");
+      return;
+    }
+    setEditorError(undefined);
+    setExporting(true);
+    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+      ? "video/webm;codecs=vp9"
+      : MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
+        ? "video/webm;codecs=vp8"
+        : "video/webm";
+    const chunks: BlobPart[] = [];
+    const recorder = new MediaRecorder(stream, { mimeType });
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    };
+    const finished = new Promise<void>((resolve) => {
+      recorder.onstop = () => resolve();
+    });
+    element.muted = true;
+    element.currentTime = trimStart;
+    recorder.start();
+    await element.play();
+    window.setTimeout(
+      () => {
+        element.pause();
+        if (recorder.state !== "inactive") recorder.stop();
+      },
+      Math.max(250, selectedDuration * 1000),
+    );
+    await finished;
+    const blob = new Blob(chunks, { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${generation.id}-trimmed.webm`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setExporting(false);
+  };
+
+  return (
+    <div className="gallery-editor-backdrop" role="dialog" aria-modal="true">
+      <section className="gallery-editor">
+        <header>
+          <div>
+            <span className="gallery-eyebrow">Preview edit</span>
+            <h2>{generation.prompt}</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close editor">
+            ×
+          </button>
+        </header>
+        <div className="gallery-editor-screen">
+          {video.objectUrl ? (
+            <video
+              ref={videoRef}
+              src={video.objectUrl}
+              playsInline
+              onLoadedMetadata={(event) => {
+                const length = event.currentTarget.duration || 0;
+                setDuration(length);
+                setTrimStart(0);
+                setTrimEnd(length);
+                setAppliedStart(0);
+                setAppliedEnd(length);
+              }}
+              onTimeUpdate={(event) => {
+                if (event.currentTarget.currentTime >= appliedEnd) {
+                  event.currentTarget.pause();
+                  event.currentTarget.currentTime = appliedEnd;
+                }
+              }}
+            />
+          ) : (
+            <div className="thumb big">
+              {video.error ? `Video unavailable: ${video.error}` : <VideoRetrievalMark />}
+            </div>
+          )}
+        </div>
+        <div className="gallery-editor-controls">
+          <button type="button" onClick={() => seek((videoRef.current?.currentTime ?? 0) - 5)}>
+            ◀◀
+          </button>
+          <button type="button" onClick={play}>
+            ▶
+          </button>
+          <button type="button" onClick={stop}>
+            ■
+          </button>
+          <button type="button" onClick={() => seek((videoRef.current?.currentTime ?? 0) + 5)}>
+            ▶▶
+          </button>
+        </div>
+        <div className="gallery-trim">
+          <div className="gallery-trim-track">
+            <span style={{ left: `${leftPercent}%`, right: `${rightPercent}%` }} />
+            <input
+              type="range"
+              min={0}
+              max={duration || 0}
+              step={0.05}
+              value={trimStart}
+              onChange={(event) => {
+                const value = Math.min(Number(event.target.value), trimEnd - 0.1);
+                setTrimStart(Math.max(0, value));
+                seek(Math.max(0, value));
+              }}
+            />
+            <input
+              type="range"
+              min={0}
+              max={duration || 0}
+              step={0.05}
+              value={trimEnd}
+              onChange={(event) => {
+                const value = Math.max(Number(event.target.value), trimStart + 0.1);
+                setTrimEnd(Math.min(duration, value));
+                seek(Math.min(duration, value));
+              }}
+            />
+          </div>
+          <div className="gallery-trim-readout">
+            <span>Start {formatTime(trimStart)}</span>
+            <strong>{formatTime(selectedDuration)}</strong>
+            <span>End {formatTime(trimEnd)}</span>
+          </div>
+        </div>
+        {editorError && <p className="error">{editorError}</p>}
+        <footer>
+          <button type="button" onClick={applyCut} disabled={!duration}>
+            Cut
+          </button>
+          <button
+            type="button"
+            onClick={() => void downloadEditedClip()}
+            disabled={!duration || exporting || selectedDuration <= 0}
+          >
+            {exporting ? "Exporting…" : "Download edit"}
+          </button>
+        </footer>
+      </section>
     </div>
   );
 }
