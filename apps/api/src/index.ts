@@ -1566,6 +1566,97 @@ async function readGenerationOutputBytes(g: StoredGeneration) {
   return bytes;
 }
 
+async function sendStoredOutput(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+  source:
+    | { bytes: Buffer | Uint8Array; contentType: string; fileName: string }
+    | { objectPath: string; contentType: string; fileName: string },
+) {
+  const contentType = source.contentType || "application/octet-stream";
+  const inline = contentType.startsWith("video/") || contentType.startsWith("image/");
+  res
+    .type(contentType)
+    .setHeader(
+      "Content-Disposition",
+      `${inline ? "inline" : "attachment"}; filename="${source.fileName}"`,
+    )
+    .setHeader("Cache-Control", "private,no-store")
+    .setHeader("Accept-Ranges", "bytes");
+
+  if ("bytes" in source) {
+    const bytes = Buffer.from(source.bytes);
+    const range = req.headers.range;
+    if (range) {
+      const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+      if (match) {
+        const start = match[1] ? Number(match[1]) : 0;
+        const end = match[2] ? Number(match[2]) : bytes.length - 1;
+        if (
+          Number.isInteger(start) &&
+          Number.isInteger(end) &&
+          start >= 0 &&
+          end >= start &&
+          start < bytes.length
+        ) {
+          const boundedEnd = Math.min(end, bytes.length - 1);
+          res
+            .status(206)
+            .setHeader("Content-Range", `bytes ${start}-${boundedEnd}/${bytes.length}`)
+            .setHeader("Content-Length", boundedEnd - start + 1);
+          return res.send(bytes.subarray(start, boundedEnd + 1));
+        }
+      }
+      res.status(416).setHeader("Content-Range", `bytes */${bytes.length}`);
+      return res.end();
+    }
+    res.setHeader("Content-Length", bytes.length);
+    return res.send(bytes);
+  }
+
+  adminApp();
+  const file = getStorage().bucket().file(source.objectPath);
+  const [exists] = await file.exists();
+  if (!exists)
+    throw problem(
+      404,
+      "output_not_available",
+      "Generation output is not available for download",
+    );
+  const [metadata] = await file.getMetadata();
+  const size = Number(metadata.size ?? 0);
+  const range = req.headers.range;
+  if (range && Number.isFinite(size) && size > 0) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (match) {
+      const start = match[1] ? Number(match[1]) : 0;
+      const end = match[2] ? Number(match[2]) : size - 1;
+      if (
+        Number.isInteger(start) &&
+        Number.isInteger(end) &&
+        start >= 0 &&
+        end >= start &&
+        start < size
+      ) {
+        const boundedEnd = Math.min(end, size - 1);
+        res
+          .status(206)
+          .setHeader("Content-Range", `bytes ${start}-${boundedEnd}/${size}`)
+          .setHeader("Content-Length", boundedEnd - start + 1);
+        return file
+          .createReadStream({ start, end: boundedEnd })
+          .on("error", next)
+          .pipe(res);
+      }
+    }
+    res.status(416).setHeader("Content-Range", `bytes */${size}`);
+    return res.end();
+  }
+  if (Number.isFinite(size) && size > 0) res.setHeader("Content-Length", size);
+  return file.createReadStream().on("error", next).pipe(res);
+}
+
 function parseTrimSeconds(value: unknown, field: string) {
   const seconds = Number(value);
   if (!Number.isFinite(seconds) || seconds < 0 || seconds > 60 * 60) {
@@ -4406,33 +4497,27 @@ app.get("/v1/generations/:id/download", auth, async (req, res, next) => {
           ? "jpg"
           : g.outputContentType === "image/webp"
             ? "webp"
-            : g.outputContentType === "video/webm"
-              ? "webm"
-              : "mp4";
-    res
-      .type(g.outputContentType ?? "video/mp4")
-      .setHeader(
-        "Content-Disposition",
-        `attachment; filename="${g.id}.${extension}"`,
-      )
-      .setHeader("Cache-Control", "private,no-store");
-    if (g.outputBytes) return res.send(Buffer.from(g.outputBytes));
+        : g.outputContentType === "video/webm"
+          ? "webm"
+          : "mp4";
+    const contentType = g.outputContentType ?? g.output?.contentType ?? "video/mp4";
+    if (g.outputBytes)
+      return await sendStoredOutput(req, res, next, {
+        bytes: g.outputBytes,
+        contentType,
+        fileName: `${g.id}.${extension}`,
+      });
     if (!g.outputObjectPath)
       throw problem(
         404,
         "output_not_available",
         "Generation output is not available for download",
       );
-    adminApp();
-    const file = getStorage().bucket().file(g.outputObjectPath);
-    const [exists] = await file.exists();
-    if (!exists)
-      throw problem(
-        404,
-        "output_not_available",
-        "Generation output is not available for download",
-      );
-    file.createReadStream().on("error", next).pipe(res);
+    return await sendStoredOutput(req, res, next, {
+      objectPath: g.outputObjectPath,
+      contentType,
+      fileName: `${g.id}.${extension}`,
+    });
   } catch (e) {
     next(e);
   }
@@ -4557,19 +4642,19 @@ app.get("/v1/generations/:id/edits/:editId/download", auth, async (req, res, nex
       edit.status !== "completed"
     )
       throw problem(404, "not_found", "Generation edit not found");
-    res
-      .type("video/mp4")
-      .setHeader("Content-Disposition", `attachment; filename="${edit.id}.mp4"`)
-      .setHeader("Cache-Control", "private,no-store");
-    if (edit.outputBytes) return res.send(Buffer.from(edit.outputBytes));
+    if (edit.outputBytes)
+      return await sendStoredOutput(req, res, next, {
+        bytes: edit.outputBytes,
+        contentType: "video/mp4",
+        fileName: `${edit.id}.mp4`,
+      });
     if (!edit.outputObjectPath)
       throw problem(404, "output_not_available", "Edited video is not available for download");
-    adminApp();
-    const file = getStorage().bucket().file(edit.outputObjectPath);
-    const [exists] = await file.exists();
-    if (!exists)
-      throw problem(404, "output_not_available", "Edited video is not available for download");
-    file.createReadStream().on("error", next).pipe(res);
+    return await sendStoredOutput(req, res, next, {
+      objectPath: edit.outputObjectPath,
+      contentType: "video/mp4",
+      fileName: `${edit.id}.mp4`,
+    });
   } catch (e) {
     next(e);
   }

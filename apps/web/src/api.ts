@@ -58,7 +58,10 @@ export async function fetchGenerationOutput(downloadUrl: string) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.detail ?? body.title ?? response.statusText);
   }
-  return response.blob();
+  const blob = await response.blob();
+  const contentType = response.headers.get("content-type") ?? "";
+  if (blob.type || !contentType) return blob;
+  return new Blob([blob], { type: contentType });
 }
 
 export type GenerationEdit = {
