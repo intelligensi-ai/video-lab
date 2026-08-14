@@ -1285,11 +1285,54 @@ function GalleryVideoEditor({
   const selectedDuration = Math.max(0, trimEnd - trimStart);
   const leftPercent = duration ? (trimStart / duration) * 100 : 0;
   const rightPercent = duration ? 100 - (trimEnd / duration) * 100 : 0;
+  const minTrimGap = duration > 0 ? Math.min(0.1, duration) : 0;
 
   const seek = (value: number) => {
     const element = videoRef.current;
     if (!element) return;
     element.currentTime = Math.max(0, Math.min(duration || 0, value));
+  };
+  const setTrimPoint = (edge: "start" | "end", value: number) => {
+    if (!duration) return;
+    if (edge === "start") {
+      const next = Math.max(0, Math.min(value, trimEnd - minTrimGap));
+      setTrimStart(next);
+      seek(next);
+      return;
+    }
+    const next = Math.min(duration, Math.max(value, trimStart + minTrimGap));
+    setTrimEnd(next);
+    seek(next);
+  };
+  const trackValueFromPointer = (
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position = (event.clientX - rect.left) / rect.width;
+    return Math.max(0, Math.min(duration, position * duration));
+  };
+  const startHandleDrag = (
+    edge: "start" | "end",
+    event: React.PointerEvent<HTMLButtonElement>,
+  ) => {
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const track = handle.closest<HTMLDivElement>(".gallery-trim-track");
+    if (!track || !duration) return;
+    handle.setPointerCapture(event.pointerId);
+    const update = (clientX: number) => {
+      const rect = track.getBoundingClientRect();
+      const position = (clientX - rect.left) / rect.width;
+      setTrimPoint(edge, Math.max(0, Math.min(duration, position * duration)));
+    };
+    update(event.clientX);
+    const onPointerMove = (moveEvent: PointerEvent) => update(moveEvent.clientX);
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp, { once: true });
   };
   const play = () => {
     const element = videoRef.current;
@@ -1412,32 +1455,50 @@ function GalleryVideoEditor({
           </button>
         </div>
         <div className="gallery-trim">
-          <div className="gallery-trim-track">
-            <span style={{ left: `${leftPercent}%`, right: `${rightPercent}%` }} />
-            <input
-              type="range"
-              min={0}
-              max={duration || 0}
-              step={0.05}
-              value={trimStart}
-              onChange={(event) => {
-                const value = Math.min(Number(event.target.value), trimEnd - 0.1);
-                setTrimStart(Math.max(0, value));
-                seek(Math.max(0, value));
-              }}
+          <div
+            className="gallery-trim-track"
+            role="group"
+            aria-label="Trim start and end"
+            onPointerDown={(event) => {
+              if (event.target !== event.currentTarget || !duration) return;
+              const value = trackValueFromPointer(event);
+              const edge =
+                Math.abs(value - trimStart) <= Math.abs(value - trimEnd)
+                  ? "start"
+                  : "end";
+              setTrimPoint(edge, value);
+            }}
+          >
+            <span
+              className="gallery-trim-selection"
+              style={{ left: `${leftPercent}%`, right: `${rightPercent}%` }}
             />
-            <input
-              type="range"
-              min={0}
-              max={duration || 0}
-              step={0.05}
-              value={trimEnd}
-              onChange={(event) => {
-                const value = Math.max(Number(event.target.value), trimStart + 0.1);
-                setTrimEnd(Math.min(duration, value));
-                seek(Math.min(duration, value));
+            <button
+              type="button"
+              className="gallery-trim-handle start"
+              style={{ left: `${leftPercent}%` }}
+              aria-label={`Trim start ${formatTime(trimStart)}`}
+              onPointerDown={(event) => startHandleDrag("start", event)}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft") setTrimPoint("start", trimStart - 0.05);
+                if (event.key === "ArrowRight") setTrimPoint("start", trimStart + 0.05);
               }}
-            />
+            >
+              <span>Start</span>
+            </button>
+            <button
+              type="button"
+              className="gallery-trim-handle end"
+              style={{ left: `${100 - rightPercent}%` }}
+              aria-label={`Trim end ${formatTime(trimEnd)}`}
+              onPointerDown={(event) => startHandleDrag("end", event)}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft") setTrimPoint("end", trimEnd - 0.05);
+                if (event.key === "ArrowRight") setTrimPoint("end", trimEnd + 0.05);
+              }}
+            >
+              <span>End</span>
+            </button>
           </div>
           <div className="gallery-trim-readout">
             <span>Start {formatTime(trimStart)}</span>
