@@ -9,7 +9,6 @@ import {
   sendPasswordResetEmail,
   signInAnonymously,
   signInWithEmailAndPassword,
-  signInWithPopup,
   signInWithRedirect,
   signOut,
   updateProfile,
@@ -67,17 +66,7 @@ export async function signInWithGoogle() {
   if (!firebaseAuth) throw new Error('Firebase Auth is not configured');
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
-  try {
-    // Start the popup directly inside the click handler. Waiting for anonymous
-    // auth first loses the browser's user gesture and triggers popup blockers.
-    return (await signInWithPopup(firebaseAuth, provider)).user;
-  } catch (error) {
-    if ((error as { code?: string }).code === 'auth/popup-blocked') {
-      await signInWithRedirect(firebaseAuth, provider);
-      return;
-    }
-    throw error;
-  }
+  await signInWithRedirect(firebaseAuth, provider);
 }
 
 export async function registerWithEmail(name: string, email: string, password: string) {
@@ -107,6 +96,10 @@ export async function completeGoogleRedirectSignIn() {
 export function getFriendlyAuthError(error: unknown) {
   const code = (error as { code?: string }).code;
   const message = error instanceof Error ? error.message : "";
+  const customData =
+    error && typeof error === "object" && "customData" in error
+      ? JSON.stringify((error as { customData?: unknown }).customData)
+      : "";
   if (code === 'auth/unauthorized-domain') {
     return 'Google sign-in is not authorised for this domain. Please contact Video Lab support.';
   }
@@ -114,7 +107,7 @@ export function getFriendlyAuthError(error: unknown) {
     return 'Sign-in could not connect. Check your connection and try again.';
   }
   if (code === 'auth/internal-error') {
-    return `Firebase sign-in failed internally${message ? `: ${message}` : ""}`;
+    return `Firebase sign-in failed internally${message ? `: ${message}` : ""}${customData ? ` ${customData}` : ""}`;
   }
   if (code === 'auth/account-exists-with-different-credential') {
     return 'An account already exists with this email using another sign-in method.';
