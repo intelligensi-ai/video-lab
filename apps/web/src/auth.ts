@@ -34,8 +34,14 @@ let signInPromise: Promise<User> | undefined;
 async function ensureUser() {
   if (!firebaseAuth) throw new Error('Firebase Auth is not configured');
   // Firebase restores a persisted Google session asynchronously. Waiting here
-  // prevents an eager API request from creating an anonymous user first and
-  // replacing the restored account.
+  // prevents API requests from racing ahead of the restored account.
+  await firebaseAuth.authStateReady();
+  if (firebaseAuth.currentUser) return firebaseAuth.currentUser;
+  throw new Error('Sign in to continue.');
+}
+
+export async function ensureAnonymousUser() {
+  if (!firebaseAuth) throw new Error('Firebase Auth is not configured');
   await firebaseAuth.authStateReady();
   if (firebaseAuth.currentUser) return firebaseAuth.currentUser;
   if (!signInPromise) {
@@ -102,6 +108,9 @@ export function getFriendlyAuthError(error: unknown) {
   if (code === 'auth/network-request-failed') {
     return 'Sign-in could not connect. Check your connection and try again.';
   }
+  if (code === 'auth/internal-error') {
+    return 'Firebase sign-in failed internally. Refresh the page and try again; if it continues, use email login while we check the Firebase provider settings.';
+  }
   if (code === 'auth/account-exists-with-different-credential') {
     return 'An account already exists with this email using another sign-in method.';
   }
@@ -132,7 +141,6 @@ export async function signOutUser() {
     return;
   }
   await signOut(firebaseAuth);
-  await ensureUser();
 }
 
 export function observeAuth(callback: (user: User | null) => void) {
