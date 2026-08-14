@@ -957,6 +957,7 @@ function Landing() {
   );
 }
 function Gallery() {
+  const [editingGeneration, setEditingGeneration] = useState<Generation>();
   const q = useQuery({
     queryKey: ["gallery"],
     queryFn: () => api<{ items: Generation[] }>("/v1/gallery"),
@@ -1002,6 +1003,7 @@ function Gallery() {
               key={g.id}
               deleting={deletion.variables === g.id && deletion.isPending}
               onDelete={(id) => deletion.mutate(id)}
+              onOpenEditor={setEditingGeneration}
             />
           ))
         ) : (
@@ -1012,6 +1014,12 @@ function Gallery() {
           </p>
         )}
       </div>
+      {editingGeneration && (
+        <GalleryVideoEditor
+          generation={editingGeneration}
+          onClose={() => setEditingGeneration(undefined)}
+        />
+      )}
     </main>
   );
 }
@@ -1019,13 +1027,14 @@ function GalleryCard({
   generation,
   deleting,
   onDelete,
+  onOpenEditor,
 }: {
   generation: Generation;
   deleting: boolean;
   onDelete: (id: string) => void;
+  onOpenEditor: (generation: Generation) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [editorOpen, setEditorOpen] = useState(false);
   const promptNeedsToggle = generation.prompt.length > 190;
   const requestDelete = () => {
     const confirmed = window.confirm(
@@ -1037,7 +1046,7 @@ function GalleryCard({
     <article className="card gallery-card">
       <GalleryArtifact
         generation={generation}
-        onOpen={() => setEditorOpen(true)}
+        onOpen={() => onOpenEditor(generation)}
       />
       <button
         className="gallery-delete"
@@ -1080,12 +1089,6 @@ function GalleryCard({
           Open details
         </Link>
       </div>
-      {editorOpen && (
-        <GalleryVideoEditor
-          generation={generation}
-          onClose={() => setEditorOpen(false)}
-        />
-      )}
     </article>
   );
 }
