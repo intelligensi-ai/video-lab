@@ -1220,16 +1220,21 @@ function GalleryArtifact({
 
   if (isVideo && thumbnail) {
     return (
-      <button
-        className="gallery-media gallery-thumbnail gallery-media-button"
-        type="button"
-        onDoubleClick={onOpen}
-        aria-label="Open video preview editor"
-        title="Double-click to preview and trim"
-      >
+      <div className="gallery-media gallery-thumbnail">
         <img src={thumbnail} alt="Video thumbnail" />
-        <span aria-hidden="true" />
-      </button>
+        <button
+          className="gallery-edit-button"
+          type="button"
+          onClick={onOpen}
+          aria-label="Edit and trim video"
+          title="Edit and trim"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+          </svg>
+        </button>
+      </div>
     );
   }
   if (media.error) {
@@ -1558,7 +1563,6 @@ function Detail() {
                 controls
                 playsInline
                 preload="metadata"
-                onDoubleClick={() => setEditorOpen(true)}
               />
             ) : isFrame && media.objectUrl ? (
               <img
@@ -1581,8 +1585,16 @@ function Detail() {
             )}
             <div className="generation-detail-actions">
               {isVideo && media.objectUrl && (
-                <button type="button" onClick={() => setEditorOpen(true)}>
-                  Edit / trim
+                <button
+                  type="button"
+                  className="generation-edit-action"
+                  onClick={() => setEditorOpen(true)}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                  <span>Edit trim</span>
                 </button>
               )}
               {media.objectUrl && (
