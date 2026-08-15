@@ -5235,6 +5235,7 @@ export const api =
     : (await import("firebase-functions/v2/https")).onRequest(
         {
           timeoutSeconds: 3600,
+          memory: "1GiB",
           maxInstances: 1,
           secrets: [
             (await import("firebase-functions/params")).defineSecret(

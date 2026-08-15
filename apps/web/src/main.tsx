@@ -1403,7 +1403,6 @@ function GalleryVideoEditor({
         <header>
           <div>
             <span className="gallery-eyebrow">Preview edit</span>
-            <h2>{generation.prompt}</h2>
           </div>
           <button type="button" onClick={onClose} aria-label="Close editor">
             ×
@@ -1447,8 +1446,8 @@ function GalleryVideoEditor({
           <button type="button" onClick={play}>
             ▶
           </button>
-          <button type="button" onClick={stop}>
-            ■
+          <button type="button" onClick={stop} aria-label="Stop">
+            <span className="gallery-stop-icon" aria-hidden="true" />
           </button>
           <button type="button" onClick={() => seek((videoRef.current?.currentTime ?? 0) + 5)}>
             ▶▶
