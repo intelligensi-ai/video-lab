@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { app, processOne } from "../../apps/api/src/index.js";
 
@@ -135,6 +135,48 @@ describe("durable asynchronous storyboard jobs", () => {
       stage: "completed",
     });
     expect(completed.body.result.shots).toHaveLength(2);
+  });
+
+  it("keeps a queued job recoverable beyond Firebase Hosting's request window", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const owner = "async-hosting-window-owner";
+      const key = "enhancement-hosting-window-0001";
+      vi.setSystemTime(new Date("2026-08-16T12:00:00.000Z"));
+      const submitted = await request(app)
+        .post("/v1/storyboard-enhancements")
+        .set("authorization", `Bearer ${owner}`)
+        .set("idempotency-key", key)
+        .send(enhancementBody(2))
+        .expect(202);
+
+      vi.setSystemTime(new Date("2026-08-16T12:01:05.000Z"));
+      const recovered = await request(app)
+        .get(`/v1/storyboard-enhancements/${submitted.body.id}`)
+        .set("authorization", `Bearer ${owner}`)
+        .expect(200);
+      expect(recovered.body).toMatchObject({
+        id: submitted.body.id,
+        status: "queued",
+        stage: "queued",
+      });
+
+      const replay = await request(app)
+        .post("/v1/storyboard-enhancements")
+        .set("authorization", `Bearer ${owner}`)
+        .set("idempotency-key", key)
+        .send(enhancementBody(2))
+        .expect(202);
+      expect(replay.body.id).toBe(submitted.body.id);
+
+      await request(app)
+        .post(`/v1/storyboard-enhancements/${submitted.body.id}/cancel`)
+        .set("authorization", `Bearer ${owner}`)
+        .send({})
+        .expect(200);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("fails closed for conflicting replays and cross-user status requests", async () => {

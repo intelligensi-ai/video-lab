@@ -35,7 +35,7 @@ The following is the recommended Windows PowerShell quick start. It launches
 the web app and API without using paid infrastructure:
 
 ```powershell
-cd "E:\OneDrive\Back-up\Projects\Project_Intelligensi\Video-Lab"
+cd "\Video-Lab"
 
 corepack enable
 corepack prepare pnpm@10.28.1 --activate
