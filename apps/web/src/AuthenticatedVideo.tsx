@@ -33,9 +33,23 @@ export function useAuthenticatedVideo(downloadUrl?: string) {
   return { objectUrl, error };
 }
 
+export function VideoRetrievalMark({
+  compact = false,
+}: {
+  compact?: boolean;
+}) {
+  return (
+    <div className={compact ? "video-retrieval-mark compact" : "video-retrieval-mark"} aria-label="Retrieving video">
+      <span aria-hidden="true">
+        <img src="/fav-icon.png" alt="" />
+      </span>
+    </div>
+  );
+}
+
 export function AuthenticatedVideo({ downloadUrl, className }: { downloadUrl: string; className?: string }) {
   const video = useAuthenticatedVideo(downloadUrl);
   if (video.error) return <p className="error">Video retrieval failed: {video.error}</p>;
-  if (!video.objectUrl) return <div className="thumb big">Retrieving completed video…</div>;
+  if (!video.objectUrl) return <VideoRetrievalMark />;
   return <video className={className} src={video.objectUrl} controls />;
 }

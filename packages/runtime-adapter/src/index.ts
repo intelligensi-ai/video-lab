@@ -332,6 +332,58 @@ export interface RuntimeOutput {
   durationSeconds: number;
 }
 
+function asciiAt(bytes: Uint8Array, start: number, length: number) {
+  if (bytes.length < start + length) return "";
+  return Array.from(bytes.slice(start, start + length))
+    .map((byte) => String.fromCharCode(byte))
+    .join("");
+}
+
+function hasImageSignature(bytes: Uint8Array, contentType: RuntimeOutput["contentType"]) {
+  if (contentType === "image/png") {
+    return (
+      bytes.length >= 8 &&
+      bytes[0] === 0x89 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x4e &&
+      bytes[3] === 0x47 &&
+      bytes[4] === 0x0d &&
+      bytes[5] === 0x0a &&
+      bytes[6] === 0x1a &&
+      bytes[7] === 0x0a
+    );
+  }
+  if (contentType === "image/jpeg") {
+    return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  }
+  if (contentType === "image/webp") {
+    return asciiAt(bytes, 0, 4) === "RIFF" && asciiAt(bytes, 8, 4) === "WEBP";
+  }
+  return false;
+}
+
+function hasVideoSignature(bytes: Uint8Array, contentType: RuntimeOutput["contentType"]) {
+  if (contentType === "video/mp4") {
+    return bytes.length >= 12 && asciiAt(bytes, 4, 4) === "ftyp";
+  }
+  if (contentType === "video/webm") {
+    return bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3;
+  }
+  return false;
+}
+
+function assertRuntimeOutputBytes(bytes: Uint8Array, contentType: RuntimeOutput["contentType"]) {
+  if (bytes.length === 0) {
+    throw new Error("Sulphur output endpoint returned an empty artifact");
+  }
+  if (contentType.startsWith("image/") && !hasImageSignature(bytes, contentType)) {
+    throw new Error(`Sulphur output endpoint returned invalid ${contentType} bytes`);
+  }
+  if (contentType.startsWith("video/") && !hasVideoSignature(bytes, contentType)) {
+    throw new Error(`Sulphur output endpoint returned invalid ${contentType} bytes`);
+  }
+}
+
 export interface RuntimePromptCompletion {
   completedPrompt: string;
   mode: "expand";
@@ -616,7 +668,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
                 seed: settings.seed ?? 1337,
                 transition: "cut",
                 transitionDuration: 0.75,
-                carryPreviousFrame: true,
+                carryPreviousFrame: false,
                 ...(settings.seedFrameBase64
                   ? { startFrameBase64: settings.seedFrameBase64 }
                   : {}),
@@ -1200,6 +1252,28 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       this.cfg.outputPath ?? this.defaultPath("output"),
       runtimeJobId,
     );
+    const readStatusOutput = async () => {
+      const statusPath = this.path(
+        this.cfg.statusPath ?? this.defaultPath("status"),
+        runtimeJobId,
+      );
+      const statusRes = await this.request(statusPath);
+      if (!statusRes.ok) return undefined;
+      return (await statusRes.json()) as {
+        output?: string;
+        output_url?: string;
+        download_url?: string;
+        artifact_url?: string;
+        durationSeconds?: number;
+        duration_seconds?: number;
+        settings?: {
+          total_output_seconds?: number;
+          durationSeconds?: number;
+          duration_seconds?: number;
+          duration?: number;
+        };
+      };
+    };
     let res: Response;
     try {
       res = await this.request(path, {
@@ -1217,24 +1291,14 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     if (leaseError) throw leaseError;
 
     if (!res.ok && this.cfg.payloadMode === "deploy-studio") {
-      const statusPath = this.path(
-        this.cfg.statusPath ?? this.defaultPath("status"),
-        runtimeJobId,
-      );
-      const statusRes = await this.request(statusPath);
-      if (statusRes.ok) {
-        const status = (await statusRes.json()) as {
-          output?: string;
-          output_url?: string;
-          download_url?: string;
-          artifact_url?: string;
-          settings?: {
-            total_output_seconds?: number;
-            duration?: number;
-          };
-        };
+      const status = await readStatusOutput();
+      if (status) {
         durationSeconds = Number(
+          status.durationSeconds ??
+            status.duration_seconds ??
           status.settings?.total_output_seconds ??
+            status.settings?.durationSeconds ??
+            status.settings?.duration_seconds ??
             status.settings?.duration ??
             0,
         );
@@ -1290,12 +1354,28 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       );
     }
 
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const normalizedContentType =
+      contentType === "application/octet-stream"
+        ? "video/mp4"
+        : (contentType as RuntimeOutput["contentType"]);
+    assertRuntimeOutputBytes(bytes, normalizedContentType);
+    if (!durationSeconds) {
+      const status = await readStatusOutput().catch(() => undefined);
+      durationSeconds = Number(
+        status?.durationSeconds ??
+          status?.duration_seconds ??
+          status?.settings?.total_output_seconds ??
+          status?.settings?.durationSeconds ??
+          status?.settings?.duration_seconds ??
+          status?.settings?.duration ??
+          0,
+      );
+    }
+
     return {
-      bytes: new Uint8Array(await res.arrayBuffer()),
-      contentType:
-        contentType === "application/octet-stream"
-          ? "video/mp4"
-          : (contentType as RuntimeOutput["contentType"]),
+      bytes,
+      contentType: normalizedContentType,
       durationSeconds:
         Number(res.headers.get("x-video-duration-seconds") ?? 0) ||
         durationSeconds,

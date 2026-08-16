@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BrowserRouter,
@@ -19,7 +19,10 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { Generation, RuntimeStatus, Me } from "@video-lab/contracts";
-import { useAuthenticatedVideo } from "./AuthenticatedVideo.js";
+import {
+  VideoRetrievalMark,
+  useAuthenticatedVideo,
+} from "./AuthenticatedVideo.js";
 import {
   completeGoogleRedirectSignIn,
   getApiToken,
@@ -53,6 +56,34 @@ type GenerationRequest = {
   prompt: string;
   settings: Generation["settings"];
 };
+type GenerationEdit = {
+  id: string;
+  generationId: string;
+  startSeconds: number;
+  endSeconds: number;
+  status: "processing" | "completed" | "failed";
+  output?: {
+    downloadUrl: string;
+    durationSeconds: number;
+    contentType: "video/mp4";
+    kind: "video";
+  };
+  safeErrorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function isVideoOutput(generation?: Generation) {
+  const output = generation?.output;
+  if (!output?.downloadUrl) return false;
+  return output.kind === "video" || output.contentType?.startsWith("video/");
+}
+
+function isFrameOutput(generation?: Generation) {
+  const output = generation?.output;
+  if (!output?.downloadUrl) return false;
+  return output.kind === "frame" || output.contentType?.startsWith("image/");
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -314,6 +345,9 @@ function Shell() {
       ? [{ to: "/admin", label: "Admin" }]
       : []),
   ];
+  const pageTitle =
+    navItems.find((item) => location.pathname === item.to)?.label ??
+    (location.pathname.startsWith("/generations/") ? "Details" : "");
   const logout = async () => {
     await signOutUser();
     navigate("/login", { replace: true });
@@ -329,6 +363,11 @@ function Shell() {
           <Link className="site-home-mark" to="/" aria-label="Video Lab home">
             <img src={homeMarkUrl} alt="" />
           </Link>
+          {signedIn && pageTitle && (
+            <span className="site-page-title" aria-current="page">
+              {pageTitle}<span>.</span>
+            </span>
+          )}
           {!isLanding && !signedIn && (
             <Link
               className="site-brand"
@@ -930,6 +969,7 @@ function Landing() {
   );
 }
 function Gallery() {
+  const [editingGeneration, setEditingGeneration] = useState<Generation>();
   const q = useQuery({
     queryKey: ["gallery"],
     queryFn: () => api<{ items: Generation[] }>("/v1/gallery"),
@@ -951,32 +991,47 @@ function Gallery() {
   });
   return (
     <main className="gallery-page">
-      <h1 className="editorial-page-title">
-        Gallery<span className="editorial-title-stop">.</span>
-      </h1>
+      <header className="gallery-toolbar">
+        <div>
+          <span className="gallery-eyebrow">Private video library</span>
+          <h1>Recent generations</h1>
+        </div>
+        <Link className="gallery-create-link" to="/videolab">
+          Create new video
+        </Link>
+      </header>
       {deletion.error && (
         <p className="error" role="alert">
           Delete failed: {deletion.error.message}
         </p>
       )}
       <div className="gallery-grid">
-        {q.data?.items.length ? (
+        {q.isLoading ? (
+          <p className="empty gallery-empty">Loading your gallery…</p>
+        ) : q.data?.items.length ? (
           q.data.items.map((g) => (
             <GalleryCard
               generation={g}
               key={g.id}
               deleting={deletion.variables === g.id && deletion.isPending}
               onDelete={(id) => deletion.mutate(id)}
+              onOpenEditor={setEditingGeneration}
             />
           ))
         ) : (
-          <p className={q.error ? "error" : "empty"}>
+          <p className={q.error ? "error gallery-empty" : "empty gallery-empty"}>
             {q.error
               ? `Gallery unavailable: ${q.error.message}`
               : "No generations yet. Create your first cinematic clip."}
           </p>
         )}
       </div>
+      {editingGeneration && (
+        <GalleryVideoEditor
+          generation={editingGeneration}
+          onClose={() => setEditingGeneration(undefined)}
+        />
+      )}
     </main>
   );
 }
@@ -984,10 +1039,12 @@ function GalleryCard({
   generation,
   deleting,
   onDelete,
+  onOpenEditor,
 }: {
   generation: Generation;
   deleting: boolean;
   onDelete: (id: string) => void;
+  onOpenEditor: (generation: Generation) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const promptNeedsToggle = generation.prompt.length > 190;
@@ -999,7 +1056,10 @@ function GalleryCard({
   };
   return (
     <article className="card gallery-card">
-      <GalleryArtifact generation={generation} />
+      <GalleryArtifact
+        generation={generation}
+        onOpen={() => onOpenEditor(generation)}
+      />
       <button
         className="gallery-delete"
         type="button"
@@ -1019,7 +1079,11 @@ function GalleryCard({
         <div className="gallery-card-meta">
           <span>{generation.status}</span>
           <time dateTime={generation.createdAt}>
-            {new Date(generation.createdAt).toLocaleString()}
+            {new Date(generation.createdAt).toLocaleDateString(undefined, {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            })}
           </time>
         </div>
         <h3 className={expanded ? "expanded" : ""}>{generation.prompt}</h3>
@@ -1040,15 +1104,23 @@ function GalleryCard({
     </article>
   );
 }
-function GalleryArtifact({ generation }: { generation: Generation }) {
-  const video = useAuthenticatedVideo(generation.output?.downloadUrl);
+function GalleryArtifact({
+  generation,
+  onOpen,
+}: {
+  generation: Generation;
+  onOpen: () => void;
+}) {
+  const isVideo = isVideoOutput(generation);
+  const isFrame = isFrameOutput(generation);
+  const media = useAuthenticatedVideo(generation.output?.downloadUrl);
   const storageKey = `vl_thumbnail_${generation.id}`;
   const [thumbnail, setThumbnail] = useState(
     () => localStorage.getItem(storageKey) ?? "",
   );
 
   useEffect(() => {
-    if (thumbnail || !video.objectUrl) return;
+    if (!isVideo || thumbnail || !media.objectUrl) return;
     const source = document.createElement("video");
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d", { willReadFrequently: true });
@@ -1059,7 +1131,7 @@ function GalleryArtifact({ generation }: { generation: Generation }) {
     const samplePositions = [0.12, 0.28, 0.44, 0.6, 0.76, 0.9];
     canvas.width = 640;
     canvas.height = 480;
-    source.src = video.objectUrl;
+    source.src = media.objectUrl;
     source.muted = true;
     source.playsInline = true;
     source.preload = "auto";
@@ -1136,31 +1208,330 @@ function GalleryArtifact({ generation }: { generation: Generation }) {
       source.removeAttribute("src");
       source.load();
     };
-  }, [storageKey, thumbnail, video.objectUrl]);
+  }, [isVideo, storageKey, thumbnail, media.objectUrl]);
 
-  if (thumbnail) {
+  if (isFrame && media.objectUrl) {
     return (
-      <div className="gallery-media gallery-thumbnail">
-        <img src={thumbnail} alt="Video thumbnail" />
-        <span aria-hidden="true" />
+      <div className="gallery-media gallery-frame">
+        <img src={media.objectUrl} alt="Generated frame" />
       </div>
     );
   }
-  if (video.error) {
+
+  if (isVideo && thumbnail) {
+    return (
+      <div className="gallery-media gallery-thumbnail">
+        <img src={thumbnail} alt="Video thumbnail" />
+        <button
+          className="gallery-edit-button"
+          type="button"
+          onClick={onOpen}
+          aria-label="Edit and trim video"
+          title="Edit and trim"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+          </svg>
+        </button>
+      </div>
+    );
+  }
+  if (media.error) {
     return (
       <div className="thumb error gallery-media">
-        Video unavailable: {video.error}
+        Output unavailable: {media.error}
       </div>
     );
   }
   return (
     <div className="thumb gallery-media">
-      {generation.output?.downloadUrl ? "Retrieving video…" : generation.status}
+      {generation.output?.downloadUrl ? (
+        <VideoRetrievalMark compact />
+      ) : (
+        generation.status
+      )}
+    </div>
+  );
+}
+
+function GalleryVideoEditor({
+  generation,
+  onClose,
+}: {
+  generation: Generation;
+  onClose: () => void;
+}) {
+  const video = useAuthenticatedVideo(generation.output?.downloadUrl);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [duration, setDuration] = useState(0);
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(0);
+  const [appliedStart, setAppliedStart] = useState(0);
+  const [appliedEnd, setAppliedEnd] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const [editorError, setEditorError] = useState<string>();
+  const editable = isVideoOutput(generation);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  const formatTime = (value: number) => {
+    if (!Number.isFinite(value)) return "0:00";
+    const minutes = Math.floor(value / 60);
+    const seconds = Math.floor(value % 60);
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  };
+  const selectedDuration = Math.max(0, trimEnd - trimStart);
+  const leftPercent = duration ? (trimStart / duration) * 100 : 0;
+  const rightPercent = duration ? 100 - (trimEnd / duration) * 100 : 0;
+  const minTrimGap = duration > 0 ? Math.min(0.1, duration) : 0;
+
+  const seek = (value: number) => {
+    const element = videoRef.current;
+    if (!element) return;
+    element.currentTime = Math.max(0, Math.min(duration || 0, value));
+  };
+  const setTrimPoint = (edge: "start" | "end", value: number) => {
+    if (!duration) return;
+    if (edge === "start") {
+      const next = Math.max(0, Math.min(value, trimEnd - minTrimGap));
+      setTrimStart(next);
+      seek(next);
+      return;
+    }
+    const next = Math.min(duration, Math.max(value, trimStart + minTrimGap));
+    setTrimEnd(next);
+    seek(next);
+  };
+  const trackValueFromPointer = (
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position = (event.clientX - rect.left) / rect.width;
+    return Math.max(0, Math.min(duration, position * duration));
+  };
+  const startHandleDrag = (
+    edge: "start" | "end",
+    event: React.PointerEvent<HTMLButtonElement>,
+  ) => {
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const track = handle.closest<HTMLDivElement>(".gallery-trim-track");
+    if (!track || !duration) return;
+    handle.setPointerCapture(event.pointerId);
+    const update = (clientX: number) => {
+      const rect = track.getBoundingClientRect();
+      const position = (clientX - rect.left) / rect.width;
+      setTrimPoint(edge, Math.max(0, Math.min(duration, position * duration)));
+    };
+    update(event.clientX);
+    const onPointerMove = (moveEvent: PointerEvent) => update(moveEvent.clientX);
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp, { once: true });
+  };
+  const play = () => {
+    const element = videoRef.current;
+    if (!element) return;
+    if (element.currentTime < appliedStart || element.currentTime >= appliedEnd) {
+      element.currentTime = appliedStart;
+    }
+    void element.play();
+  };
+  const stop = () => {
+    const element = videoRef.current;
+    if (!element) return;
+    element.pause();
+    element.currentTime = appliedStart;
+  };
+  const applyCut = () => {
+    setAppliedStart(trimStart);
+    setAppliedEnd(trimEnd);
+    seek(trimStart);
+  };
+  const downloadEditedClip = async () => {
+    setEditorError(undefined);
+    setExporting(true);
+    try {
+      const edit = await api<GenerationEdit>(
+        `/v1/generations/${generation.id}/edits`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            startSeconds: trimStart,
+            endSeconds: trimEnd,
+          }),
+        },
+      );
+      if (edit.status !== "completed" || !edit.output?.downloadUrl) {
+        throw new Error(edit.safeErrorMessage ?? "The edited video is not ready.");
+      }
+      const apiToken = await getApiToken();
+      const path = edit.output.downloadUrl.startsWith("/api/")
+        ? edit.output.downloadUrl.slice(4)
+        : edit.output.downloadUrl;
+      const response = await fetch(`${API}${path}`, {
+        headers: { authorization: `Bearer ${apiToken}` },
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail ?? response.statusText);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${generation.id}-trimmed.mp4`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setEditorError(
+        error instanceof Error ? error.message : "The edited video could not be downloaded.",
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <div className="gallery-editor-backdrop" role="dialog" aria-modal="true">
+      <section className="gallery-editor">
+        <header>
+          <div>
+            <span className="gallery-eyebrow">Preview edit</span>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close editor">
+            ×
+          </button>
+        </header>
+        {!editable ? (
+          <p className="error">This generation is a still frame, so it cannot be trimmed as video.</p>
+        ) : (
+          <>
+        <div className="gallery-editor-screen">
+          {video.objectUrl ? (
+            <video
+              ref={videoRef}
+              src={video.objectUrl}
+              playsInline
+              onLoadedMetadata={(event) => {
+                const length = event.currentTarget.duration || 0;
+                setDuration(length);
+                setTrimStart(0);
+                setTrimEnd(length);
+                setAppliedStart(0);
+                setAppliedEnd(length);
+              }}
+              onTimeUpdate={(event) => {
+                if (event.currentTarget.currentTime >= appliedEnd) {
+                  event.currentTarget.pause();
+                  event.currentTarget.currentTime = appliedEnd;
+                }
+              }}
+            />
+          ) : (
+            <div className="thumb big">
+              {video.error ? `Video unavailable: ${video.error}` : <VideoRetrievalMark />}
+            </div>
+          )}
+        </div>
+        <div className="gallery-editor-controls">
+          <button type="button" onClick={() => seek((videoRef.current?.currentTime ?? 0) - 5)}>
+            ◀◀
+          </button>
+          <button type="button" onClick={play}>
+            ▶
+          </button>
+          <button type="button" onClick={stop} aria-label="Stop">
+            <span className="gallery-stop-icon" aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => seek((videoRef.current?.currentTime ?? 0) + 5)}>
+            ▶▶
+          </button>
+        </div>
+        <div className="gallery-trim">
+          <div
+            className="gallery-trim-track"
+            role="group"
+            aria-label="Trim start and end"
+            onPointerDown={(event) => {
+              if (event.target !== event.currentTarget || !duration) return;
+              const value = trackValueFromPointer(event);
+              const edge =
+                Math.abs(value - trimStart) <= Math.abs(value - trimEnd)
+                  ? "start"
+                  : "end";
+              setTrimPoint(edge, value);
+            }}
+          >
+            <span
+              className="gallery-trim-selection"
+              style={{ left: `${leftPercent}%`, right: `${rightPercent}%` }}
+            />
+            <button
+              type="button"
+              className="gallery-trim-handle start"
+              style={{ left: `${leftPercent}%` }}
+              aria-label={`Trim start ${formatTime(trimStart)}`}
+              onPointerDown={(event) => startHandleDrag("start", event)}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft") setTrimPoint("start", trimStart - 0.05);
+                if (event.key === "ArrowRight") setTrimPoint("start", trimStart + 0.05);
+              }}
+            >
+              <span>Start</span>
+            </button>
+            <button
+              type="button"
+              className="gallery-trim-handle end"
+              style={{ left: `${100 - rightPercent}%` }}
+              aria-label={`Trim end ${formatTime(trimEnd)}`}
+              onPointerDown={(event) => startHandleDrag("end", event)}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft") setTrimPoint("end", trimEnd - 0.05);
+                if (event.key === "ArrowRight") setTrimPoint("end", trimEnd + 0.05);
+              }}
+            >
+              <span>End</span>
+            </button>
+          </div>
+          <div className="gallery-trim-readout">
+            <span>Start {formatTime(trimStart)}</span>
+            <strong>{formatTime(selectedDuration)}</strong>
+            <span>End {formatTime(trimEnd)}</span>
+          </div>
+        </div>
+        {editorError && <p className="error">{editorError}</p>}
+        <footer>
+          <button type="button" onClick={applyCut} disabled={!duration}>
+            Cut
+          </button>
+          <button
+            type="button"
+            onClick={() => void downloadEditedClip()}
+            disabled={!duration || exporting || selectedDuration <= 0}
+          >
+            {exporting ? "Exporting…" : "Download edit"}
+          </button>
+        </footer>
+          </>
+        )}
+      </section>
     </div>
   );
 }
 function Detail() {
   const { id } = useParams();
+  const [editorOpen, setEditorOpen] = useState(false);
   const q = useQuery({
     queryKey: ["gen", id],
     queryFn: () => api<Generation>(`/v1/generations/${id}`),
@@ -1176,29 +1547,36 @@ function Detail() {
     onSuccess: () => q.refetch(),
   });
   const g = q.data;
-  const video = useAuthenticatedVideo(g?.output?.downloadUrl);
+  const media = useAuthenticatedVideo(g?.output?.downloadUrl);
+  const isVideo = isVideoOutput(g);
+  const isFrame = isFrameOutput(g);
   return (
     <main>
       {g && (
         <>
           <h1>Generation</h1>
           <section className="panel generation-detail-panel">
-            {video.objectUrl ? (
+            {isVideo && media.objectUrl ? (
               <video
                 className="video-preview"
-                src={video.objectUrl}
+                src={media.objectUrl}
                 controls
-                autoPlay
+                playsInline
+                preload="metadata"
+              />
+            ) : isFrame && media.objectUrl ? (
+              <img
+                className="video-preview generation-frame-preview"
+                src={media.objectUrl}
+                alt="Generated frame"
               />
             ) : (
               <div className="thumb big">
-                {g.output?.downloadUrl
-                  ? "Retrieving completed video…"
-                  : g.status}
+                {g.output?.downloadUrl ? <VideoRetrievalMark /> : g.status}
               </div>
             )}
-            {video.error && (
-              <p className="error">Video retrieval failed: {video.error}</p>
+            {media.error && (
+              <p className="error">Output retrieval failed: {media.error}</p>
             )}
             <p>{g.prompt}</p>
             <p>Created {new Date(g.createdAt).toLocaleString()}</p>
@@ -1206,11 +1584,24 @@ function Detail() {
               <p className="error">{g.safeErrorMessage}</p>
             )}
             <div className="generation-detail-actions">
-              {video.objectUrl && (
+              {isVideo && media.objectUrl && (
+                <button
+                  type="button"
+                  className="generation-edit-action"
+                  onClick={() => setEditorOpen(true)}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                  <span>Edit trim</span>
+                </button>
+              )}
+              {media.objectUrl && (
                 <a
                   className="button"
-                  href={video.objectUrl}
-                  download={`${g.id}.mp4`}
+                  href={media.objectUrl}
+                  download={`${g.id}.${isFrame ? "png" : "mp4"}`}
                 >
                   Download
                 </a>
@@ -1232,6 +1623,12 @@ function Detail() {
                 )}
             </div>
           </section>
+          {isVideo && editorOpen && (
+            <GalleryVideoEditor
+              generation={g}
+              onClose={() => setEditorOpen(false)}
+            />
+          )}
         </>
       )}
     </main>

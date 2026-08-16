@@ -405,10 +405,11 @@ export class DeployStudioStoryboardEnhancerClient {
           ),
         ),
       });
-    } catch {
-      throw new Error("storyboard_enhancer_unavailable");
+    } catch (cause) {
+      throw new Error("storyboard_enhancer_unavailable", { cause });
     }
     if (!response.ok) {
+      const bodyText = await response.text().catch(() => "");
       throw new Error(
         response.status === 413
           ? "storyboard_context_budget_exceeded"
@@ -419,6 +420,7 @@ export class DeployStudioStoryboardEnhancerClient {
           : response.status === 503
           ? "storyboard_enhancer_unavailable"
           : "storyboard_enhancement_failed",
+        { cause: `HTTP ${response.status} ${response.statusText}: ${bodyText.slice(0, 500)}` },
       );
     }
     try {
@@ -427,8 +429,8 @@ export class DeployStudioStoryboardEnhancerClient {
         throw new Error("stable_runtime_provider_invalid");
       }
       return result;
-    } catch {
-      throw new Error("storyboard_enhancement_failed");
+    } catch (cause) {
+      throw new Error("storyboard_enhancement_failed", { cause });
     }
   }
 }

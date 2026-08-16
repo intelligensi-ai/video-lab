@@ -2,7 +2,13 @@ import express from "express";
 import cors from "cors";
 import swaggerUi from "swagger-ui-express";
 import fs from "node:fs";
+import { promises as fsp } from "node:fs";
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+import { createRequire } from "node:module";
 import YAML from "yaml";
 import { nanoid } from "nanoid";
 import { applicationDefault, getApps, initializeApp } from "firebase-admin/app";
@@ -80,6 +86,26 @@ type StoredGeneration = Generation & {
   outputObjectPath?: string;
   outputSha256?: string;
 };
+type StoredGenerationEdit = {
+  id: string;
+  uid: string;
+  generationId: string;
+  startSeconds: number;
+  endSeconds: number;
+  status: "processing" | "completed" | "failed";
+  output?: {
+    downloadUrl: string;
+    durationSeconds: number;
+    contentType: "video/mp4";
+    kind: "video";
+  };
+  outputBytes?: Uint8Array;
+  outputObjectPath?: string;
+  outputSha256?: string;
+  safeErrorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+};
 type StoredAsset = {
   id: string;
   uid: string;
@@ -132,6 +158,10 @@ const storyboardDrafts = new Map<
 const storyboardProjects = new Map<string, StoredStoryboardProject>();
 const directorProposals = new Map<string, StoredDirectorProposal>();
 const assets = new Map<string, StoredAsset>();
+const generationEdits = new Map<string, StoredGenerationEdit>();
+const execFileAsync = promisify(execFile);
+const require = createRequire(import.meta.url);
+const packagedFfmpeg = require("@ffmpeg-installer/ffmpeg") as { path?: string };
 let runtimeState: RuntimeStatus = {
   provider: process.env.VIDEO_RUNTIME_PROVIDER ?? "mock",
   status: "healthy",
@@ -194,6 +224,11 @@ function publicGeneration(g: StoredGeneration): Generation {
     outputSha256: _outputSha256,
     ...generation
   } = g;
+  if (["completed", "failed", "cancelled"].includes(generation.status)) {
+    delete generation.runtimeMessage;
+    delete generation.runtimeProgress;
+    generation.queuePosition = 0;
+  }
   return {
     ...generation,
     settings: stripEmbeddedMedia(generation.settings) as Generation["settings"],
@@ -945,6 +980,13 @@ async function connectRuntimeEndpoint(
   source: RuntimeDiscovery["source"],
   message: string,
 ) {
+  if (!runtimeOriginAllowed(baseUrl)) {
+    throw problem(
+      400,
+      "runtime_origin_not_allowed",
+      "Runtime origin is not in the allowed production allow-list",
+    );
+  }
   const adapter = createRuntimeAdapter(
     baseUrl,
     source === "environment" ? "direct-worker" : "configured",
@@ -1403,7 +1445,7 @@ async function persistGeneration(g: StoredGeneration) {
   await getFirestore()
     .collection("generations")
     .doc(g.id)
-    .set(clean, { merge: true });
+    .set(clean);
 }
 async function findGeneration(id: string) {
   const memory = gens.get(id);
@@ -1416,8 +1458,42 @@ async function findGeneration(id: string) {
   return generation;
 }
 
+function publicGenerationEdit(edit: StoredGenerationEdit) {
+  const {
+    uid: _uid,
+    outputBytes: _outputBytes,
+    outputObjectPath: _outputObjectPath,
+    outputSha256: _outputSha256,
+    ...publicEdit
+  } = edit;
+  return publicEdit;
+}
+
+async function persistGenerationEdit(edit: StoredGenerationEdit) {
+  generationEdits.set(edit.id, edit);
+  if (localAuth) return;
+  adminApp();
+  const { outputBytes: _outputBytes, ...stored } = edit;
+  await getFirestore().collection("generationEdits").doc(edit.id).set(stored);
+}
+
+async function findGenerationEdit(id: string) {
+  const memory = generationEdits.get(id);
+  if (memory || localAuth) return memory;
+  adminApp();
+  const snapshot = await getFirestore().collection("generationEdits").doc(id).get();
+  if (!snapshot.exists) return undefined;
+  const edit = snapshot.data() as StoredGenerationEdit;
+  generationEdits.set(id, edit);
+  return edit;
+}
+
 async function deleteStoredGeneration(g: StoredGeneration) {
   gens.delete(g.id);
+  let editsToDelete = [...generationEdits.values()].filter(
+    (edit) => edit.generationId === g.id,
+  );
+  editsToDelete.forEach((edit) => generationEdits.delete(edit.id));
   const queueIndex = queue.findIndex((item) => item.generationId === g.id);
   if (queueIndex >= 0) queue.splice(queueIndex, 1);
   for (const [key, generationId] of idempotency.entries()) {
@@ -1426,6 +1502,20 @@ async function deleteStoredGeneration(g: StoredGeneration) {
   if (localAuth) return;
   adminApp();
   const firestore = getFirestore();
+  const editSnapshot = await firestore
+    .collection("generationEdits")
+    .where("generationId", "==", g.id)
+    .where("uid", "==", g.uid)
+    .get();
+  editsToDelete = [
+    ...editsToDelete,
+    ...editSnapshot.docs
+      .map((doc) => doc.data() as StoredGenerationEdit)
+      .filter(
+        (edit) =>
+          !editsToDelete.some((cachedEdit) => cachedEdit.id === edit.id),
+      ),
+  ];
   const writes: Promise<unknown>[] = [
     firestore.collection("generations").doc(g.id).delete(),
     firestore.collection(generationQueueCollection).doc(g.id).delete(),
@@ -1441,7 +1531,194 @@ async function deleteStoredGeneration(g: StoredGeneration) {
         .delete({ ignoreNotFound: true }),
     );
   }
+  editsToDelete.forEach((edit) => {
+    writes.push(firestore.collection("generationEdits").doc(edit.id).delete());
+    if (edit.outputObjectPath) {
+      writes.push(
+        getStorage()
+          .bucket()
+          .file(edit.outputObjectPath)
+          .delete({ ignoreNotFound: true }),
+      );
+    }
+  });
   await Promise.all(writes);
+}
+
+async function readGenerationOutputBytes(g: StoredGeneration) {
+  if (g.outputBytes) return Buffer.from(g.outputBytes);
+  if (!g.outputObjectPath)
+    throw problem(
+      404,
+      "output_not_available",
+      "Generation output is not available for editing",
+    );
+  adminApp();
+  const file = getStorage().bucket().file(g.outputObjectPath);
+  const [exists] = await file.exists();
+  if (!exists)
+    throw problem(
+      404,
+      "output_not_available",
+      "Generation output is not available for editing",
+    );
+  const [bytes] = await file.download();
+  return bytes;
+}
+
+async function sendStoredOutput(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+  source:
+    | { bytes: Buffer | Uint8Array; contentType: string; fileName: string }
+    | { objectPath: string; contentType: string; fileName: string },
+) {
+  const contentType = source.contentType || "application/octet-stream";
+  const inline = contentType.startsWith("video/") || contentType.startsWith("image/");
+  res
+    .type(contentType)
+    .setHeader(
+      "Content-Disposition",
+      `${inline ? "inline" : "attachment"}; filename="${source.fileName}"`,
+    )
+    .setHeader("Cache-Control", "private,no-store")
+    .setHeader("Accept-Ranges", "bytes");
+
+  if ("bytes" in source) {
+    const bytes = Buffer.from(source.bytes);
+    const range = req.headers.range;
+    if (range) {
+      const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+      if (match) {
+        const start = match[1] ? Number(match[1]) : 0;
+        const end = match[2] ? Number(match[2]) : bytes.length - 1;
+        if (
+          Number.isInteger(start) &&
+          Number.isInteger(end) &&
+          start >= 0 &&
+          end >= start &&
+          start < bytes.length
+        ) {
+          const boundedEnd = Math.min(end, bytes.length - 1);
+          res
+            .status(206)
+            .setHeader("Content-Range", `bytes ${start}-${boundedEnd}/${bytes.length}`)
+            .setHeader("Content-Length", boundedEnd - start + 1);
+          return res.send(bytes.subarray(start, boundedEnd + 1));
+        }
+      }
+      res.status(416).setHeader("Content-Range", `bytes */${bytes.length}`);
+      return res.end();
+    }
+    res.setHeader("Content-Length", bytes.length);
+    return res.send(bytes);
+  }
+
+  adminApp();
+  const file = getStorage().bucket().file(source.objectPath);
+  const [exists] = await file.exists();
+  if (!exists)
+    throw problem(
+      404,
+      "output_not_available",
+      "Generation output is not available for download",
+    );
+  const [metadata] = await file.getMetadata();
+  const size = Number(metadata.size ?? 0);
+  const range = req.headers.range;
+  if (range && Number.isFinite(size) && size > 0) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (match) {
+      const start = match[1] ? Number(match[1]) : 0;
+      const end = match[2] ? Number(match[2]) : size - 1;
+      if (
+        Number.isInteger(start) &&
+        Number.isInteger(end) &&
+        start >= 0 &&
+        end >= start &&
+        start < size
+      ) {
+        const boundedEnd = Math.min(end, size - 1);
+        res
+          .status(206)
+          .setHeader("Content-Range", `bytes ${start}-${boundedEnd}/${size}`)
+          .setHeader("Content-Length", boundedEnd - start + 1);
+        return file
+          .createReadStream({ start, end: boundedEnd })
+          .on("error", next)
+          .pipe(res);
+      }
+    }
+    res.status(416).setHeader("Content-Range", `bytes */${size}`);
+    return res.end();
+  }
+  if (Number.isFinite(size) && size > 0) res.setHeader("Content-Length", size);
+  return file.createReadStream().on("error", next).pipe(res);
+}
+
+function parseTrimSeconds(value: unknown, field: string) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0 || seconds > 60 * 60) {
+    throw problem(400, "invalid_trim", `${field} must be a valid timestamp`);
+  }
+  return Math.round(seconds * 1000) / 1000;
+}
+
+async function createTrimmedMp4(
+  sourceBytes: Buffer,
+  startSeconds: number,
+  endSeconds: number,
+) {
+  const workDir = await fsp.mkdtemp(path.join(tmpdir(), "video-lab-trim-"));
+  const sourcePath = path.join(workDir, "source.mp4");
+  const outputPath = path.join(workDir, "trimmed.mp4");
+  try {
+    await fsp.writeFile(sourcePath, sourceBytes);
+    const ffmpeg = process.env.FFMPEG_PATH || packagedFfmpeg.path || "ffmpeg";
+    await execFileAsync(
+      ffmpeg,
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        sourcePath,
+        "-ss",
+        startSeconds.toFixed(3),
+        "-to",
+        endSeconds.toFixed(3),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "18",
+        "-c:a",
+        "aac",
+        "-movflags",
+        "+faststart",
+        outputPath,
+      ],
+      { timeout: 120_000, maxBuffer: 1024 * 1024 },
+    );
+    return await fsp.readFile(outputPath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log("generation_edit_trim_failed", { message });
+    throw problem(
+      500,
+      "trim_failed",
+      "The video could not be trimmed. Verify FFmpeg is available and try again.",
+    );
+  } finally {
+    await fsp.rm(workDir, { recursive: true, force: true });
+  }
 }
 
 function idempotencyDocumentId(uid: string, key: string) {
@@ -3195,6 +3472,13 @@ async function enhanceStoryboard(
       log("storyboard_enhancer_unavailable", {
         provider: useStableApi ? "intelligensi-api" : "deploy-studio",
         reason: error instanceof Error ? error.message : "unknown",
+        cause:
+          error instanceof Error && error.cause !== undefined
+            ? error.cause instanceof Error
+              ? error.cause.message
+              : String(error.cause)
+            : undefined,
+        baseUrl,
         shotCount: request.shotCount,
         targeted: request.targetShotNumber !== undefined,
       });
@@ -3213,7 +3497,7 @@ async function enhanceStoryboard(
 
 export const app: express.Express = express();
 app.disable("x-powered-by");
-app.set("trust proxy", 1);
+app.set("trust proxy", process.env.NODE_ENV === "production" ? 1 : false);
 app.use(securityHeaders);
 app.use(cors(corsOptions()));
 app.use(
@@ -4213,33 +4497,164 @@ app.get("/v1/generations/:id/download", auth, async (req, res, next) => {
           ? "jpg"
           : g.outputContentType === "image/webp"
             ? "webp"
-            : g.outputContentType === "video/webm"
-              ? "webm"
-              : "mp4";
-    res
-      .type(g.outputContentType ?? "video/mp4")
-      .setHeader(
-        "Content-Disposition",
-        `attachment; filename="${g.id}.${extension}"`,
-      )
-      .setHeader("Cache-Control", "private,no-store");
-    if (g.outputBytes) return res.send(Buffer.from(g.outputBytes));
+        : g.outputContentType === "video/webm"
+          ? "webm"
+          : "mp4";
+    const contentType = g.outputContentType ?? g.output?.contentType ?? "video/mp4";
+    if (g.outputBytes)
+      return await sendStoredOutput(req, res, next, {
+        bytes: g.outputBytes,
+        contentType,
+        fileName: `${g.id}.${extension}`,
+      });
     if (!g.outputObjectPath)
       throw problem(
         404,
         "output_not_available",
         "Generation output is not available for download",
       );
-    adminApp();
-    const file = getStorage().bucket().file(g.outputObjectPath);
-    const [exists] = await file.exists();
-    if (!exists)
-      throw problem(
-        404,
-        "output_not_available",
-        "Generation output is not available for download",
-      );
-    file.createReadStream().on("error", next).pipe(res);
+    return await sendStoredOutput(req, res, next, {
+      objectPath: g.outputObjectPath,
+      contentType,
+      fileName: `${g.id}.${extension}`,
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+app.post("/v1/generations/:id/edits", auth, async (req, res, next) => {
+  try {
+    const id = String(req.params.id ?? "");
+    const g = await findGeneration(id);
+    if (!g || g.uid !== res.locals.principal.uid)
+      throw problem(404, "not_found", "Generation not found");
+    if (g.status !== "completed" || g.output?.kind !== "video")
+      throw problem(409, "generation_not_editable", "Only completed videos can be trimmed");
+    if (g.outputContentType && g.outputContentType !== "video/mp4")
+      throw problem(400, "unsupported_output", "Only MP4 generation outputs can be trimmed");
+
+    const startSeconds = parseTrimSeconds(req.body?.startSeconds, "startSeconds");
+    const endSeconds = parseTrimSeconds(req.body?.endSeconds, "endSeconds");
+    const sourceDuration = Number(g.output?.durationSeconds ?? g.settings.durationSeconds ?? 0);
+    if (endSeconds <= startSeconds + 0.05)
+      throw problem(400, "invalid_trim", "Trim end must be after trim start");
+    if (Number.isFinite(sourceDuration) && sourceDuration > 0 && endSeconds > sourceDuration + 0.25)
+      throw problem(400, "invalid_trim", "Trim end is outside the source video duration");
+
+    const editId = nanoid();
+    const createdAt = nowIso();
+    let edit: StoredGenerationEdit = {
+      id: editId,
+      uid: g.uid,
+      generationId: g.id,
+      startSeconds,
+      endSeconds,
+      status: "processing",
+      createdAt,
+      updatedAt: createdAt,
+    };
+    await persistGenerationEdit(edit);
+
+    try {
+      const sourceBytes = await readGenerationOutputBytes(g);
+      const outputBytes = await createTrimmedMp4(sourceBytes, startSeconds, endSeconds);
+      const outputSha256 = createHash("sha256").update(outputBytes).digest("hex");
+      const outputObjectPath = `users/${g.uid}/edits/${editId}.mp4`;
+      if (!localAuth) {
+        adminApp();
+        await getStorage().bucket().file(outputObjectPath).save(outputBytes, {
+          resumable: false,
+          contentType: "video/mp4",
+          metadata: {
+            cacheControl: "private,no-store",
+            metadata: {
+              sha256: outputSha256,
+              sourceGenerationId: g.id,
+              trimStartSeconds: String(startSeconds),
+              trimEndSeconds: String(endSeconds),
+            },
+          },
+        });
+      }
+      edit = {
+        ...edit,
+        status: "completed",
+        output: {
+          downloadUrl: `/api/v1/generations/${g.id}/edits/${editId}/download`,
+          durationSeconds: endSeconds - startSeconds,
+          contentType: "video/mp4",
+          kind: "video",
+        },
+        ...(localAuth ? { outputBytes } : {}),
+        outputObjectPath,
+        outputSha256,
+        updatedAt: nowIso(),
+      };
+      await persistGenerationEdit(edit);
+      log("generation_edit_completed", {
+        uid: g.uid,
+        generationId: g.id,
+        editId,
+        startSeconds,
+        endSeconds,
+      });
+      res.status(201).json(publicGenerationEdit(edit));
+    } catch (error) {
+      edit = {
+        ...edit,
+        status: "failed",
+        safeErrorMessage:
+          error instanceof Error ? error.message : "The video could not be trimmed.",
+        updatedAt: nowIso(),
+      };
+      await persistGenerationEdit(edit);
+      throw error;
+    }
+  } catch (e) {
+    next(e);
+  }
+});
+app.get("/v1/generations/:id/edits/:editId", auth, async (req, res, next) => {
+  try {
+    const generationId = String(req.params.id ?? "");
+    const editId = String(req.params.editId ?? "");
+    const edit = await findGenerationEdit(editId);
+    if (
+      !edit ||
+      edit.generationId !== generationId ||
+      edit.uid !== res.locals.principal.uid
+    )
+      throw problem(404, "not_found", "Generation edit not found");
+    res.json(publicGenerationEdit(edit));
+  } catch (e) {
+    next(e);
+  }
+});
+app.get("/v1/generations/:id/edits/:editId/download", auth, async (req, res, next) => {
+  try {
+    const generationId = String(req.params.id ?? "");
+    const editId = String(req.params.editId ?? "");
+    const edit = await findGenerationEdit(editId);
+    if (
+      !edit ||
+      edit.generationId !== generationId ||
+      edit.uid !== res.locals.principal.uid ||
+      edit.status !== "completed"
+    )
+      throw problem(404, "not_found", "Generation edit not found");
+    if (edit.outputBytes)
+      return await sendStoredOutput(req, res, next, {
+        bytes: edit.outputBytes,
+        contentType: "video/mp4",
+        fileName: `${edit.id}.mp4`,
+      });
+    if (!edit.outputObjectPath)
+      throw problem(404, "output_not_available", "Edited video is not available for download");
+    return await sendStoredOutput(req, res, next, {
+      objectPath: edit.outputObjectPath,
+      contentType: "video/mp4",
+      fileName: `${edit.id}.mp4`,
+    });
   } catch (e) {
     next(e);
   }
@@ -4525,9 +4940,35 @@ async function processQueueItem(workerId = "local-worker") {
     };
     gens.set(g.id, preparing);
     await persistGeneration(preparing);
-    const sub = await runtime.submitGeneration(
-      await runtimeGeneration(preparing),
-    );
+    const runtimeInput = await runtimeGeneration(preparing);
+    log("generation_runtime_payload_shape", {
+      generationId: g.id,
+      operationScope: (runtimeInput.settings as { operationScope?: unknown })
+        .operationScope,
+      videoModel: (runtimeInput.settings as { videoModel?: unknown })
+        .videoModel,
+      durationSeconds: (runtimeInput.settings as { durationSeconds?: unknown })
+        .durationSeconds,
+      sceneCount: Array.isArray(
+        (runtimeInput.settings as { storyboard?: unknown[] }).storyboard,
+      )
+        ? (runtimeInput.settings as { storyboard: unknown[] }).storyboard
+            .length
+        : 0,
+      scenes: (
+        (runtimeInput.settings as { storyboard?: unknown[] }).storyboard ?? []
+      ).map((scene, index) => {
+        const s = scene as Record<string, unknown>;
+        return {
+          index,
+          durationSeconds: s.duration,
+          carryPreviousFrame: s.carryPreviousFrame,
+          transition: s.transition,
+          keyframeCount: Array.isArray(s.keyframes) ? s.keyframes.length : 0,
+        };
+      }),
+    });
+    const sub = await runtime.submitGeneration(runtimeInput);
     const submitted: StoredGeneration = {
       ...preparing,
       runtimeJobId: sub.runtimeJobId,
@@ -4794,6 +5235,7 @@ export const api =
     : (await import("firebase-functions/v2/https")).onRequest(
         {
           timeoutSeconds: 3600,
+          memory: "1GiB",
           maxInstances: 1,
           secrets: [
             (await import("firebase-functions/params")).defineSecret(

@@ -44,7 +44,9 @@ export async function fetchGenerationOutput(downloadUrl: string) {
   const path = downloadUrl.startsWith("/api/")
     ? downloadUrl.slice(4)
     : downloadUrl;
-  if (!path.startsWith("/v1/generations/") || !path.endsWith("/download")) {
+  if (
+    !/^\/v1\/generations\/[^/]+(?:\/edits\/[^/]+)?\/download$/.test(path)
+  ) {
     throw new Error(
       "The generation output address is not a Video Lab address.",
     );
@@ -56,7 +58,38 @@ export async function fetchGenerationOutput(downloadUrl: string) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.detail ?? body.title ?? response.statusText);
   }
-  return response.blob();
+  const blob = await response.blob();
+  const contentType = response.headers.get("content-type") ?? "";
+  if (blob.type || !contentType) return blob;
+  return new Blob([blob], { type: contentType });
+}
+
+export type GenerationEdit = {
+  id: string;
+  generationId: string;
+  startSeconds: number;
+  endSeconds: number;
+  status: "processing" | "completed" | "failed";
+  output?: {
+    downloadUrl: string;
+    durationSeconds: number;
+    contentType: "video/mp4";
+    kind: "video";
+  };
+  safeErrorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function createGenerationEdit(
+  generationId: string,
+  startSeconds: number,
+  endSeconds: number,
+) {
+  return api<GenerationEdit>(`/v1/generations/${generationId}/edits`, {
+    method: "POST",
+    body: JSON.stringify({ startSeconds, endSeconds }),
+  });
 }
 
 export type ReferenceRole =
@@ -431,6 +464,7 @@ export async function generateLongFormVideo(
         keyframes,
         seed: scene.seedOverrideEnabled ? scene.seed : payload.globalSeed,
         seedOverride: scene.seedOverrideEnabled === true,
+        carryPreviousFrame: index > 0 && scene.carryPreviousFrame,
       };
     }),
   );
@@ -508,6 +542,8 @@ export function storyboardEnhancementRequest(
     ? "revise_shot"
     : "plan_storyboard",
 ): StoryboardEnhancementRequest {
+  const clean = (value: unknown) =>
+    typeof value === "string" ? value.trim() : "";
   const aspectRatio = payload.resolution.startsWith("576x") || payload.resolution.startsWith("720x1280")
     ? "9:16"
     : payload.resolution.startsWith("1080x1080") ? "1:1" : "16:9";
@@ -515,7 +551,7 @@ export function storyboardEnhancementRequest(
     contractVersion: "2",
     projectId,
     operation,
-    masterPrompt: payload.overallGoal,
+    masterPrompt: clean(payload.overallGoal),
     shotCount: payload.scenes.length,
     generationMode: payload.scenes.some(
       (scene) => scene.startFrame || scene.endFrame,
@@ -543,12 +579,12 @@ export function storyboardEnhancementRequest(
     videoModel: payload.videoModel ?? "ltx-2.3",
     shots: payload.scenes.map((scene, index) => ({
       shotNumber: index + 1,
-      title: scene.title,
-      narrativePurpose: scene.narrativePurpose ?? "",
-      prompt: scene.prompt,
-      firstFramePrompt: scene.firstFramePrompt ?? "",
-      lastFramePrompt: scene.lastFramePrompt ?? "",
-      continuityNotes: scene.continuityNotes ?? "",
+      title: clean(scene.title),
+      narrativePurpose: clean(scene.narrativePurpose),
+      prompt: clean(scene.prompt),
+      firstFramePrompt: clean(scene.firstFramePrompt),
+      lastFramePrompt: clean(scene.lastFramePrompt),
+      continuityNotes: clean(scene.continuityNotes),
       durationSeconds: scene.duration,
       generationMode:
         scene.startFrame || scene.endFrame ? "image_to_video" : "text_to_video",

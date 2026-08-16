@@ -9,7 +9,6 @@ import {
   sendPasswordResetEmail,
   signInAnonymously,
   signInWithEmailAndPassword,
-  signInWithPopup,
   signInWithRedirect,
   signOut,
   updateProfile,
@@ -34,8 +33,14 @@ let signInPromise: Promise<User> | undefined;
 async function ensureUser() {
   if (!firebaseAuth) throw new Error('Firebase Auth is not configured');
   // Firebase restores a persisted Google session asynchronously. Waiting here
-  // prevents an eager API request from creating an anonymous user first and
-  // replacing the restored account.
+  // prevents API requests from racing ahead of the restored account.
+  await firebaseAuth.authStateReady();
+  if (firebaseAuth.currentUser) return firebaseAuth.currentUser;
+  throw new Error('Sign in to continue.');
+}
+
+export async function ensureAnonymousUser() {
+  if (!firebaseAuth) throw new Error('Firebase Auth is not configured');
   await firebaseAuth.authStateReady();
   if (firebaseAuth.currentUser) return firebaseAuth.currentUser;
   if (!signInPromise) {
@@ -57,17 +62,7 @@ export async function signInWithGoogle() {
   if (!firebaseAuth) throw new Error('Firebase Auth is not configured');
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
-  try {
-    // Start the popup directly inside the click handler. Waiting for anonymous
-    // auth first loses the browser's user gesture and triggers popup blockers.
-    return (await signInWithPopup(firebaseAuth, provider)).user;
-  } catch (error) {
-    if ((error as { code?: string }).code === 'auth/popup-blocked') {
-      await signInWithRedirect(firebaseAuth, provider);
-      return;
-    }
-    throw error;
-  }
+  await signInWithRedirect(firebaseAuth, provider);
 }
 
 export async function registerWithEmail(name: string, email: string, password: string) {
@@ -96,11 +91,19 @@ export async function completeGoogleRedirectSignIn() {
 
 export function getFriendlyAuthError(error: unknown) {
   const code = (error as { code?: string }).code;
+  const message = error instanceof Error ? error.message : "";
+  const customData =
+    error && typeof error === "object" && "customData" in error
+      ? JSON.stringify((error as { customData?: unknown }).customData)
+      : "";
   if (code === 'auth/unauthorized-domain') {
     return 'Google sign-in is not authorised for this domain. Please contact Video Lab support.';
   }
   if (code === 'auth/network-request-failed') {
     return 'Sign-in could not connect. Check your connection and try again.';
+  }
+  if (code === 'auth/internal-error') {
+    return `Firebase sign-in failed internally${message ? `: ${message}` : ""}${customData ? ` ${customData}` : ""}`;
   }
   if (code === 'auth/account-exists-with-different-credential') {
     return 'An account already exists with this email using another sign-in method.';
@@ -132,7 +135,6 @@ export async function signOutUser() {
     return;
   }
   await signOut(firebaseAuth);
-  await ensureUser();
 }
 
 export function observeAuth(callback: (user: User | null) => void) {

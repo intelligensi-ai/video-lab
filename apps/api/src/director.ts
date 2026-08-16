@@ -256,7 +256,7 @@ function defaultScene(index: number, globalSeed: number): Record<string, unknown
     continuityOverrides: {},
     transition: index === 0 ? "cut" : "crossfade",
     transitionDuration: 0.75,
-    carryPreviousFrame: true,
+    carryPreviousFrame: index > 0,
   };
 }
 
@@ -311,7 +311,7 @@ export function buildDirectorEnhancementRequest(
             reason: String(asRecord(scene.audioIntent).reason ?? ""),
           }
         : { mode: "silent", reason: "No scene-specific audio direction has been accepted." },
-      carryPreviousFrame: scene.carryPreviousFrame !== false,
+      carryPreviousFrame: index > 0 && scene.carryPreviousFrame !== false,
       firstFrameAvailable: Boolean(scene.startFrameGenerationId || scene.startFrame),
       lastFrameAvailable: Boolean(scene.endFrameGenerationId || scene.endFrame),
     })),
