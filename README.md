@@ -104,8 +104,10 @@ backend communicates with the allow-listed Deploy Studio gateway.
    runtime advertises that it is ready.
 4. Optionally add project references for characters, places, products or
    visual style.
-5. Select **Improve with Director**. The local Gemma Director creates the exact
-   requested storyboard without replacing the original idea automatically.
+5. Select **Improve with Director**. Video Lab queues the request durably and
+   returns immediately; the page then shows queued, model-starting, planning and
+   validation stages while the local Gemma Director creates the exact requested
+   storyboard. Refreshing reconnects to the same job rather than starting again.
 6. Review and edit the scene direction, first-frame prompt and last-frame
    prompt. Generated text remains editable.
 7. Generate the first and last anchor frames. Either frame can be regenerated
@@ -134,10 +136,19 @@ An operator should:
 3. Confirm the selected model is advertised through the stable Runtime API.
 4. Refresh Video Lab and retry the operation.
 
-When deployed behind Firebase Hosting, long-running Director work must use the
-approved asynchronous submit/status pattern. Do not route a multi-minute model
-request through one synchronous Hosting rewrite, which has a fixed request
-deadline.
+When deployed behind Firebase Hosting, browser Director calls use the durable
+`POST /api/v1/storyboard-enhancements` or
+`POST /api/v1/storyboards/director/jobs` submit contract, followed by short
+owner-scoped status requests. `processVideoLabJobs` performs the long internal
+Gemma call through Cloud Tasks. Do not route a multi-minute model request
+through one synchronous Hosting rewrite, which has a fixed request deadline.
+
+The API checks revoked Firebase ID tokens in production. Model submissions also
+require a server-owned entitlement. Production defaults to Firestore-backed,
+fail-closed `videoLabEntitlements/{uid}` records; a bounded
+`VIDEO_LAB_ENTITLEMENT_MODE=staging_allowlist` deployment may be used for live
+acceptance with explicitly listed Firebase UIDs. Browser fields never decide
+entitlement, price or settlement.
 
 ### Local mock behaviour
 

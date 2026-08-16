@@ -18,10 +18,14 @@ describe("security rules", () => {
     expect(firestore).toContain("match /storyboardAsyncJobs/{id}");
     expect(firestore).toContain("match /storyboardAsyncIdempotency/{id}");
     expect(firestore).toContain("match /storyboardAsyncActive/{id}");
+    expect(firestore).toContain("match /videoLabEntitlements/{uid}");
+    expect(firestore).toContain("match /apiRateLimits/{id}");
   });
   it("scopes storage uploads by uid and content type", () => {
     expect(storage).toContain("match /users/{uid}/uploads/{fileName}");
     expect(storage).toContain("allow read, write: if false");
+    expect(storage).toContain("match /users/{uid}/outputs/{fileName}");
+    expect(storage).toContain("match /users/{uid}/edits/{fileName}");
     expect(firestore).toContain("match /storyboardDrafts/{uid}");
     expect(firestore).toContain("match /storyboardProjects/{id}");
     expect(firestore).toContain("match /storyboardDirectorProposals/{id}");

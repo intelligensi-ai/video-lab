@@ -2,6 +2,9 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     match /users/{uid}/uploads/{fileName} { allow read, write: if false; }
-    match /users/{uid}/outputs/{fileName} { allow read: if request.auth != null && request.auth.uid == uid; allow write: if false; }
+    // Media is delivered only through authenticated same-origin API routes so
+    // object paths and bucket origins never become a browser authority.
+    match /users/{uid}/outputs/{fileName} { allow read, write: if false; }
+    match /users/{uid}/edits/{fileName} { allow read, write: if false; }
   }
 }

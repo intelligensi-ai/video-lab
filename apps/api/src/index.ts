@@ -13,6 +13,7 @@ import YAML from "yaml";
 import { nanoid } from "nanoid";
 import { applicationDefault, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import { getAppCheck } from "firebase-admin/app-check";
 import { getFunctions } from "firebase-admin/functions";
 import { longFormVideoModels, MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
 import type {
@@ -79,9 +80,27 @@ import {
   type SupportedReferenceContentType,
 } from "./visualReferences.js";
 type Principal = { uid: string; email: string; admin: boolean };
+type CreatorOperation =
+  | "director"
+  | "frame_generation"
+  | "video_generation";
+type CreatorEntitlementDecision = {
+  source: "local" | "staging_allowlist" | "firestore";
+  policyVersion: string;
+  operation: CreatorOperation;
+};
+type CreatorAuthorization = CreatorEntitlementDecision & {
+  reservationId: string;
+  units: 0;
+  state: "reserved" | "settled" | "released";
+  reservedAt: string;
+  finalizedAt?: string;
+};
 let runtime = createRuntimeFromEnv();
 type StoredGeneration = Generation & {
   uid: string;
+  requestHash?: string;
+  creatorAuthorization?: CreatorAuthorization;
   runtimeJobId?: string;
   assemblyRuntimeAttempt?: number;
   referenceSnapshot?: StoredGenerationReferenceSnapshot[];
@@ -158,6 +177,7 @@ type StoredStoryboardAsyncJob = {
   requestHash: string;
   idempotencyHash: string;
   correlationId: string;
+  creatorAuthorization: CreatorAuthorization;
   attempt: number;
   createdAt: string;
   updatedAt: string;
@@ -251,6 +271,8 @@ export function stripEmbeddedMedia(value: unknown): unknown {
 function publicGeneration(g: StoredGeneration): Generation {
   const {
     uid: _uid,
+    requestHash: _requestHash,
+    creatorAuthorization: _creatorAuthorization,
     runtimeJobId: _runtimeJobId,
     assemblyRuntimeAttempt: _assemblyRuntimeAttempt,
     referenceSnapshot: _referenceSnapshot,
@@ -966,6 +988,159 @@ function adminApp() {
       credential: applicationDefault(),
       storageBucket: firebaseStorageBucket(),
     });
+}
+
+async function consumeFirestoreRateLimit(input: {
+  name: string;
+  identity: string;
+  limit: number;
+  windowMs: number;
+  now: number;
+}) {
+  adminApp();
+  const firestore = getFirestore();
+  const identityHash = createHash("sha256")
+    .update(`${input.name}\0${input.identity}`)
+    .digest("hex");
+  const reference = firestore.collection("apiRateLimits").doc(identityHash);
+  let allowed = false;
+  let retryAfterSeconds = Math.max(1, Math.ceil(input.windowMs / 1_000));
+  await firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reference);
+    const previousStartedAt = Number(snapshot.data()?.windowStartedAtMs ?? 0);
+    const currentWindow =
+      Number.isFinite(previousStartedAt) &&
+      previousStartedAt > 0 &&
+      input.now - previousStartedAt < input.windowMs;
+    const windowStartedAtMs = currentWindow ? previousStartedAt : input.now;
+    const count = currentWindow ? Number(snapshot.data()?.count ?? 0) + 1 : 1;
+    allowed = count <= input.limit;
+    retryAfterSeconds = Math.max(
+      1,
+      Math.ceil((windowStartedAtMs + input.windowMs - input.now) / 1_000),
+    );
+    transaction.set(reference, {
+      name: input.name,
+      identityHash,
+      windowStartedAtMs,
+      count,
+      limit: input.limit,
+      updatedAt: nowIso(),
+      expiresAt: new Date(windowStartedAtMs + input.windowMs * 2).toISOString(),
+    });
+  });
+  return { allowed, retryAfterSeconds };
+}
+
+function distributedRateLimit(options: {
+  name: string;
+  limit: number;
+  windowMs?: number;
+}) {
+  return rateLimit({
+    ...options,
+    ...(localAuth ? {} : { consume: consumeFirestoreRateLimit }),
+  });
+}
+
+export function creatorEntitlementMode(env: NodeJS.ProcessEnv = process.env) {
+  if (env.NODE_ENV !== "production") return "local" as const;
+  const mode = env.VIDEO_LAB_ENTITLEMENT_MODE?.trim() || "firestore";
+  if (mode === "firestore" || mode === "staging_allowlist") return mode;
+  return "invalid" as const;
+}
+
+function stagingEntitlementUids(env: NodeJS.ProcessEnv = process.env) {
+  return new Set(
+    (env.VIDEO_LAB_STAGING_UIDS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => /^[A-Za-z0-9:_-]{6,128}$/.test(value)),
+  );
+}
+
+async function requireCreatorEntitlement(
+  uid: string,
+  operation: CreatorOperation,
+): Promise<CreatorEntitlementDecision> {
+  const mode = creatorEntitlementMode();
+  if (mode === "local") {
+    return { source: "local", policyVersion: "local-development", operation };
+  }
+  if (mode === "invalid") {
+    throw problem(
+      503,
+      "entitlement_configuration_invalid",
+      "Generation access is temporarily unavailable",
+    );
+  }
+  if (mode === "staging_allowlist" && stagingEntitlementUids().has(uid)) {
+    return {
+      source: "staging_allowlist",
+      policyVersion:
+        process.env.VIDEO_LAB_ENTITLEMENT_POLICY_VERSION?.trim() ||
+        "staging-2026-08",
+      operation,
+    };
+  }
+  adminApp();
+  const snapshot = await getFirestore()
+    .collection("videoLabEntitlements")
+    .doc(uid)
+    .get();
+  const entitlement = snapshot.data();
+  const operations = Array.isArray(entitlement?.operations)
+    ? entitlement.operations.map(String)
+    : [];
+  const expiresAt = Date.parse(String(entitlement?.expiresAt ?? ""));
+  const active =
+    snapshot.exists &&
+    entitlement?.status === "active" &&
+    Number.isFinite(expiresAt) &&
+    expiresAt > Date.now() &&
+    (operations.includes("*") || operations.includes(operation));
+  if (!active) {
+    throw problem(
+      403,
+      "generation_entitlement_required",
+      "This account is not currently enabled for generation",
+    );
+  }
+  const policyVersion = String(entitlement?.policyVersion ?? "").trim();
+  if (!/^[A-Za-z0-9._:-]{3,100}$/.test(policyVersion)) {
+    throw problem(
+      503,
+      "entitlement_configuration_invalid",
+      "Generation access is temporarily unavailable",
+    );
+  }
+  return { source: "firestore", policyVersion, operation };
+}
+
+function reserveCreatorAuthorization(
+  decision: CreatorEntitlementDecision,
+  reservationId: string,
+): CreatorAuthorization {
+  return {
+    ...decision,
+    reservationId,
+    units: 0,
+    state: "reserved",
+    reservedAt: nowIso(),
+  };
+}
+
+function finalizeCreatorAuthorization(
+  authorization: CreatorAuthorization | undefined,
+  outcome: "settled" | "released",
+) {
+  return authorization
+    ? {
+        ...authorization,
+        state: outcome,
+        finalizedAt: authorization.finalizedAt ?? nowIso(),
+      }
+    : undefined;
 }
 function createRuntimeAdapter(
   baseUrl: string,
@@ -1761,6 +1936,12 @@ function idempotencyDocumentId(uid: string, key: string) {
   return createHash("sha256").update(`${uid}\0${key}`).digest("hex");
 }
 
+function generationRequestHash(value: unknown) {
+  return createHash("sha256")
+    .update(JSON.stringify(value ?? null))
+    .digest("hex");
+}
+
 async function findIdempotentGeneration(
   uid: string,
   key: string,
@@ -1824,6 +2005,10 @@ async function completeGenerationFromRuntime(
   const completed: StoredGeneration = {
     ...generation,
     status: "completed",
+    creatorAuthorization: finalizeCreatorAuthorization(
+      generation.creatorAuthorization,
+      "settled",
+    ),
     progress: 100,
     runtimeMessage: undefined,
     runtimeProgress: undefined,
@@ -1857,6 +2042,10 @@ async function failGenerationFromRuntime(
   const failed: StoredGeneration = {
     ...generation,
     status: "failed",
+    creatorAuthorization: finalizeCreatorAuthorization(
+      generation.creatorAuthorization,
+      "released",
+    ),
     safeErrorMessage,
     updatedAt: nowIso(),
   };
@@ -2039,6 +2228,7 @@ async function enqueueGeneration(
     transaction.create(idempotencyRef, {
       uid: generation.uid,
       generationId: generation.id,
+      requestHash: generation.requestHash,
       createdAt: generation.createdAt,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1_000).toISOString(),
     });
@@ -2275,7 +2465,7 @@ async function principal(req: express.Request): Promise<Principal> {
   }
   try {
     adminApp();
-    const decoded = await getAuth().verifyIdToken(token);
+    const decoded = await getAuth().verifyIdToken(token, true);
     const email = decoded.email ?? `${decoded.uid}@firebase.local`;
     return {
       uid: decoded.uid,
@@ -2307,12 +2497,26 @@ function ensureUser(p: Principal) {
   }
   return u;
 }
+async function verifyAppCheck(req: express.Request) {
+  if (localAuth || process.env.VIDEO_LAB_APP_CHECK_REQUIRED !== "true") return;
+  const token = req.header("x-firebase-appcheck")?.trim();
+  if (!token) {
+    throw problem(401, "app_check_required", "Application verification is required");
+  }
+  try {
+    adminApp();
+    await getAppCheck().verifyToken(token);
+  } catch {
+    throw problem(401, "app_check_invalid", "Application verification failed");
+  }
+}
 async function auth(
   req: express.Request,
   res: express.Response,
   next: express.NextFunction,
 ) {
   try {
+    await verifyAppCheck(req);
     const p = await principal(req);
     ensureUser(p);
     res.locals.principal = p;
@@ -2327,6 +2531,7 @@ async function admin(
   next: express.NextFunction,
 ) {
   try {
+    await verifyAppCheck(req);
     const p = await principal(req);
     ensureUser(p);
     if (!p.admin)
@@ -3374,6 +3579,7 @@ async function enqueueStoryboardAsyncJob(input: {
   projectId?: string;
   projectRevision?: string;
   idempotencyKey: string;
+  entitlement: CreatorEntitlementDecision;
 }) {
   const idempotencyHash = idempotencyDocumentId(
     input.uid,
@@ -3393,8 +3599,9 @@ async function enqueueStoryboardAsyncJob(input: {
     if (replay) return { job: replay, created: false };
   }
   const now = nowIso();
+  const jobId = nanoid(20);
   const job: StoredStoryboardAsyncJob = {
-    id: nanoid(20),
+    id: jobId,
     uid: input.uid,
     kind: input.kind,
     status: "queued",
@@ -3405,6 +3612,10 @@ async function enqueueStoryboardAsyncJob(input: {
     requestHash,
     idempotencyHash,
     correlationId: nanoid(20),
+    creatorAuthorization: reserveCreatorAuthorization(
+      input.entitlement,
+      jobId,
+    ),
     attempt: 0,
     createdAt: now,
     updatedAt: now,
@@ -3536,14 +3747,26 @@ async function enqueueStoryboardAsyncJob(input: {
 }
 
 async function finishStoryboardAsyncJob(job: StoredStoryboardAsyncJob) {
-  storyboardAsyncJobs.set(storyboardAsyncJobKey(job.uid, job.id), job);
-  if (localAuth) return job;
+  const finalizedJob: StoredStoryboardAsyncJob = {
+    ...job,
+    creatorAuthorization: finalizeCreatorAuthorization(
+      job.creatorAuthorization,
+      job.status === "completed" ? "settled" : "released",
+    )!,
+  };
+  storyboardAsyncJobs.set(
+    storyboardAsyncJobKey(finalizedJob.uid, finalizedJob.id),
+    finalizedJob,
+  );
+  if (localAuth) return finalizedJob;
   adminApp();
   const firestore = getFirestore();
-  const jobRef = firestore.collection(storyboardAsyncJobCollection).doc(job.id);
+  const jobRef = firestore
+    .collection(storyboardAsyncJobCollection)
+    .doc(finalizedJob.id);
   const activeRef = firestore
     .collection(storyboardAsyncActiveCollection)
-    .doc(job.uid);
+    .doc(finalizedJob.uid);
   const metricsRef = firestore
     .collection("runtimeState")
     .doc(storyboardAsyncMetricsDocument);
@@ -3558,8 +3781,11 @@ async function finishStoryboardAsyncJob(job: StoredStoryboardAsyncJob) {
       !storyboardAsyncTerminal(
         (jobSnapshot.data() as StoredStoryboardAsyncJob).status,
       );
-    transaction.set(jobRef, firestoreStoryboardAsyncJob(job), { merge: false });
-    if (activeSnapshot.data()?.jobId === job.id) transaction.delete(activeRef);
+    transaction.set(jobRef, firestoreStoryboardAsyncJob(finalizedJob), {
+      merge: false,
+    });
+    if (activeSnapshot.data()?.jobId === finalizedJob.id)
+      transaction.delete(activeRef);
     if (wasOutstanding) {
       transaction.set(
         metricsRef,
@@ -3574,7 +3800,7 @@ async function finishStoryboardAsyncJob(job: StoredStoryboardAsyncJob) {
       );
     }
   });
-  return job;
+  return finalizedJob;
 }
 
 async function claimStoryboardAsyncJob(workerId: string) {
@@ -4354,8 +4580,13 @@ app.delete("/v1/storyboards/draft", auth, async (_req, res, next) => {
     next(error);
   }
 });
-app.post("/v1/prompts/complete", auth, async (req, res, next) => {
+app.post(
+  "/v1/prompts/complete",
+  auth,
+  distributedRateLimit({ name: "prompt-complete", limit: 12 }),
+  async (req, res, next) => {
   try {
+    await requireCreatorEntitlement(res.locals.principal.uid, "director");
     await ensureRuntimeConfiguration();
     const prompt = String(req.body?.prompt ?? "").trim();
     const mode = String(req.body?.mode ?? "expand");
@@ -4380,11 +4611,12 @@ app.post("/v1/prompts/complete", auth, async (req, res, next) => {
   } catch (e) {
     next(e);
   }
-});
+  },
+);
 app.post(
   "/v1/storyboard-enhancements",
   auth,
-  rateLimit({ name: "storyboard-enhancement-submit", limit: 12 }),
+  distributedRateLimit({ name: "storyboard-enhancement-submit", limit: 12 }),
   async (req, res, next) => {
     try {
       if (Buffer.byteLength(JSON.stringify(req.body ?? {}), "utf8") > 512 * 1024) {
@@ -4396,6 +4628,7 @@ app.post(
       }
       const request = enhancementRequest(req.body);
       const uid = res.locals.principal.uid as string;
+      const entitlement = await requireCreatorEntitlement(uid, "director");
       let project: StoredStoryboardProject | undefined;
       if (request.projectId) {
         project = await findStoryboardProject(uid, String(request.projectId));
@@ -4415,6 +4648,7 @@ app.post(
         request,
         ...(project ? { projectId: project.id, projectRevision: project.updatedAt } : {}),
         idempotencyKey: storyboardAsyncIdempotencyKey(req),
+        entitlement,
       });
       if (!storyboardAsyncTerminal(queued.job.status)) {
         await scheduleVideoLabWork();
@@ -4431,7 +4665,11 @@ app.post(
     }
   },
 );
-app.get("/v1/storyboard-enhancements/:id", auth, async (req, res, next) => {
+app.get(
+  "/v1/storyboard-enhancements/:id",
+  auth,
+  distributedRateLimit({ name: "storyboard-enhancement-status", limit: 180 }),
+  async (req, res, next) => {
   try {
     const job = await findStoryboardAsyncJob(
       res.locals.principal.uid,
@@ -4445,10 +4683,12 @@ app.get("/v1/storyboard-enhancements/:id", auth, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+  },
+);
 app.post(
   "/v1/storyboard-enhancements/:id/cancel",
   auth,
+  distributedRateLimit({ name: "storyboard-enhancement-cancel", limit: 30 }),
   async (req, res, next) => {
     try {
       if (Object.keys(req.body ?? {}).length) {
@@ -4474,9 +4714,10 @@ app.post(
 app.post(
   "/v1/storyboards/enhance",
   auth,
-  rateLimit({ name: "storyboard-enhance", limit: 12 }),
+  distributedRateLimit({ name: "storyboard-enhance", limit: 12 }),
   async (req, res, next) => {
     try {
+      await requireCreatorEntitlement(res.locals.principal.uid, "director");
       if (Buffer.byteLength(JSON.stringify(req.body ?? {}), "utf8") > 512 * 1024) {
         throw problem(413, "storyboard_enhancement_request_too_large", "Storyboard enhancement input exceeds the 512 KiB text-only limit");
       }
@@ -4562,11 +4803,12 @@ app.post(
 app.post(
   "/v1/storyboards/director/jobs",
   auth,
-  rateLimit({ name: "storyboard-director-submit", limit: 30 }),
+  distributedRateLimit({ name: "storyboard-director-submit", limit: 30 }),
   async (req, res, next) => {
     try {
       const input = directorProposalInput(req.body);
       const uid = res.locals.principal.uid as string;
+      const entitlement = await requireCreatorEntitlement(uid, "director");
       const project = await findStoryboardProject(uid, input.projectId);
       if (!project) throw problem(404, "project_not_found", "Project not found");
       const request: DirectorProposalRequest = input;
@@ -4577,6 +4819,7 @@ app.post(
         projectId: project.id,
         projectRevision: project.updatedAt,
         idempotencyKey: storyboardAsyncIdempotencyKey(req),
+        entitlement,
       });
       if (!storyboardAsyncTerminal(queued.job.status)) {
         await scheduleVideoLabWork();
@@ -4592,7 +4835,11 @@ app.post(
     }
   },
 );
-app.get("/v1/storyboards/director/jobs/:id", auth, async (req, res, next) => {
+app.get(
+  "/v1/storyboards/director/jobs/:id",
+  auth,
+  distributedRateLimit({ name: "storyboard-director-status", limit: 180 }),
+  async (req, res, next) => {
   try {
     const job = await findStoryboardAsyncJob(
       res.locals.principal.uid,
@@ -4606,10 +4853,12 @@ app.get("/v1/storyboards/director/jobs/:id", auth, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+  },
+);
 app.post(
   "/v1/storyboards/director/jobs/:id/cancel",
   auth,
+  distributedRateLimit({ name: "storyboard-director-cancel", limit: 30 }),
   async (req, res, next) => {
     try {
       if (Object.keys(req.body ?? {}).length) {
@@ -4645,9 +4894,10 @@ app.get("/v1/storyboards/director/history", auth, async (req, res, next) => {
 app.post(
   "/v1/storyboards/director/proposals",
   auth,
-  rateLimit({ name: "storyboard-director", limit: 30 }),
+  distributedRateLimit({ name: "storyboard-director", limit: 30 }),
   async (req, res, next) => {
     try {
+      await requireCreatorEntitlement(res.locals.principal.uid, "director");
       const input = directorProposalInput(req.body);
       const project = await findStoryboardProject(
         res.locals.principal.uid,
@@ -4808,7 +5058,11 @@ app.post(
     }
   },
 );
-app.post("/v1/assets/upload-url", auth, async (req, res, next) => {
+app.post(
+  "/v1/assets/upload-url",
+  auth,
+  distributedRateLimit({ name: "asset-upload-create", limit: 30 }),
+  async (req, res, next) => {
   try {
     const { fileName, contentType, sizeBytes, purpose } = req.body;
     if (
@@ -4846,10 +5100,12 @@ app.post("/v1/assets/upload-url", auth, async (req, res, next) => {
   } catch (e) {
     next(e);
   }
-});
+  },
+);
 app.put(
   "/v1/assets/:id/content",
   auth,
+  distributedRateLimit({ name: "asset-upload-content", limit: 30 }),
   express.raw({
     type: ["image/jpeg", "image/png", "image/webp"],
     limit: "10mb",
@@ -4933,7 +5189,11 @@ app.put(
     }
   },
 );
-app.get("/v1/assets/:id/content", auth, async (req, res, next) => {
+app.get(
+  "/v1/assets/:id/content",
+  auth,
+  distributedRateLimit({ name: "asset-content", limit: 120 }),
+  async (req, res, next) => {
   try {
     const asset = await findAsset(String(req.params.id));
     if (!asset || asset.uid !== res.locals.principal.uid || !asset.uploadedAt) {
@@ -4951,11 +5211,12 @@ app.get("/v1/assets/:id/content", auth, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+  },
+);
 app.post(
   "/v1/generations",
   auth,
-  rateLimit({ name: "generation-submit", limit: 10 }),
+  distributedRateLimit({ name: "generation-submit", limit: 10 }),
   async (req, res, next) => {
     try {
       await ensureRuntimeConfiguration();
@@ -4973,8 +5234,16 @@ app.post(
           "idempotency_key_required",
           "Idempotency-Key header is required",
         );
+      const requestHash = generationRequestHash(req.body);
       const existing = await findIdempotentGeneration(p.uid, key);
       if (existing) {
+        if (existing.requestHash && existing.requestHash !== requestHash) {
+          throw problem(
+            409,
+            "idempotency_conflict",
+            "This idempotency key was already used for a different generation request",
+          );
+        }
         log("generation_idempotent_replay", {
           uid: p.uid,
           generationId: existing.id,
@@ -5025,6 +5294,16 @@ app.post(
           "Generation settings are required",
         );
       }
+      const requestedOperationScope = String(
+        (requestedSettings as { operationScope?: unknown }).operationScope ??
+          "project",
+      );
+      const entitlement = await requireCreatorEntitlement(
+        p.uid,
+        ["start_frame", "end_frame"].includes(requestedOperationScope)
+          ? "frame_generation"
+          : "video_generation",
+      );
       const settings = (await resolveAssetIds(
         requestedSettings,
         p.uid,
@@ -5296,6 +5575,8 @@ app.post(
       const gen: StoredGeneration = {
         id,
         uid: p.uid,
+        requestHash,
+        creatorAuthorization: reserveCreatorAuthorization(entitlement, id),
         prompt,
         settings,
         ...(referenceSnapshot.length > 0 ? { referenceSnapshot } : {}),
@@ -5341,7 +5622,11 @@ app.post(
     }
   },
 );
-app.get("/v1/generations/:id", auth, async (req, res, next) => {
+app.get(
+  "/v1/generations/:id",
+  auth,
+  distributedRateLimit({ name: "generation-status", limit: 180 }),
+  async (req, res, next) => {
   try {
     const id = String(req.params.id ?? "");
     const g = await findGeneration(id);
@@ -5351,8 +5636,13 @@ app.get("/v1/generations/:id", auth, async (req, res, next) => {
   } catch (e) {
     next(e);
   }
-});
-app.get("/v1/generations/:id/download", auth, async (req, res, next) => {
+  },
+);
+app.get(
+  "/v1/generations/:id/download",
+  auth,
+  distributedRateLimit({ name: "generation-download", limit: 60 }),
+  async (req, res, next) => {
   try {
     const id = String(req.params.id ?? "");
     const g = await findGeneration(id);
@@ -5389,7 +5679,8 @@ app.get("/v1/generations/:id/download", auth, async (req, res, next) => {
   } catch (e) {
     next(e);
   }
-});
+  },
+);
 app.post("/v1/generations/:id/edits", auth, async (req, res, next) => {
   try {
     const id = String(req.params.id ?? "");
@@ -5552,6 +5843,10 @@ app.post("/v1/generations/:id/cancel", auth, async (req, res, next) => {
     const ng: StoredGeneration = {
       ...g,
       status: "cancelled" as const,
+      creatorAuthorization: finalizeCreatorAuthorization(
+        g.creatorAuthorization,
+        "released",
+      ),
       updatedAt: nowIso(),
       safeErrorMessage: "Cancelled by user",
     };
@@ -5595,7 +5890,11 @@ app.delete("/v1/generations/:id", auth, async (req, res, next) => {
     next(e);
   }
 });
-app.get("/v1/gallery", auth, async (req, res, next) => {
+app.get(
+  "/v1/gallery",
+  auth,
+  distributedRateLimit({ name: "gallery", limit: 90 }),
+  async (req, res, next) => {
   try {
     const p = res.locals.principal as Principal;
     const requestedLimit = req.query.limit === undefined ? 20 : Number(req.query.limit);
@@ -5644,7 +5943,8 @@ app.get("/v1/gallery", auth, async (req, res, next) => {
   } catch (e) {
     next(e);
   }
-});
+  },
+);
 app.get("/v1/runtime/status", auth, async (_req, res, next) => {
   try {
     await ensureRuntimeConfiguration();
@@ -5867,6 +6167,10 @@ async function processQueueItem(workerId = "local-worker") {
       const cancelled: StoredGeneration = {
         ...gens.get(g.id)!,
         status: "cancelled",
+        creatorAuthorization: finalizeCreatorAuthorization(
+          gens.get(g.id)!.creatorAuthorization,
+          "released",
+        ),
         safeErrorMessage: "Cancelled by user",
         updatedAt: nowIso(),
       };
@@ -5943,6 +6247,10 @@ async function processQueueItem(workerId = "local-worker") {
     const failed: StoredGeneration = {
       ...(gens.get(g.id) ?? g),
       status: "failed",
+      creatorAuthorization: finalizeCreatorAuthorization(
+        (gens.get(g.id) ?? g).creatorAuthorization,
+        "released",
+      ),
       failureCode,
       safeErrorMessage: `${
         failureCode === "runtime_timeout"

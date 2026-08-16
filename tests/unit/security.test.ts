@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import express from "express";
+import request from "supertest";
 import {
   isPrivateRuntimeHostname,
   normalizeRuntimeOrigin,
+  rateLimit,
   runtimeOriginAllowed,
 } from "../../apps/api/src/security.js";
 
@@ -85,5 +88,46 @@ describe("runtime origin security", () => {
         NODE_ENV: "production",
       }),
     ).toBe(false);
+  });
+
+  it("uses the injected distributed counter and returns owned retry timing", async () => {
+    const app = express();
+    app.get(
+      "/limited",
+      rateLimit({
+        name: "distributed-test",
+        limit: 1,
+        key: () => "owner-1",
+        consume: async (input) => {
+          expect(input).toMatchObject({
+            name: "distributed-test",
+            identity: "owner-1",
+            limit: 1,
+          });
+          return { allowed: false, retryAfterSeconds: 17 };
+        },
+      }),
+      (_req, res) => res.json({ ok: true }),
+    );
+    const response = await request(app).get("/limited").expect(429);
+    expect(response.headers["retry-after"]).toBe("17");
+    expect(response.body.code).toBe("rate_limited");
+  });
+
+  it("fails closed when the distributed rate store is unavailable", async () => {
+    const app = express();
+    app.get(
+      "/limited",
+      rateLimit({
+        name: "distributed-test",
+        limit: 1,
+        consume: async () => {
+          throw new Error("store unavailable");
+        },
+      }),
+      (_req, res) => res.json({ ok: true }),
+    );
+    const response = await request(app).get("/limited").expect(503);
+    expect(response.body.code).toBe("rate_limit_unavailable");
   });
 });

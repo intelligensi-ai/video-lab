@@ -115,6 +115,7 @@ describe("durable asynchronous storyboard jobs", () => {
       status: "queued",
       stage: "queued",
     });
+    expect(submitted.body.creatorAuthorization).toBeUndefined();
 
     const replay = await request(app)
       .post("/v1/storyboard-enhancements")

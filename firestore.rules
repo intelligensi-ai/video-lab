@@ -25,6 +25,8 @@ service cloud.firestore {
     match /storyboardAsyncJobs/{id} { allow read, write: if false; }
     match /storyboardAsyncIdempotency/{id} { allow read, write: if false; }
     match /storyboardAsyncActive/{id} { allow read, write: if false; }
+    match /videoLabEntitlements/{uid} { allow read, write: if false; }
+    match /apiRateLimits/{id} { allow read, write: if false; }
     match /projectDeletionQueue/{id} { allow read, write: if false; }
     match /runtimeState/{id} { allow read, write: if false; }
     match /runtimeDiscovery/{id} { allow read, write: if false; }
