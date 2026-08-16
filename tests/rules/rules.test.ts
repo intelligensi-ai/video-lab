@@ -15,6 +15,9 @@ describe("security rules", () => {
     expect(firestore).toContain("match /generationQueue/{id}");
     expect(firestore).toContain("match /generationIdempotency/{id}");
     expect(firestore).toContain("match /generationActive/{id}");
+    expect(firestore).toContain("match /storyboardAsyncJobs/{id}");
+    expect(firestore).toContain("match /storyboardAsyncIdempotency/{id}");
+    expect(firestore).toContain("match /storyboardAsyncActive/{id}");
   });
   it("scopes storage uploads by uid and content type", () => {
     expect(storage).toContain("match /users/{uid}/uploads/{fileName}");
@@ -35,6 +38,24 @@ describe("security rules", () => {
         { fieldPath: "uid", order: "ASCENDING" },
         { fieldPath: "projectId", order: "ASCENDING" },
         { fieldPath: "createdAt", order: "DESCENDING" },
+      ],
+    });
+  });
+  it("indexes durable Director queue claims and lease recovery", () => {
+    expect(indexes.indexes).toContainEqual({
+      collectionGroup: "storyboardAsyncJobs",
+      queryScope: "COLLECTION",
+      fields: [
+        { fieldPath: "status", order: "ASCENDING" },
+        { fieldPath: "createdAt", order: "ASCENDING" },
+      ],
+    });
+    expect(indexes.indexes).toContainEqual({
+      collectionGroup: "storyboardAsyncJobs",
+      queryScope: "COLLECTION",
+      fields: [
+        { fieldPath: "status", order: "ASCENDING" },
+        { fieldPath: "leaseExpiresAt", order: "ASCENDING" },
       ],
     });
   });

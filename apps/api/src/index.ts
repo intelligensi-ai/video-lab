@@ -13,11 +13,14 @@ import YAML from "yaml";
 import { nanoid } from "nanoid";
 import { applicationDefault, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import { getFunctions } from "firebase-admin/functions";
 import { longFormVideoModels, MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
 import type {
   CreditWallet,
   DirectorProposal,
   DirectorProposalDiff,
+  DirectorProposalJob,
+  DirectorProposalRequest,
   DirectorProposalResult,
   Generation,
   Me,
@@ -27,6 +30,7 @@ import type {
   StoryboardAudioPolicy,
   StoryboardContinuityBible,
   StoryboardEnhancementRequest,
+  StoryboardEnhancementJob,
   StoryboardEnhancementResponse,
   StoryboardEnhancementRuntimeContext,
   StoryboardReferenceSummary,
@@ -142,6 +146,29 @@ type StoredStoryboardProject = {
   updatedAt: string;
 };
 type StoredDirectorProposal = DirectorProposal & { uid: string };
+type StoredStoryboardAsyncJob = {
+  id: string;
+  uid: string;
+  kind: "storyboard_enhancement" | "director_proposal";
+  status: StoryboardEnhancementJob["status"];
+  stage: StoryboardEnhancementJob["stage"];
+  projectId?: string;
+  projectRevision?: string;
+  request: StoryboardEnhancementRequest | DirectorProposalRequest;
+  requestHash: string;
+  idempotencyHash: string;
+  correlationId: string;
+  attempt: number;
+  createdAt: string;
+  updatedAt: string;
+  claimedBy?: string;
+  leaseExpiresAt?: string;
+  retryAfterAt?: string;
+  cancellationRequestedAt?: string;
+  safeErrorMessage?: string;
+  enhancementResult?: StoryboardEnhancementResponse;
+  proposalResult?: DirectorProposal;
+};
 const users = new Map<string, Me>();
 const wallets = new Map<string, CreditWallet>();
 const gens = new Map<string, StoredGeneration>();
@@ -157,6 +184,15 @@ const storyboardDrafts = new Map<
 >();
 const storyboardProjects = new Map<string, StoredStoryboardProject>();
 const directorProposals = new Map<string, StoredDirectorProposal>();
+const storyboardAsyncJobs = new Map<string, StoredStoryboardAsyncJob>();
+const storyboardAsyncIdempotency = new Map<
+  string,
+  { jobId: string; requestHash: string }
+>();
+const storyboardAsyncJobCollection = "storyboardAsyncJobs";
+const storyboardAsyncIdempotencyCollection = "storyboardAsyncIdempotency";
+const storyboardAsyncActiveCollection = "storyboardAsyncActive";
+const storyboardAsyncMetricsDocument = "storyboardAsyncQueueMetrics";
 const assets = new Map<string, StoredAsset>();
 const generationEdits = new Map<string, StoredGenerationEdit>();
 const execFileAsync = promisify(execFile);
@@ -3216,6 +3252,661 @@ async function listDirectorProposals(uid: string, projectId: string) {
     .map(publicDirectorProposal);
 }
 
+function storyboardAsyncTerminal(status: StoredStoryboardAsyncJob["status"]) {
+  return ["completed", "failed", "cancelled"].includes(status);
+}
+
+function storyboardAsyncRequestHash(
+  kind: StoredStoryboardAsyncJob["kind"],
+  request: StoredStoryboardAsyncJob["request"],
+) {
+  return createHash("sha256")
+    .update(`${kind}\0${JSON.stringify(request)}`)
+    .digest("hex");
+}
+
+function storyboardAsyncIdempotencyKey(req: express.Request) {
+  const key = req.header("idempotency-key")?.trim() ?? "";
+  if (!/^[A-Za-z0-9._:-]{8,200}$/.test(key)) {
+    throw problem(
+      400,
+      "invalid_idempotency_key",
+      "Idempotency-Key must contain 8-200 safe characters",
+    );
+  }
+  return key;
+}
+
+function publicStoryboardAsyncJob(
+  job: StoredStoryboardAsyncJob,
+): StoryboardEnhancementJob | DirectorProposalJob {
+  const enhancement = job.kind === "storyboard_enhancement";
+  const self = enhancement
+    ? `/v1/storyboard-enhancements/${job.id}`
+    : `/v1/storyboards/director/jobs/${job.id}`;
+  const retryAt = job.retryAfterAt ? Date.parse(job.retryAfterAt) : Number.NaN;
+  const retryAfterSeconds = Number.isFinite(retryAt)
+    ? Math.max(1, Math.ceil((retryAt - Date.now()) / 1_000))
+    : undefined;
+  const visible = {
+    id: job.id,
+    kind: job.kind,
+    status: job.status,
+    stage: job.stage,
+    ...(job.projectId ? { projectId: job.projectId } : {}),
+    attempt: job.attempt,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
+    ...(job.safeErrorMessage ? { safeErrorMessage: job.safeErrorMessage } : {}),
+    ...(enhancement && job.enhancementResult
+      ? { result: job.enhancementResult }
+      : {}),
+    ...(!enhancement && job.proposalResult
+      ? { result: job.proposalResult }
+      : {}),
+    links: {
+      self,
+      cancel: storyboardAsyncTerminal(job.status) ? null : `${self}/cancel`,
+    },
+  };
+  return visible as StoryboardEnhancementJob | DirectorProposalJob;
+}
+
+function firestoreStoryboardAsyncJob(job: StoredStoryboardAsyncJob) {
+  return JSON.parse(JSON.stringify(job)) as StoredStoryboardAsyncJob;
+}
+
+function storyboardAsyncJobKey(uid: string, id: string) {
+  return `${uid}:${id}`;
+}
+
+async function findStoryboardAsyncJob(uid: string, id: string) {
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) return undefined;
+  const cached = storyboardAsyncJobs.get(storyboardAsyncJobKey(uid, id));
+  if (cached || localAuth) return cached;
+  adminApp();
+  const snapshot = await getFirestore()
+    .collection(storyboardAsyncJobCollection)
+    .doc(id)
+    .get();
+  if (!snapshot.exists) return undefined;
+  const job = snapshot.data() as StoredStoryboardAsyncJob;
+  if (job.uid !== uid) return undefined;
+  storyboardAsyncJobs.set(storyboardAsyncJobKey(uid, id), job);
+  return job;
+}
+
+async function persistStoryboardAsyncJob(job: StoredStoryboardAsyncJob) {
+  storyboardAsyncJobs.set(storyboardAsyncJobKey(job.uid, job.id), job);
+  if (!localAuth) {
+    adminApp();
+    await getFirestore()
+      .collection(storyboardAsyncJobCollection)
+      .doc(job.id)
+      .set(firestoreStoryboardAsyncJob(job), { merge: false });
+  }
+  return job;
+}
+
+function storyboardAsyncQueueLimit() {
+  return boundedInteger(
+    process.env.VIDEO_STORYBOARD_ASYNC_QUEUE_LIMIT,
+    50,
+    1,
+    1_000,
+  );
+}
+
+function storyboardAsyncLeaseMs() {
+  return boundedInteger(
+    process.env.VIDEO_STORYBOARD_ASYNC_LEASE_MS,
+    12 * 60_000,
+    60_000,
+    30 * 60_000,
+  );
+}
+
+async function enqueueStoryboardAsyncJob(input: {
+  uid: string;
+  kind: StoredStoryboardAsyncJob["kind"];
+  request: StoredStoryboardAsyncJob["request"];
+  projectId?: string;
+  projectRevision?: string;
+  idempotencyKey: string;
+}) {
+  const idempotencyHash = idempotencyDocumentId(
+    input.uid,
+    `storyboard:${input.kind}:${input.idempotencyKey}`,
+  );
+  const requestHash = storyboardAsyncRequestHash(input.kind, input.request);
+  const existingLocal = storyboardAsyncIdempotency.get(idempotencyHash);
+  if (existingLocal) {
+    if (existingLocal.requestHash !== requestHash) {
+      throw problem(
+        409,
+        "idempotency_conflict",
+        "This idempotency key was already used for a different Director request",
+      );
+    }
+    const replay = await findStoryboardAsyncJob(input.uid, existingLocal.jobId);
+    if (replay) return { job: replay, created: false };
+  }
+  const now = nowIso();
+  const job: StoredStoryboardAsyncJob = {
+    id: nanoid(20),
+    uid: input.uid,
+    kind: input.kind,
+    status: "queued",
+    stage: "queued",
+    ...(input.projectId ? { projectId: input.projectId } : {}),
+    ...(input.projectRevision ? { projectRevision: input.projectRevision } : {}),
+    request: input.request,
+    requestHash,
+    idempotencyHash,
+    correlationId: nanoid(20),
+    attempt: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+  if (localAuth) {
+    const active = [...storyboardAsyncJobs.values()].find(
+      (candidate) =>
+        candidate.uid === input.uid && !storyboardAsyncTerminal(candidate.status),
+    );
+    if (active) {
+      throw problem(
+        409,
+        "active_storyboard_job_exists",
+        "Finish or cancel the current Director request before starting another",
+      );
+    }
+    const outstanding = [...storyboardAsyncJobs.values()].filter(
+      (candidate) => !storyboardAsyncTerminal(candidate.status),
+    ).length;
+    if (outstanding >= storyboardAsyncQueueLimit()) {
+      throw problem(
+        429,
+        "storyboard_queue_full",
+        "Director capacity is temporarily full. Please retry shortly",
+      );
+    }
+    storyboardAsyncJobs.set(storyboardAsyncJobKey(input.uid, job.id), job);
+    storyboardAsyncIdempotency.set(idempotencyHash, {
+      jobId: job.id,
+      requestHash,
+    });
+    return { job, created: true };
+  }
+
+  adminApp();
+  const firestore = getFirestore();
+  const jobRef = firestore.collection(storyboardAsyncJobCollection).doc(job.id);
+  const idempotencyRef = firestore
+    .collection(storyboardAsyncIdempotencyCollection)
+    .doc(idempotencyHash);
+  const activeRef = firestore
+    .collection(storyboardAsyncActiveCollection)
+    .doc(input.uid);
+  const metricsRef = firestore
+    .collection("runtimeState")
+    .doc(storyboardAsyncMetricsDocument);
+  let result = job;
+  let created = false;
+  await firestore.runTransaction(async (transaction) => {
+    const idempotencySnapshot = await transaction.get(idempotencyRef);
+    if (idempotencySnapshot.exists) {
+      if (idempotencySnapshot.data()?.requestHash !== requestHash) {
+        throw problem(
+          409,
+          "idempotency_conflict",
+          "This idempotency key was already used for a different Director request",
+        );
+      }
+      const replayId = String(idempotencySnapshot.data()?.jobId ?? "");
+      const replaySnapshot = replayId
+        ? await transaction.get(
+            firestore.collection(storyboardAsyncJobCollection).doc(replayId),
+          )
+        : undefined;
+      if (!replaySnapshot?.exists) {
+        throw problem(
+          409,
+          "idempotency_reconciliation_required",
+          "The original Director request is being reconciled",
+        );
+      }
+      result = replaySnapshot.data() as StoredStoryboardAsyncJob;
+      return;
+    }
+    const [activeSnapshot, metricsSnapshot] = await Promise.all([
+      transaction.get(activeRef),
+      transaction.get(metricsRef),
+    ]);
+    const activeId = String(activeSnapshot.data()?.jobId ?? "");
+    const activeJobSnapshot = activeId
+      ? await transaction.get(
+          firestore.collection(storyboardAsyncJobCollection).doc(activeId),
+        )
+      : undefined;
+    if (
+      activeJobSnapshot?.exists &&
+      !storyboardAsyncTerminal(
+        (activeJobSnapshot.data() as StoredStoryboardAsyncJob).status,
+      )
+    ) {
+      throw problem(
+        409,
+        "active_storyboard_job_exists",
+        "Finish or cancel the current Director request before starting another",
+      );
+    }
+    const outstanding = Math.max(
+      0,
+      Number(metricsSnapshot.data()?.outstanding ?? 0),
+    );
+    if (outstanding >= storyboardAsyncQueueLimit()) {
+      throw problem(
+        429,
+        "storyboard_queue_full",
+        "Director capacity is temporarily full. Please retry shortly",
+      );
+    }
+    transaction.create(jobRef, firestoreStoryboardAsyncJob(job));
+    transaction.create(idempotencyRef, {
+      uid: input.uid,
+      jobId: job.id,
+      requestHash,
+      createdAt: now,
+    });
+    transaction.set(activeRef, { uid: input.uid, jobId: job.id, updatedAt: now });
+    transaction.set(
+      metricsRef,
+      { outstanding: outstanding + 1, updatedAt: now },
+      { merge: true },
+    );
+    created = true;
+  });
+  storyboardAsyncJobs.set(storyboardAsyncJobKey(input.uid, result.id), result);
+  storyboardAsyncIdempotency.set(idempotencyHash, {
+    jobId: result.id,
+    requestHash,
+  });
+  return { job: result, created };
+}
+
+async function finishStoryboardAsyncJob(job: StoredStoryboardAsyncJob) {
+  storyboardAsyncJobs.set(storyboardAsyncJobKey(job.uid, job.id), job);
+  if (localAuth) return job;
+  adminApp();
+  const firestore = getFirestore();
+  const jobRef = firestore.collection(storyboardAsyncJobCollection).doc(job.id);
+  const activeRef = firestore
+    .collection(storyboardAsyncActiveCollection)
+    .doc(job.uid);
+  const metricsRef = firestore
+    .collection("runtimeState")
+    .doc(storyboardAsyncMetricsDocument);
+  await firestore.runTransaction(async (transaction) => {
+    const [jobSnapshot, activeSnapshot, metricsSnapshot] = await Promise.all([
+      transaction.get(jobRef),
+      transaction.get(activeRef),
+      transaction.get(metricsRef),
+    ]);
+    const wasOutstanding =
+      jobSnapshot.exists &&
+      !storyboardAsyncTerminal(
+        (jobSnapshot.data() as StoredStoryboardAsyncJob).status,
+      );
+    transaction.set(jobRef, firestoreStoryboardAsyncJob(job), { merge: false });
+    if (activeSnapshot.data()?.jobId === job.id) transaction.delete(activeRef);
+    if (wasOutstanding) {
+      transaction.set(
+        metricsRef,
+        {
+          outstanding: Math.max(
+            0,
+            Number(metricsSnapshot.data()?.outstanding ?? 0) - 1,
+          ),
+          updatedAt: nowIso(),
+        },
+        { merge: true },
+      );
+    }
+  });
+  return job;
+}
+
+async function claimStoryboardAsyncJob(workerId: string) {
+  const now = Date.now();
+  const claim = (candidate: StoredStoryboardAsyncJob) => ({
+    ...candidate,
+    status: "running" as const,
+    stage: "loading_model" as const,
+    claimedBy: workerId,
+    attempt: candidate.attempt + 1,
+    leaseExpiresAt: new Date(now + storyboardAsyncLeaseMs()).toISOString(),
+    retryAfterAt: undefined,
+    updatedAt: nowIso(),
+  });
+  if (localAuth) {
+    const candidate = [...storyboardAsyncJobs.values()]
+      .filter((job) => {
+        const retryReady = !job.retryAfterAt || Date.parse(job.retryAfterAt) <= now;
+        return (
+          (job.status === "queued" && retryReady) ||
+          (job.status === "running" &&
+            Boolean(job.leaseExpiresAt) &&
+            Date.parse(job.leaseExpiresAt!) < now)
+        );
+      })
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
+    if (!candidate) return undefined;
+    const claimed = claim(candidate);
+    storyboardAsyncJobs.set(storyboardAsyncJobKey(claimed.uid, claimed.id), claimed);
+    return claimed;
+  }
+  adminApp();
+  const firestore = getFirestore();
+  const [queued, expired] = await Promise.all([
+    firestore
+      .collection(storyboardAsyncJobCollection)
+      .where("status", "==", "queued")
+      .orderBy("createdAt", "asc")
+      .limit(50)
+      .get(),
+    firestore
+      .collection(storyboardAsyncJobCollection)
+      .where("status", "==", "running")
+      .where("leaseExpiresAt", "<", nowIso())
+      .orderBy("leaseExpiresAt", "asc")
+      .limit(50)
+      .get(),
+  ]);
+  for (const document of [...queued.docs, ...expired.docs]) {
+    let claimed: StoredStoryboardAsyncJob | undefined;
+    await firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(document.ref);
+      if (!snapshot.exists) return;
+      const candidate = snapshot.data() as StoredStoryboardAsyncJob;
+      const retryReady =
+        !candidate.retryAfterAt || Date.parse(candidate.retryAfterAt) <= Date.now();
+      const eligible =
+        (candidate.status === "queued" && retryReady) ||
+        (candidate.status === "running" &&
+          Boolean(candidate.leaseExpiresAt) &&
+          Date.parse(candidate.leaseExpiresAt!) < Date.now());
+      if (!eligible) return;
+      claimed = claim(candidate);
+      transaction.set(
+        document.ref,
+        firestoreStoryboardAsyncJob(claimed),
+        { merge: false },
+      );
+    });
+    if (claimed) {
+      storyboardAsyncJobs.set(
+        storyboardAsyncJobKey(claimed.uid, claimed.id),
+        claimed,
+      );
+      return claimed;
+    }
+  }
+  return undefined;
+}
+
+async function cancelStoryboardAsyncJob(job: StoredStoryboardAsyncJob) {
+  if (storyboardAsyncTerminal(job.status)) return job;
+  if (job.status === "queued") {
+    return finishStoryboardAsyncJob({
+      ...job,
+      status: "cancelled",
+      stage: "cancelled",
+      safeErrorMessage: "Cancelled by user",
+      updatedAt: nowIso(),
+    });
+  }
+  return persistStoryboardAsyncJob({
+    ...job,
+    stage: "cancelling",
+    cancellationRequestedAt: nowIso(),
+    updatedAt: nowIso(),
+  });
+}
+
+async function reloadStoryboardAsyncJob(job: StoredStoryboardAsyncJob) {
+  if (localAuth) {
+    return storyboardAsyncJobs.get(storyboardAsyncJobKey(job.uid, job.id));
+  }
+  adminApp();
+  const snapshot = await getFirestore()
+    .collection(storyboardAsyncJobCollection)
+    .doc(job.id)
+    .get();
+  if (!snapshot.exists) return undefined;
+  const latest = snapshot.data() as StoredStoryboardAsyncJob;
+  if (latest.uid !== job.uid) return undefined;
+  storyboardAsyncJobs.set(storyboardAsyncJobKey(latest.uid, latest.id), latest);
+  return latest;
+}
+
+function storyboardAsyncSafeFailure(error: unknown) {
+  if (error instanceof Error) {
+    if (error.message === "storyboard_context_budget_exceeded") {
+      return "This storyboard is too detailed to process safely in one request. Shorten it or target one scene; your existing work is unchanged.";
+    }
+    if (error.message === "storyboard_enhancer_unavailable") {
+      return "The Director is temporarily unavailable. Please retry shortly; your existing work is unchanged.";
+    }
+    if (
+      [
+        "storyboard_enhancement_failed",
+        "storyboard_enhancement_request_rejected",
+        "storyboard_enhancement_contract_incompatible",
+      ].includes(error.message)
+    ) {
+      return "The Director did not return a valid storyboard. Please retry; your existing work is unchanged.";
+    }
+  }
+  const code = operationalErrorCode(error);
+  if (code === "runtime_timeout") {
+    return "The Director took too long to respond. The request can be retried safely.";
+  }
+  if (code === "runtime_network") {
+    return "The Director temporarily lost its connection. The request can be retried safely.";
+  }
+  if (code === "runtime_authentication") {
+    return "The Director connection could not be verified. Please try again shortly.";
+  }
+  return "The Director request failed safely. Your existing work is unchanged.";
+}
+
+function storyboardAsyncRetryable(error: unknown) {
+  if (error && typeof error === "object" && "status" in error) {
+    const status = Number((error as { status?: unknown }).status);
+    if (Number.isFinite(status) && status >= 400 && status < 500) return false;
+  }
+  const code = operationalErrorCode(error);
+  return ["runtime_timeout", "runtime_network", "runtime_failure"].includes(code);
+}
+
+function storyboardAsyncRetryDelaySeconds(attempt: number) {
+  return Math.min(60, Math.max(2, 2 ** Math.max(1, attempt)));
+}
+
+async function markStoryboardAsyncStage(
+  job: StoredStoryboardAsyncJob,
+  stage: StoredStoryboardAsyncJob["stage"],
+) {
+  return persistStoryboardAsyncJob({
+    ...job,
+    status: "running",
+    stage,
+    updatedAt: nowIso(),
+  });
+}
+
+async function completeCancelledStoryboardAsyncJob(
+  job: StoredStoryboardAsyncJob,
+) {
+  return finishStoryboardAsyncJob({
+    ...job,
+    status: "cancelled",
+    stage: "cancelled",
+    safeErrorMessage: "Cancelled by user",
+    claimedBy: undefined,
+    leaseExpiresAt: undefined,
+    retryAfterAt: undefined,
+    updatedAt: nowIso(),
+  });
+}
+
+async function processStoryboardAsyncJob(workerId: string) {
+  let job = await claimStoryboardAsyncJob(workerId);
+  if (!job) return false;
+  try {
+    if (job.cancellationRequestedAt) {
+      await completeCancelledStoryboardAsyncJob(job);
+      return true;
+    }
+    const project = job.projectId
+      ? await findStoryboardProject(job.uid, job.projectId)
+      : undefined;
+    if (job.projectId && !project) {
+      throw problem(404, "project_not_found", "Storyboard project not found");
+    }
+    if (
+      project &&
+      job.projectRevision &&
+      project.updatedAt !== job.projectRevision
+    ) {
+      throw problem(
+        409,
+        "project_revision_conflict",
+        "The project changed while this Director request was queued. Review it and retry.",
+      );
+    }
+    job = await markStoryboardAsyncStage(job, "planning");
+    if (job.kind === "storyboard_enhancement") {
+      let request = job.request as StoryboardEnhancementRequest;
+      let runtimeContext: StoryboardEnhancementRuntimeContext | undefined;
+      if (project) {
+        const resolved = await resolveEnhancementRuntimeContext(
+          job.uid,
+          project,
+          request,
+        );
+        request = resolved.request;
+        runtimeContext = {
+          ...resolved.runtimeContext,
+          correlationId: job.correlationId,
+        };
+      }
+      const enhancementResult = await enhanceStoryboard(request, runtimeContext);
+      job = await markStoryboardAsyncStage(job, "validating");
+      const latest = await reloadStoryboardAsyncJob(job);
+      if (latest?.cancellationRequestedAt) {
+        await completeCancelledStoryboardAsyncJob(latest);
+        return true;
+      }
+      await finishStoryboardAsyncJob({
+        ...(latest ?? job),
+        status: "completed",
+        stage: "completed",
+        enhancementResult,
+        claimedBy: undefined,
+        leaseExpiresAt: undefined,
+        updatedAt: nowIso(),
+      });
+    } else {
+      if (!project) {
+        throw problem(404, "project_not_found", "Storyboard project not found");
+      }
+      const request = job.request as DirectorProposalRequest;
+      const proposal = await buildDirectorProposal(
+        job.uid,
+        project,
+        request.message,
+        request.selectedSceneId,
+      );
+      job = await markStoryboardAsyncStage(job, "validating");
+      const latest = await reloadStoryboardAsyncJob(job);
+      if (latest?.cancellationRequestedAt) {
+        await completeCancelledStoryboardAsyncJob(latest);
+        return true;
+      }
+      const proposalResult = await persistDirectorProposal(proposal);
+      await finishStoryboardAsyncJob({
+        ...(latest ?? job),
+        status: "completed",
+        stage: "completed",
+        proposalResult,
+        claimedBy: undefined,
+        leaseExpiresAt: undefined,
+        updatedAt: nowIso(),
+      });
+    }
+    return true;
+  } catch (error) {
+    const latest = (await reloadStoryboardAsyncJob(job)) ?? job;
+    if (latest.cancellationRequestedAt) {
+      await completeCancelledStoryboardAsyncJob(latest);
+      return true;
+    }
+    if (latest.attempt < 3 && storyboardAsyncRetryable(error)) {
+      const delaySeconds = storyboardAsyncRetryDelaySeconds(latest.attempt);
+      await persistStoryboardAsyncJob({
+        ...latest,
+        status: "queued",
+        stage: "queued",
+        safeErrorMessage: undefined,
+        claimedBy: undefined,
+        leaseExpiresAt: undefined,
+        retryAfterAt: new Date(Date.now() + delaySeconds * 1_000).toISOString(),
+        updatedAt: nowIso(),
+      });
+      await scheduleVideoLabWork(delaySeconds);
+      return true;
+    }
+    await finishStoryboardAsyncJob({
+      ...latest,
+      status: "failed",
+      stage: "failed",
+      safeErrorMessage: storyboardAsyncSafeFailure(error),
+      claimedBy: undefined,
+      leaseExpiresAt: undefined,
+      retryAfterAt: undefined,
+      updatedAt: nowIso(),
+    });
+    log("storyboard_async_job_failed", {
+      jobId: latest.id,
+      kind: latest.kind,
+      attempt: latest.attempt,
+      errorCode: operationalErrorCode(error),
+      correlationId: latest.correlationId,
+    });
+    return true;
+  }
+}
+
+async function scheduleVideoLabWork(delaySeconds = 0) {
+  if (localAuth) {
+    if (process.env.NODE_ENV === "test") return;
+    setTimeout(() => void processOne(`local-task-${nanoid(8)}`), delaySeconds * 1_000);
+    return;
+  }
+  adminApp();
+  await getFunctions()
+    .taskQueue("processVideoLabJobs")
+    .enqueue(
+      { requestedAt: nowIso() },
+      {
+        scheduleDelaySeconds: Math.max(0, Math.floor(delaySeconds)),
+        dispatchDeadlineSeconds: 1_800,
+      },
+    );
+}
+
 function directorProposalInput(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw problem(400, "invalid_director_request", "A Director request is required");
@@ -3330,7 +4021,7 @@ function directorDiff(
   return [];
 }
 
-async function createDirectorProposal(
+async function buildDirectorProposal(
   uid: string,
   project: StoredStoryboardProject,
   message: string,
@@ -3424,7 +4115,18 @@ async function createDirectorProposal(
     createdAt: now,
     updatedAt: now,
   };
-  return persistDirectorProposal(proposal);
+  return proposal;
+}
+
+async function createDirectorProposal(
+  uid: string,
+  project: StoredStoryboardProject,
+  message: string,
+  selectedSceneId?: string,
+) {
+  return persistDirectorProposal(
+    await buildDirectorProposal(uid, project, message, selectedSceneId),
+  );
 }
 
 async function enhanceStoryboard(
@@ -3680,6 +4382,96 @@ app.post("/v1/prompts/complete", auth, async (req, res, next) => {
   }
 });
 app.post(
+  "/v1/storyboard-enhancements",
+  auth,
+  rateLimit({ name: "storyboard-enhancement-submit", limit: 12 }),
+  async (req, res, next) => {
+    try {
+      if (Buffer.byteLength(JSON.stringify(req.body ?? {}), "utf8") > 512 * 1024) {
+        throw problem(
+          413,
+          "storyboard_enhancement_request_too_large",
+          "Storyboard enhancement input exceeds the 512 KiB text-only limit",
+        );
+      }
+      const request = enhancementRequest(req.body);
+      const uid = res.locals.principal.uid as string;
+      let project: StoredStoryboardProject | undefined;
+      if (request.projectId) {
+        project = await findStoryboardProject(uid, String(request.projectId));
+        if (!project) {
+          throw problem(404, "project_not_found", "Storyboard project not found");
+        }
+      } else if (request.references.length) {
+        throw problem(
+          400,
+          "project_required",
+          "Project references require a saved project",
+        );
+      }
+      const queued = await enqueueStoryboardAsyncJob({
+        uid,
+        kind: "storyboard_enhancement",
+        request,
+        ...(project ? { projectId: project.id, projectRevision: project.updatedAt } : {}),
+        idempotencyKey: storyboardAsyncIdempotencyKey(req),
+      });
+      if (!storyboardAsyncTerminal(queued.job.status)) {
+        await scheduleVideoLabWork();
+      }
+      const visible = publicStoryboardAsyncJob(queued.job);
+      res.set({
+        "Cache-Control": "private, no-store",
+        Location: `/v1/storyboard-enhancements/${queued.job.id}`,
+        "Retry-After": "2",
+      });
+      res.status(202).json(visible);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+app.get("/v1/storyboard-enhancements/:id", auth, async (req, res, next) => {
+  try {
+    const job = await findStoryboardAsyncJob(
+      res.locals.principal.uid,
+      String(req.params.id),
+    );
+    if (!job || job.kind !== "storyboard_enhancement") {
+      throw problem(404, "storyboard_job_not_found", "Storyboard job not found");
+    }
+    res.set("Cache-Control", "private, no-store");
+    res.json(publicStoryboardAsyncJob(job));
+  } catch (error) {
+    next(error);
+  }
+});
+app.post(
+  "/v1/storyboard-enhancements/:id/cancel",
+  auth,
+  async (req, res, next) => {
+    try {
+      if (Object.keys(req.body ?? {}).length) {
+        throw problem(400, "invalid_cancel_request", "Cancel does not accept a request body");
+      }
+      const job = await findStoryboardAsyncJob(
+        res.locals.principal.uid,
+        String(req.params.id),
+      );
+      if (!job || job.kind !== "storyboard_enhancement") {
+        throw problem(404, "storyboard_job_not_found", "Storyboard job not found");
+      }
+      const cancelled = await cancelStoryboardAsyncJob(job);
+      res.set("Cache-Control", "private, no-store");
+      res.status(storyboardAsyncTerminal(cancelled.status) ? 200 : 202).json(
+        publicStoryboardAsyncJob(cancelled),
+      );
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+app.post(
   "/v1/storyboards/enhance",
   auth,
   rateLimit({ name: "storyboard-enhance", limit: 12 }),
@@ -3763,6 +4555,79 @@ app.post(
         );
         return;
       }
+      next(error);
+    }
+  },
+);
+app.post(
+  "/v1/storyboards/director/jobs",
+  auth,
+  rateLimit({ name: "storyboard-director-submit", limit: 30 }),
+  async (req, res, next) => {
+    try {
+      const input = directorProposalInput(req.body);
+      const uid = res.locals.principal.uid as string;
+      const project = await findStoryboardProject(uid, input.projectId);
+      if (!project) throw problem(404, "project_not_found", "Project not found");
+      const request: DirectorProposalRequest = input;
+      const queued = await enqueueStoryboardAsyncJob({
+        uid,
+        kind: "director_proposal",
+        request,
+        projectId: project.id,
+        projectRevision: project.updatedAt,
+        idempotencyKey: storyboardAsyncIdempotencyKey(req),
+      });
+      if (!storyboardAsyncTerminal(queued.job.status)) {
+        await scheduleVideoLabWork();
+      }
+      res.set({
+        "Cache-Control": "private, no-store",
+        Location: `/v1/storyboards/director/jobs/${queued.job.id}`,
+        "Retry-After": "2",
+      });
+      res.status(202).json(publicStoryboardAsyncJob(queued.job));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+app.get("/v1/storyboards/director/jobs/:id", auth, async (req, res, next) => {
+  try {
+    const job = await findStoryboardAsyncJob(
+      res.locals.principal.uid,
+      String(req.params.id),
+    );
+    if (!job || job.kind !== "director_proposal") {
+      throw problem(404, "director_job_not_found", "Director job not found");
+    }
+    res.set("Cache-Control", "private, no-store");
+    res.json(publicStoryboardAsyncJob(job));
+  } catch (error) {
+    next(error);
+  }
+});
+app.post(
+  "/v1/storyboards/director/jobs/:id/cancel",
+  auth,
+  async (req, res, next) => {
+    try {
+      if (Object.keys(req.body ?? {}).length) {
+        throw problem(400, "invalid_cancel_request", "Cancel does not accept a request body");
+      }
+      const job = await findStoryboardAsyncJob(
+        res.locals.principal.uid,
+        String(req.params.id),
+      );
+      if (!job || job.kind !== "director_proposal") {
+        throw problem(404, "director_job_not_found", "Director job not found");
+      }
+      const cancelled = await cancelStoryboardAsyncJob(job);
+      res.set("Cache-Control", "private, no-store");
+      res.status(storyboardAsyncTerminal(cancelled.status) ? 200 : 202).json(
+        publicStoryboardAsyncJob(cancelled),
+      );
+    } catch (error) {
       next(error);
     }
   },
@@ -4449,6 +5314,9 @@ app.post(
         });
         return res.json(publicGeneration(queued.generation));
       }
+      if (process.env.NODE_ENV === "production" || process.env.K_SERVICE) {
+        await scheduleVideoLabWork();
+      }
       runtimeState = {
         ...runtimeState,
         queueDepth: Math.max(1, runtimeState.queueDepth),
@@ -5101,8 +5969,12 @@ async function processQueueItem(workerId = "local-worker") {
   }
   return true;
 }
+async function processAvailableWork(workerId = "local-worker") {
+  if (await processStoryboardAsyncJob(workerId)) return true;
+  return processQueueItem(workerId);
+}
 export async function processOne(workerId = "local-worker") {
-  await processQueueItem(workerId);
+  await processAvailableWork(workerId);
 }
 export function workerConcurrencyLimit(env: NodeJS.ProcessEnv = process.env) {
   return boundedInteger(env.VIDEO_LAB_WORKER_CONCURRENCY, 2, 1, 20);
@@ -5111,7 +5983,7 @@ const activeWorkerPromises = new Set<Promise<boolean>>();
 
 function startQueueWorker() {
   let worker: Promise<boolean>;
-  worker = processQueueItem(`web-triggered-worker-${nanoid(8)}`).finally(() => {
+  worker = processAvailableWork(`web-triggered-worker-${nanoid(8)}`).finally(() => {
     activeWorkerPromises.delete(worker);
   });
   activeWorkerPromises.add(worker);
@@ -5229,6 +6101,13 @@ app.use(
     res.status(p.status).type("application/problem+json").json(p);
   },
 );
+const runtimeApiKeySecret =
+  process.env.NODE_ENV === "test"
+    ? undefined
+    : (await import("firebase-functions/params")).defineSecret(
+        "VIDEO_LAB_RUNTIME_API_KEY",
+      );
+
 export const api =
   process.env.NODE_ENV === "test"
     ? app
@@ -5236,12 +6115,36 @@ export const api =
         {
           timeoutSeconds: 3600,
           memory: "1GiB",
-          maxInstances: 1,
-          secrets: [
-            (await import("firebase-functions/params")).defineSecret(
-              "VIDEO_LAB_RUNTIME_API_KEY",
-            ),
-          ],
+          maxInstances: 4,
+          concurrency: 40,
+          secrets: runtimeApiKeySecret ? [runtimeApiKeySecret] : [],
         },
         app,
+      );
+
+export const processVideoLabJobs =
+  process.env.NODE_ENV === "test"
+    ? async () => processAvailableWork("test-task-worker")
+    : (await import("firebase-functions/v2/tasks")).onTaskDispatched(
+        {
+          timeoutSeconds: 1_800,
+          memory: "1GiB",
+          maxInstances: workerConcurrencyLimit(),
+          concurrency: 1,
+          retryConfig: {
+            maxAttempts: 3,
+            maxRetrySeconds: 3_600,
+            minBackoffSeconds: 5,
+            maxBackoffSeconds: 300,
+            maxDoublings: 4,
+          },
+          rateLimits: {
+            maxConcurrentDispatches: workerConcurrencyLimit(),
+            maxDispatchesPerSecond: 2,
+          },
+          secrets: runtimeApiKeySecret ? [runtimeApiKeySecret] : [],
+        },
+        async (request) => {
+          await processAvailableWork(`cloud-task-${request.id || nanoid(8)}`);
+        },
       );

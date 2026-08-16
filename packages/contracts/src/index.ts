@@ -336,6 +336,43 @@ export interface StoryboardEnhancementResponse {
   };
 }
 
+export type StoryboardAsyncJobStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type StoryboardAsyncJobStage =
+  | "queued"
+  | "loading_model"
+  | "planning"
+  | "validating"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface StoryboardAsyncJobLinks {
+  self: string;
+  cancel: string | null;
+}
+
+export interface StoryboardEnhancementJob {
+  id: string;
+  kind: "storyboard_enhancement";
+  status: StoryboardAsyncJobStatus;
+  stage: StoryboardAsyncJobStage;
+  projectId?: string;
+  attempt: number;
+  createdAt: string;
+  updatedAt: string;
+  retryAfterSeconds?: number;
+  safeErrorMessage?: string;
+  result?: StoryboardEnhancementResponse;
+  links: StoryboardAsyncJobLinks;
+}
+
 export const directorActionTypes = [
   "answer_project_question",
   "suggest_creative_direction",
@@ -410,4 +447,19 @@ export interface DirectorProposalRequest {
 export interface DirectorProposalResult {
   proposal: DirectorProposal;
   project?: StoryboardProject;
+}
+
+export interface DirectorProposalJob {
+  id: string;
+  kind: "director_proposal";
+  status: StoryboardAsyncJobStatus;
+  stage: StoryboardAsyncJobStage;
+  projectId: string;
+  attempt: number;
+  createdAt: string;
+  updatedAt: string;
+  retryAfterSeconds?: number;
+  safeErrorMessage?: string;
+  result?: DirectorProposal;
+  links: StoryboardAsyncJobLinks;
 }

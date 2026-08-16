@@ -31,6 +31,7 @@ import {
   listStoryboardProjects,
   fetchUserAsset,
   storeUserAsset,
+  storyboardAsyncProgressMessage,
   waitForGeneration,
   type LongFormGenerationPayload,
   type ReferenceRole,
@@ -44,7 +45,6 @@ import {
   useAuthenticatedVideo,
 } from "./AuthenticatedVideo.js";
 import { PromptSuggestion } from "./PromptSuggestion.js";
-import { generatePromptExpansion } from "./promptAi.js";
 import { getFirebaseUser, isProductionFirebase } from "./auth.js";
 import {
   deleteStoryboardSession,
@@ -514,6 +514,7 @@ export default function LongFormStoryboardStudio({
   const [projectError, setProjectError] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [enhancementProgress, setEnhancementProgress] = useState("");
   const [undoForm, setUndoForm] = useState<LongFormGenerationPayload>();
   const [frameStates, setFrameStates] = useState<Record<string, FrameState>>(
     {},
@@ -564,6 +565,10 @@ export default function LongFormStoryboardStudio({
           : action.apply === "shot"
             ? "revise_shot"
             : "plan_storyboard",
+        {
+          onProgress: (job) =>
+            setEnhancementProgress(storyboardAsyncProgressMessage(job)),
+        },
       ),
     onSuccess: (result, action) => {
       setUndoForm(form);
@@ -655,10 +660,21 @@ export default function LongFormStoryboardStudio({
         };
       });
     },
+    onSettled: () => setEnhancementProgress(""),
   });
   const classicBriefEnhancement = useMutation({
-    mutationFn: () => generatePromptExpansion(form.overallGoal, "video-scene"),
-    onSuccess: (expanded) => {
+    mutationFn: () =>
+      enhanceStoryboard(
+        form,
+        undefined,
+        projectId,
+        "enhance_master_prompt",
+        {
+          onProgress: (job) =>
+            setEnhancementProgress(storyboardAsyncProgressMessage(job)),
+        },
+      ),
+    onSuccess: (result) => {
       setUndoForm(form);
       setForm((current) =>
         markAcceptedClipsStale(
@@ -666,12 +682,17 @@ export default function LongFormStoryboardStudio({
             ...current,
             originalOverallGoal:
               current.originalOverallGoal ?? current.overallGoal,
-            overallGoal: expanded,
+            overallGoal: result.polishedMasterPrompt,
+            continuityBible: result.continuityBible,
+            directorAssumptions: result.assumptions,
+            instructionBundle: result.instructionBundle,
+            referencePlanningEvidence: referencePlanningEvidence(result, current),
           },
           "The video brief changed after this clip was accepted. Render this scene again before assembly.",
         ),
       );
     },
+    onSettled: () => setEnhancementProgress(""),
   });
   useEffect(() => {
     const items = gallery.data?.items ?? [];
@@ -1269,6 +1290,11 @@ export default function LongFormStoryboardStudio({
             {isClassic && !sessionReady && (
               <p className="lf-minimal-session-state" role="status">
                 Opening your private project…
+              </p>
+            )}
+            {enhancementProgress && (
+              <p className="lf-minimal-session-state" role="status" aria-live="polite">
+                {enhancementProgress}
               </p>
             )}
             <div

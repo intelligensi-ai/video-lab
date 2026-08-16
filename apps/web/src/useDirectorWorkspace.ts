@@ -26,6 +26,7 @@ import {
   listStoryboardProjects,
   MAX_INTERMEDIATE_KEYFRAMES,
   storeUserAsset,
+  storyboardAsyncProgressMessage,
   waitForGeneration,
   type LongFormGenerationPayload,
   type StoryboardProjectReference,
@@ -738,7 +739,13 @@ export function useDirectorWorkspace() {
       setNotice("The Director is preparing a bounded proposal. Nothing has changed yet.");
       try {
         await saveStoryboardSession(ownerId, projectId, projectTitleRef.current, formRef.current);
-        const proposal = await createDirectorProposal({ projectId, message: trimmed, selectedSceneId });
+        const proposal = await createDirectorProposal(
+          { projectId, message: trimmed, selectedSceneId },
+          {
+            onProgress: (job) =>
+              setNotice(storyboardAsyncProgressMessage(job)),
+          },
+        );
         setCurrentProposal(proposal.state === "pending" ? proposal : undefined);
         setProposals((items) => [proposal, ...items.filter((item) => item.id !== proposal.id)].slice(0, 50));
         setMessages((items) => [

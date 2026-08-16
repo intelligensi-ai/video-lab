@@ -13,7 +13,13 @@ describe("openapi contract", () => {
       "/v1/credits",
       "/v1/prompts/complete",
       "/v1/storyboards/enhance",
+      "/v1/storyboard-enhancements",
+      "/v1/storyboard-enhancements/{jobId}",
+      "/v1/storyboard-enhancements/{jobId}/cancel",
       "/v1/storyboards/director/history",
+      "/v1/storyboards/director/jobs",
+      "/v1/storyboards/director/jobs/{jobId}",
+      "/v1/storyboards/director/jobs/{jobId}/cancel",
       "/v1/storyboards/director/proposals",
       "/v1/storyboards/director/proposals/{proposalId}/accept",
       "/v1/storyboards/director/proposals/{proposalId}/discard",
@@ -53,6 +59,19 @@ describe("openapi contract", () => {
   });
   it("requires idempotency key on generation submission", () => {
     expect(doc.paths["/v1/generations"].post.parameters[0].required).toBe(true);
+    expect(doc.paths["/v1/storyboard-enhancements"].post.parameters[0].required).toBe(true);
+    expect(doc.paths["/v1/storyboards/director/jobs"].post.parameters[0].required).toBe(true);
+  });
+  it("keeps browser-facing Director work asynchronous and cancellable", () => {
+    expect(doc.paths["/v1/storyboard-enhancements"].post.responses).toHaveProperty("202");
+    expect(doc.paths["/v1/storyboards/director/jobs"].post.responses).toHaveProperty("202");
+    expect(doc.components.schemas.StoryboardAsyncJobStatus.enum).toEqual([
+      "queued",
+      "running",
+      "completed",
+      "failed",
+      "cancelled",
+    ]);
   });
   it("documents non-terminal cancellation and fail-closed deletion", () => {
     expect(
