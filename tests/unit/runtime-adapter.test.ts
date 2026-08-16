@@ -558,11 +558,16 @@ describe("SulphurLtxRuntimeAdapter", () => {
   });
 
   it("downloads the completed runtime artifact", async () => {
+    const mp4 = new Uint8Array([
+      0x00, 0x00, 0x00, 0x18,
+      0x66, 0x74, 0x79, 0x70,
+      0x69, 0x73, 0x6f, 0x6d,
+    ]);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
         expect(url).toBe("http://runtime.test/jobs/job-with-video/output");
-        return new Response(new Uint8Array([0, 0, 0, 24]), {
+        return new Response(mp4, {
           status: 200,
           headers: {
             "content-type": "video/mp4",
@@ -580,7 +585,7 @@ describe("SulphurLtxRuntimeAdapter", () => {
 
     expect(output.contentType).toBe("video/mp4");
     expect(output.durationSeconds).toBe(4);
-    expect(output.bytes).toEqual(new Uint8Array([0, 0, 0, 24]));
+    expect(output.bytes).toEqual(mp4);
   });
 
   it("maps an independent first-frame operation and accepts a PNG artifact", async () => {
@@ -591,9 +596,12 @@ describe("SulphurLtxRuntimeAdapter", () => {
         calls.push({ url, init });
         if (url.endsWith("/jobs"))
           return Response.json({ id: "frame-job" }, { status: 202 });
-        return new Response(new Uint8Array([137, 80, 78, 71]), {
-          headers: { "content-type": "image/png" },
-        });
+        return new Response(
+          new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+          {
+            headers: { "content-type": "image/png" },
+          },
+        );
       }),
     );
     const adapter = new SulphurLtxRuntimeAdapter({
