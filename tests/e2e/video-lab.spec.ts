@@ -45,6 +45,61 @@ test("minimal VideoLab exposes only Director, preview, generation and three outp
   );
 });
 
+test("Video Lab exposes LTX 2.5 only when the managed runtime advertises it", async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("vl_token", "e2e-ltx25-model-user"),
+  );
+  await page.route("**/api/v1/runtime/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        provider: "verified-test-runtime",
+        status: "healthy",
+        acceptingSubmissions: true,
+        killSwitch: false,
+        queueDepth: 0,
+        updatedAt: new Date().toISOString(),
+        capabilities: {
+          defaultVideoModel: "ltx-2.3",
+          videoModels: [
+            {
+              id: "ltx-2.3",
+              label: "LTX 2.3",
+              status: "proven",
+              available: true,
+              recommended: true,
+              workflowModes: ["text", "start", "start_end"],
+            },
+            {
+              id: "ltx-2.5",
+              label: "LTX 2.5",
+              status: "preview",
+              available: true,
+              recommended: false,
+              reason: "Available on the approved preview runtime.",
+              workflowModes: ["text", "start", "start_end"],
+            },
+          ],
+        },
+      }),
+    });
+  });
+
+  await page.goto("/videolab");
+  const selector = page.getByLabel("Video model");
+  await expect(selector).toHaveValue("ltx-2.3");
+  await expect(selector.locator('option[value="ltx-2.5"]')).toBeEnabled();
+  await expect(selector.locator('option[value="ltx-2.5"]')).toHaveText(
+    "LTX 2.5 - Preview",
+  );
+
+  await selector.selectOption("ltx-2.5");
+  await expect(selector).toHaveValue("ltx-2.5");
+});
+
 test("minimal VideoLab restores the accepted completed video for a reopened project", async ({
   page,
   request,
