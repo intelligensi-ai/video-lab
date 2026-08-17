@@ -99,7 +99,7 @@ export async function generatePromptExpansion(
     );
     const expanded = trimAtWord(result.completedPrompt);
     if (expanded) return expanded;
-  } catch (error) {
+  } catch {
     const knownReference = getKnownReferenceFallback(value, kind);
     if (knownReference) return knownReference;
     return getPromptExpansionFallback(value, kind);

@@ -12,5 +12,19 @@
 - Refund generation: admin credit adjustment with audit reason.
 - Suspend abusive account: update server-controlled user status and audit.
 - Restore service: clear kill switch by resume after runtime health passes.
-- Worker invocation: call `/v1/internal/process-next` only from the trusted scheduler with `VIDEO_LAB_WORKER_TOKEN`. One invocation fills the bounded local dispatcher up to `VIDEO_LAB_WORKER_CONCURRENCY`; transactional queue claims and Deploy Studio pool reservations prevent duplicate assignment. Capacity misses return the generation to the durable queue instead of failing it. Invoke again after completion or on the next bounded schedule tick. Rotate the token if it appears in logs or configuration output.
+- Worker invocation: production submissions enqueue the private Firebase task
+  function `processVideoLabJobs`. It transactionally claims either a durable
+  Director job or generation job, uses a bounded lease, and retries transient
+  failures without duplicating inference. `/v1/internal/process-next` remains a
+  token-protected recovery probe, not the normal browser-triggered worker.
+- Director queue stuck: inspect server-only `storyboardAsyncJobs`,
+  `storyboardAsyncActive` and `runtimeState/storyboardAsyncQueueMetrics`. Reclaim
+  only an expired lease. Do not create a replacement job for a browser timeout;
+  the browser should reconnect to the original opaque job ID.
+- Rate-limit store unavailable: generation-facing endpoints fail closed with
+  `rate_limit_unavailable`. Restore Firestore before retrying; do not bypass the
+  distributed counter in production.
+- Entitlement denied: verify the server-owned `videoLabEntitlements/{uid}`
+  status, operation list, expiry and policy version. The staging UID allow-list
+  is for bounded acceptance only and must be removed after testing.
 - Runtime rotation: publish a fresh Deploy Studio lease, wait for Video Lab readiness, then retire the old endpoint. Production environment fallback should remain disabled.

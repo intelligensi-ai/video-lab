@@ -1,6 +1,7 @@
 import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
 import type {
   DirectorProposal,
+  DirectorProposalJob,
   DirectorProposalRequest,
   DirectorProposalResult,
   Generation,
@@ -12,6 +13,7 @@ import type {
   StoryboardAudioPolicy,
   StoryboardContinuityBible,
   StoryboardEnhancementRequest,
+  StoryboardEnhancementJob,
   StoryboardEnhancementOperation,
   StoryboardEnhancementResponse,
   StoryboardReferenceType,
@@ -37,6 +39,193 @@ export async function api<T>(path: string, init: RequestInit = {}) {
   }
   if (r.status === 204) return undefined as T;
   return r.json() as Promise<T>;
+}
+
+export type StoryboardAsyncProgress =
+  | StoryboardEnhancementJob
+  | DirectorProposalJob;
+
+export type StoryboardAsyncOptions = {
+  onProgress?: (job: StoryboardAsyncProgress) => void;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
+
+export function storyboardAsyncProgressMessage(job: StoryboardAsyncProgress) {
+  switch (job.stage) {
+    case "queued":
+      return "Your Director request is queued safely.";
+    case "loading_model":
+      return "Starting the private Director model…";
+    case "planning":
+      return "The Director is planning your storyboard…";
+    case "validating":
+      return "Checking scene count, prompts and continuity…";
+    case "cancelling":
+      return "Cancelling the Director request safely…";
+    case "completed":
+      return "The Director proposal is ready.";
+    case "cancelled":
+      return "The Director request was cancelled.";
+    case "failed":
+      return job.safeErrorMessage ?? "The Director request failed safely.";
+    default:
+      return "The Director is working…";
+  }
+}
+
+type PendingStoryboardJob = {
+  requestFingerprint: string;
+  idempotencyKey: string;
+  jobId?: string;
+};
+
+function pendingStoryboardStorageKey(kind: string, scope: string) {
+  return `video-lab:async:${kind}:${scope || "unsaved"}`;
+}
+
+function storyboardRequestFingerprint(value: unknown) {
+  const text = JSON.stringify(value);
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function loadPendingStoryboardJob(key: string) {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const value = JSON.parse(window.localStorage.getItem(key) ?? "null") as
+      | PendingStoryboardJob
+      | null;
+    if (
+      value &&
+      typeof value.requestFingerprint === "string" &&
+      typeof value.idempotencyKey === "string"
+    ) {
+      return value;
+    }
+  } catch {
+    // A corrupt local hint is safe to discard; Firestore remains authoritative.
+  }
+  window.localStorage.removeItem(key);
+  return undefined;
+}
+
+function savePendingStoryboardJob(key: string, value: PendingStoryboardJob) {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  }
+}
+
+function clearPendingStoryboardJob(key: string) {
+  if (typeof window !== "undefined") window.localStorage.removeItem(key);
+}
+
+function storyboardAsyncDelay(job: StoryboardAsyncProgress, attempt: number) {
+  if (job.retryAfterSeconds) return Math.min(15_000, job.retryAfterSeconds * 1_000);
+  return Math.min(5_000, 1_000 + attempt * 500);
+}
+
+async function waitForStoryboardAsyncJob<TJob extends StoryboardAsyncProgress>(
+  path: string,
+  job: TJob,
+  storageKey: string,
+  options: StoryboardAsyncOptions,
+) {
+  const deadline = Date.now() + (options.timeoutMs ?? 12 * 60_000);
+  let current = job;
+  let attempt = 0;
+  while (true) {
+    options.onProgress?.(current);
+    if (current.status === "completed") {
+      clearPendingStoryboardJob(storageKey);
+      if (!current.result) throw new Error("The Director completed without a result.");
+      return current.result;
+    }
+    if (current.status === "failed" || current.status === "cancelled") {
+      clearPendingStoryboardJob(storageKey);
+      throw new Error(
+        current.safeErrorMessage ??
+          (current.status === "cancelled"
+            ? "The Director request was cancelled."
+            : "The Director request failed safely."),
+      );
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        "The Director is still working. Reopen this project to continue following the same request.",
+      );
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timer = globalThis.setTimeout(resolve, storyboardAsyncDelay(current, attempt));
+      options.signal?.addEventListener(
+        "abort",
+        () => {
+          globalThis.clearTimeout(timer);
+          const error = new Error("The status check was stopped.");
+          error.name = "AbortError";
+          reject(error);
+        },
+        { once: true },
+      );
+    });
+    current = await api<TJob>(path, { signal: options.signal });
+    attempt += 1;
+  }
+}
+
+async function submitStoryboardAsyncJob<TJob extends StoryboardAsyncProgress>(
+  submitPath: string,
+  statusPath: (jobId: string) => string,
+  kind: string,
+  scope: string,
+  request: unknown,
+  options: StoryboardAsyncOptions,
+) {
+  const storageKey = pendingStoryboardStorageKey(kind, scope);
+  const requestFingerprint = storyboardRequestFingerprint(request);
+  let pending = loadPendingStoryboardJob(storageKey);
+  if (pending?.requestFingerprint !== requestFingerprint) {
+    pending = undefined;
+    clearPendingStoryboardJob(storageKey);
+  }
+  if (!pending) {
+    pending = {
+      requestFingerprint,
+      idempotencyKey: crypto.randomUUID(),
+    };
+    savePendingStoryboardJob(storageKey, pending);
+  }
+  let job: TJob;
+  if (pending.jobId) {
+    try {
+      job = await api<TJob>(statusPath(pending.jobId), {
+        signal: options.signal,
+      });
+    } catch {
+      pending.jobId = undefined;
+      savePendingStoryboardJob(storageKey, pending);
+      job = await api<TJob>(submitPath, {
+        method: "POST",
+        headers: { "Idempotency-Key": pending.idempotencyKey },
+        body: JSON.stringify(request),
+        signal: options.signal,
+      });
+    }
+  } else {
+    job = await api<TJob>(submitPath, {
+      method: "POST",
+      headers: { "Idempotency-Key": pending.idempotencyKey },
+      body: JSON.stringify(request),
+      signal: options.signal,
+    });
+  }
+  pending.jobId = job.id;
+  savePendingStoryboardJob(storageKey, pending);
+  return waitForStoryboardAsyncJob(statusPath(job.id), job, storageKey, options);
 }
 
 export async function fetchGenerationOutput(downloadUrl: string) {
@@ -624,18 +813,28 @@ export function storyboardEnhancementRequest(
   };
 }
 
-export const enhanceStoryboard = (
+export const enhanceStoryboard = async (
   payload: LongFormGenerationPayload,
   targetShotNumber?: number,
   projectId?: string,
   operation?: StoryboardEnhancementOperation,
-) =>
-  api<StoryboardEnhancementResponse>("/v1/storyboards/enhance", {
-    method: "POST",
-    body: JSON.stringify(
-      storyboardEnhancementRequest(payload, targetShotNumber, projectId, operation),
-    ),
-  });
+  options: StoryboardAsyncOptions = {},
+) => {
+  const request = storyboardEnhancementRequest(
+    payload,
+    targetShotNumber,
+    projectId,
+    operation,
+  );
+  return submitStoryboardAsyncJob<StoryboardEnhancementJob>(
+    "/v1/storyboard-enhancements",
+    (jobId) => `/v1/storyboard-enhancements/${encodeURIComponent(jobId)}`,
+    "enhancement",
+    projectId ?? "unsaved",
+    request,
+    options,
+  ) as Promise<StoryboardEnhancementResponse>;
+};
 
 export async function generateStoryboardFrame(
   payload: LongFormGenerationPayload,
@@ -821,11 +1020,30 @@ export async function assembleStoryboardFilm(
   });
 }
 
-export const createDirectorProposal = (request: DirectorProposalRequest) =>
-  api<DirectorProposal>("/v1/storyboards/director/proposals", {
-    method: "POST",
-    body: JSON.stringify(request),
-  });
+export const createDirectorProposal = (
+  request: DirectorProposalRequest,
+  options: StoryboardAsyncOptions = {},
+) =>
+  submitStoryboardAsyncJob<DirectorProposalJob>(
+    "/v1/storyboards/director/jobs",
+    (jobId) => `/v1/storyboards/director/jobs/${encodeURIComponent(jobId)}`,
+    "director",
+    request.projectId,
+    request,
+    options,
+  ) as Promise<DirectorProposal>;
+
+export const cancelStoryboardEnhancementJob = (jobId: string) =>
+  api<StoryboardEnhancementJob>(
+    `/v1/storyboard-enhancements/${encodeURIComponent(jobId)}/cancel`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+
+export const cancelDirectorProposalJob = (jobId: string) =>
+  api<DirectorProposalJob>(
+    `/v1/storyboards/director/jobs/${encodeURIComponent(jobId)}/cancel`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
 
 export const listDirectorProposals = (projectId: string) =>
   api<{ items: DirectorProposal[] }>(

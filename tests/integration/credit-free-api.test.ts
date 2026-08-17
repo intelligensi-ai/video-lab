@@ -15,6 +15,19 @@ describe("credit-free generation", () => {
       .expect(201);
 
     expect(response.body.creditCost).toBe(0);
+    expect(response.body.creatorAuthorization).toBeUndefined();
+    expect(JSON.stringify(response.body)).not.toContain("staging_allowlist");
+
+    const conflict = await request(app)
+      .post("/v1/generations")
+      .set({ authorization: "Bearer credit-free-user" })
+      .set("Idempotency-Key", "credit-free-generation-1")
+      .send({
+        prompt: "A different request must not reuse the same financial reservation",
+        settings: { aspectRatio: "16:9", durationSeconds: 8, quality: "draft" },
+      })
+      .expect(409);
+    expect(conflict.body.code).toBe("idempotency_conflict");
   });
 
   it("never returns embedded frame data in generation records", async () => {

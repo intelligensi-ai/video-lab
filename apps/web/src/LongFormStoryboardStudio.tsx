@@ -31,6 +31,7 @@ import {
   listStoryboardProjects,
   fetchUserAsset,
   storeUserAsset,
+  storyboardAsyncProgressMessage,
   waitForGeneration,
   type LongFormGenerationPayload,
   type ReferenceRole,
@@ -513,6 +514,7 @@ export default function LongFormStoryboardStudio({
   const [projectError, setProjectError] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [enhancementProgress, setEnhancementProgress] = useState("");
   const [undoForm, setUndoForm] = useState<LongFormGenerationPayload>();
   const [frameStates, setFrameStates] = useState<Record<string, FrameState>>(
     {},
@@ -563,6 +565,10 @@ export default function LongFormStoryboardStudio({
           : action.apply === "shot"
             ? "revise_shot"
             : "plan_storyboard",
+        {
+          onProgress: (job) =>
+            setEnhancementProgress(storyboardAsyncProgressMessage(job)),
+        },
       ),
     onSuccess: (result, action) => {
       setUndoForm(form);
@@ -654,6 +660,39 @@ export default function LongFormStoryboardStudio({
         };
       });
     },
+    onSettled: () => setEnhancementProgress(""),
+  });
+  const classicBriefEnhancement = useMutation({
+    mutationFn: () =>
+      enhanceStoryboard(
+        form,
+        undefined,
+        projectId,
+        "enhance_master_prompt",
+        {
+          onProgress: (job) =>
+            setEnhancementProgress(storyboardAsyncProgressMessage(job)),
+        },
+      ),
+    onSuccess: (result) => {
+      setUndoForm(form);
+      setForm((current) =>
+        markAcceptedClipsStale(
+          {
+            ...current,
+            originalOverallGoal:
+              current.originalOverallGoal ?? current.overallGoal,
+            overallGoal: result.polishedMasterPrompt,
+            continuityBible: result.continuityBible,
+            directorAssumptions: result.assumptions,
+            instructionBundle: result.instructionBundle,
+            referencePlanningEvidence: referencePlanningEvidence(result, current),
+          },
+          "The video brief changed after this clip was accepted. Render this scene again before assembly.",
+        ),
+      );
+    },
+    onSettled: () => setEnhancementProgress(""),
   });
   useEffect(() => {
     const items = gallery.data?.items ?? [];
@@ -1204,15 +1243,16 @@ export default function LongFormStoryboardStudio({
                 disabled={
                   !sessionReady ||
                   !form.overallGoal.trim() ||
-                  enhancement.isPending
+                  enhancement.isPending ||
+                  classicBriefEnhancement.isPending
                 }
                 onClick={() =>
                   isClassic
-                    ? enhancement.mutate({ apply: "master" })
+                    ? classicBriefEnhancement.mutate()
                     : enhancement.mutate({ apply: "master" })
                 }
               >
-                {enhancement.isPending
+                {enhancement.isPending || classicBriefEnhancement.isPending
                   ? "Director is working…"
                   : isClassic
                     ? "Improve with Director"
@@ -1250,6 +1290,11 @@ export default function LongFormStoryboardStudio({
             {isClassic && !sessionReady && (
               <p className="lf-minimal-session-state" role="status">
                 Opening your private project…
+              </p>
+            )}
+            {enhancementProgress && (
+              <p className="lf-minimal-session-state" role="status" aria-live="polite">
+                {enhancementProgress}
               </p>
             )}
             <div
@@ -1290,6 +1335,11 @@ export default function LongFormStoryboardStudio({
             {enhancement.error && (
               <p className="lf-error" role="alert">
                 {enhancement.error.message}
+              </p>
+            )}
+            {classicBriefEnhancement.error && (
+              <p className="lf-error" role="alert">
+                {classicBriefEnhancement.error.message}
               </p>
             )}
             {isClassic && (

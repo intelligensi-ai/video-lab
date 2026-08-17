@@ -89,6 +89,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/storyboard-enhancements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue a durable owner-scoped storyboard enhancement */
+        post: operations["submitStoryboardEnhancement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/storyboard-enhancements/{jobId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        /** Read one owner-scoped storyboard enhancement job */
+        get: operations["getStoryboardEnhancementJob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/storyboard-enhancements/{jobId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel an owner-scoped queued enhancement or request in-flight cancellation */
+        post: operations["cancelStoryboardEnhancementJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/storyboards/director/history": {
         parameters: {
             query?: never;
@@ -117,6 +172,61 @@ export interface paths {
         put?: never;
         /** Convert a natural-language direction into a bounded reviewable proposal */
         post: operations["createDirectorProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/storyboards/director/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue a durable owner-scoped Director proposal */
+        post: operations["submitDirectorProposalJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/storyboards/director/jobs/{jobId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        /** Read one owner-scoped Director proposal job */
+        get: operations["getDirectorProposalJob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/storyboards/director/jobs/{jobId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel an owner-scoped queued proposal or request in-flight cancellation */
+        post: operations["cancelDirectorProposalJob"];
         delete?: never;
         options?: never;
         head?: never;
@@ -745,6 +855,23 @@ export interface components {
             model: string;
             instructionBundle: components["schemas"]["InstructionBundle"];
         };
+        StoryboardEnhancementJob: {
+            id: string;
+            /** @enum {string} */
+            kind: "storyboard_enhancement";
+            status: components["schemas"]["StoryboardAsyncJobStatus"];
+            stage: components["schemas"]["StoryboardAsyncJobStage"];
+            projectId?: string;
+            attempt: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            retryAfterSeconds?: number;
+            safeErrorMessage?: string;
+            result?: components["schemas"]["StoryboardEnhancementResponse"];
+            links: components["schemas"]["StoryboardAsyncJobLinks"];
+        };
         StoryboardVisualReferenceAnalysis: {
             referenceId: string;
             referenceVersion: number;
@@ -797,6 +924,31 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+        };
+        /** @enum {string} */
+        StoryboardAsyncJobStatus: "queued" | "running" | "completed" | "failed" | "cancelled";
+        /** @enum {string} */
+        StoryboardAsyncJobStage: "queued" | "loading_model" | "planning" | "validating" | "cancelling" | "completed" | "failed" | "cancelled";
+        StoryboardAsyncJobLinks: {
+            self: string;
+            cancel: string | null;
+        };
+        DirectorProposalJob: {
+            id: string;
+            /** @enum {string} */
+            kind: "director_proposal";
+            status: components["schemas"]["StoryboardAsyncJobStatus"];
+            stage: components["schemas"]["StoryboardAsyncJobStage"];
+            projectId: string;
+            attempt: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            retryAfterSeconds?: number;
+            safeErrorMessage?: string;
+            result?: components["schemas"]["DirectorProposal"];
+            links: components["schemas"]["StoryboardAsyncJobLinks"];
         };
         DirectorProposalResult: {
             proposal: components["schemas"]["DirectorProposal"];
@@ -1076,6 +1228,113 @@ export interface operations {
             };
         };
     };
+    submitStoryboardEnhancement: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StoryboardEnhancementRequest"];
+            };
+        };
+        responses: {
+            /** @description Enhancement queued or idempotently recovered */
+            202: {
+                headers: {
+                    Location?: string;
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoryboardEnhancementJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Idempotency conflict or active owner job */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getStoryboardEnhancementJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current enhancement state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoryboardEnhancementJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Job not found or not owned by caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cancelStoryboardEnhancementJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Enhancement is terminal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoryboardEnhancementJob"];
+                };
+            };
+            /** @description In-flight cancellation requested */
+            202: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoryboardEnhancementJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Job not found or not owned by caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listDirectorProposals: {
         parameters: {
             query: {
@@ -1140,6 +1399,113 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             /** @description Local Director unavailable for creative rewriting */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    submitDirectorProposalJob: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DirectorProposalRequest"];
+            };
+        };
+        responses: {
+            /** @description Director proposal queued or idempotently recovered */
+            202: {
+                headers: {
+                    Location?: string;
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectorProposalJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Idempotency conflict or active owner job */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getDirectorProposalJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current Director proposal state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectorProposalJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Job not found or not owned by caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cancelDirectorProposalJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Director proposal job is terminal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectorProposalJob"];
+                };
+            };
+            /** @description In-flight cancellation requested */
+            202: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectorProposalJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Job not found or not owned by caller */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

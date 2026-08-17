@@ -4,7 +4,24 @@ The browser never talks to the GPU runtime and never supplies identity, credit c
 
 Runtime and Gemma endpoints/tokens are server-only. Origins must be HTTPS, origin-only and allow-listed in production; redirects and cross-origin artifact URLs are rejected. Firestore and Storage rules deny direct client access to API-managed operational data. Uploads and outputs cross the same-origin API after type, size and ownership validation.
 
-Public gallery filters are type-checked and capped at 50 before reaching Firestore. The process-local rate limiter periodically removes expired identities and enforces a 10,000-bucket memory ceiling; a distributed edge limiter is still required for coordinated production enforcement across instances.
+Public gallery filters are type-checked and capped at 50 before reaching
+Firestore. A small process-local limiter protects the general API boundary.
+Generation-facing routes additionally use a Firestore transactional counter so
+limits remain coordinated across multiple Functions instances; a rate-store
+failure rejects the request rather than silently disabling enforcement.
+
+Production checks Firebase ID tokens with revocation enabled. Optional Firebase
+App Check can be required as defence in depth after its web provider is
+configured, but it never replaces authentication. Bearer headers and
+credential-free CORS mean the API does not use cookie-authenticated mutation
+requests, avoiding a hidden CSRF trust boundary.
+
+Director and generation submissions require a server-owned entitlement. Each
+accepted job stores a private zero-cost authorisation reservation with the
+policy version and operation. Completion settles it once; cancellation or
+failure releases it once. Replaying the same idempotency key cannot create a
+second job, while changing the payload under that key is rejected. These
+technical records do not activate pricing or a payment provider.
 
 Runtime discovery keeps the resolved origin in a server-only structure. Public and administrator status responses expose only the connection source, state, safe message and lease timestamps. A manually entered emergency origin is cleared from the administrator form after a successful connection and is never returned by the API.
 

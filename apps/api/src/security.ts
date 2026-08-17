@@ -129,6 +129,7 @@ export function corsOptions(env: NodeJS.ProcessEnv = process.env): CorsOptions {
       "content-type",
       "idempotency-key",
       "x-request-id",
+      "x-firebase-appcheck",
     ],
     exposedHeaders: ["retry-after", "x-request-id"],
     maxAge: 600,
@@ -186,12 +187,56 @@ export function rateLimit(options: {
   limit: number;
   windowMs?: number;
   key?: (req: Request) => string;
+  consume?: (input: {
+    name: string;
+    identity: string;
+    limit: number;
+    windowMs: number;
+    now: number;
+  }) => Promise<{ allowed: boolean; retryAfterSeconds: number }>;
 }): RequestHandler {
   const windowMs = options.windowMs ?? 60_000;
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const now = Date.now();
+    const identity =
+      options.key?.(req) ??
+      String(res.locals.principal?.uid ?? req.ip ?? "unknown");
+    if (options.consume) {
+      try {
+        const result = await options.consume({
+          name: options.name,
+          identity,
+          limit: options.limit,
+          windowMs,
+          now,
+        });
+        if (result.allowed) {
+          next();
+          return;
+        }
+        res.setHeader("Retry-After", String(result.retryAfterSeconds));
+        res.status(429).type("application/problem+json").json({
+          type: "https://video-lab.intelligensi.ai/problems/rate_limited",
+          title: "rate limited",
+          status: 429,
+          detail: "Too many requests. Please wait before trying again.",
+          code: "rate_limited",
+          traceId: res.locals.requestId,
+        });
+        return;
+      } catch {
+        res.status(503).type("application/problem+json").json({
+          type: "https://video-lab.intelligensi.ai/problems/rate_limit_unavailable",
+          title: "rate limit unavailable",
+          status: 503,
+          detail: "Request limits could not be verified. Please retry shortly.",
+          code: "rate_limit_unavailable",
+          traceId: res.locals.requestId,
+        });
+        return;
+      }
+    }
     sweepRateBuckets(now, windowMs);
-    const identity = options.key?.(req) ?? req.ip ?? "unknown";
     const key = `${options.name}:${identity}`;
     const existing = rateBuckets.get(key);
     const bucket =

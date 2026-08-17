@@ -302,7 +302,11 @@ describe('generation worker failure handling', () => {
         return Response.json({ id: 'reference-runtime-job' }, { status: 202 });
       }
       if (url.endsWith('/jobs/reference-runtime-job/output')) {
-        return new Response(new Uint8Array([0, 0, 0, 24]), {
+        return new Response(new Uint8Array([
+          0x00, 0x00, 0x00, 0x18,
+          0x66, 0x74, 0x79, 0x70,
+          0x69, 0x73, 0x6f, 0x6d,
+        ]), {
           status: 200,
           headers: { 'content-type': 'video/mp4' },
         });
@@ -506,7 +510,11 @@ describe('generation worker failure handling', () => {
         code: 'job_not_found',
         detail: 'private terminated worker details',
       }, { status: 404, headers: { 'Retry-After': '1' } });
-      if (url.endsWith('/output')) return new Response('durable private mp4 bytes', {
+      if (url.endsWith('/output')) return new Response(new Uint8Array([
+        0x00, 0x00, 0x00, 0x18,
+        0x66, 0x74, 0x79, 0x70,
+        0x69, 0x73, 0x6f, 0x6d,
+      ]), {
         status: 200,
         headers: { 'Content-Type': 'video/mp4', 'X-Video-Duration-Seconds': '4' },
       });

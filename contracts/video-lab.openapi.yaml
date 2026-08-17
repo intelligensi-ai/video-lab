@@ -123,6 +123,73 @@ paths:
           }
         "503": { description: Local enhancer unavailable }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/storyboard-enhancements:
+    post:
+      operationId: submitStoryboardEnhancement
+      summary: Queue a durable owner-scoped storyboard enhancement
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StoryboardEnhancementRequest" }
+      responses:
+        "202":
+          description: Enhancement queued or idempotently recovered
+          headers:
+            Location: { schema: { type: string } }
+            Retry-After: { schema: { type: integer, minimum: 1 } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoryboardEnhancementJob" }
+        "409": { description: Idempotency conflict or active owner job }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/storyboard-enhancements/{jobId}:
+    parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
+    get:
+      operationId: getStoryboardEnhancementJob
+      summary: Read one owner-scoped storyboard enhancement job
+      responses:
+        "200":
+          description: Current enhancement state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoryboardEnhancementJob" }
+        "404": { description: Job not found or not owned by caller }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/storyboard-enhancements/{jobId}/cancel:
+    parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
+    post:
+      operationId: cancelStoryboardEnhancementJob
+      summary: Cancel an owner-scoped queued enhancement or request in-flight cancellation
+      responses:
+        "200":
+          description: Enhancement is terminal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoryboardEnhancementJob" }
+        "202":
+          description: In-flight cancellation requested
+          headers:
+            Retry-After: { schema: { type: integer, minimum: 1 } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoryboardEnhancementJob" }
+        "404": { description: Job not found or not owned by caller }
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /v1/storyboards/director/history:
     get:
       operationId: listDirectorProposals
@@ -164,6 +231,73 @@ paths:
               schema: { $ref: "#/components/schemas/DirectorProposal" }
         "400": { description: Invalid or unsupported Director request }
         "503": { description: Local Director unavailable for creative rewriting }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/storyboards/director/jobs:
+    post:
+      operationId: submitDirectorProposalJob
+      summary: Queue a durable owner-scoped Director proposal
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DirectorProposalRequest" }
+      responses:
+        "202":
+          description: Director proposal queued or idempotently recovered
+          headers:
+            Location: { schema: { type: string } }
+            Retry-After: { schema: { type: integer, minimum: 1 } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectorProposalJob" }
+        "409": { description: Idempotency conflict or active owner job }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/storyboards/director/jobs/{jobId}:
+    parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
+    get:
+      operationId: getDirectorProposalJob
+      summary: Read one owner-scoped Director proposal job
+      responses:
+        "200":
+          description: Current Director proposal state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectorProposalJob" }
+        "404": { description: Job not found or not owned by caller }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/storyboards/director/jobs/{jobId}/cancel:
+    parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
+    post:
+      operationId: cancelDirectorProposalJob
+      summary: Cancel an owner-scoped queued proposal or request in-flight cancellation
+      responses:
+        "200":
+          description: Director proposal job is terminal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectorProposalJob" }
+        "202":
+          description: In-flight cancellation requested
+          headers:
+            Retry-After: { schema: { type: integer, minimum: 1 } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectorProposalJob" }
+        "404": { description: Job not found or not owned by caller }
         "401": { $ref: "#/components/responses/Unauthorized" }
   /v1/storyboards/director/proposals/{proposalId}/accept:
     parameters:
@@ -1169,6 +1303,23 @@ components:
             instructionBundle: { $ref: "#/components/schemas/InstructionBundle" },
           },
       }
+    StoryboardEnhancementJob:
+      type: object
+      additionalProperties: false
+      required: [id, kind, status, stage, attempt, createdAt, updatedAt, links]
+      properties:
+        id: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
+        kind: { type: string, enum: [storyboard_enhancement] }
+        status: { $ref: "#/components/schemas/StoryboardAsyncJobStatus" }
+        stage: { $ref: "#/components/schemas/StoryboardAsyncJobStage" }
+        projectId: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
+        attempt: { type: integer, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        retryAfterSeconds: { type: integer, minimum: 1, maximum: 300 }
+        safeErrorMessage: { type: string, maxLength: 1000 }
+        result: { $ref: "#/components/schemas/StoryboardEnhancementResponse" }
+        links: { $ref: "#/components/schemas/StoryboardAsyncJobLinks" }
     StoryboardVisualReferenceAnalysis:
       type: object
       additionalProperties: false
@@ -1272,6 +1423,36 @@ components:
           additionalProperties: true
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    StoryboardAsyncJobStatus:
+      type: string
+      enum: [queued, running, completed, failed, cancelled]
+    StoryboardAsyncJobStage:
+      type: string
+      enum: [queued, loading_model, planning, validating, cancelling, completed, failed, cancelled]
+    StoryboardAsyncJobLinks:
+      type: object
+      additionalProperties: false
+      required: [self, cancel]
+      properties:
+        self: { type: string }
+        cancel: { type: [string, "null"] }
+    DirectorProposalJob:
+      type: object
+      additionalProperties: false
+      required: [id, kind, status, stage, projectId, attempt, createdAt, updatedAt, links]
+      properties:
+        id: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
+        kind: { type: string, enum: [director_proposal] }
+        status: { $ref: "#/components/schemas/StoryboardAsyncJobStatus" }
+        stage: { $ref: "#/components/schemas/StoryboardAsyncJobStage" }
+        projectId: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
+        attempt: { type: integer, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        retryAfterSeconds: { type: integer, minimum: 1, maximum: 300 }
+        safeErrorMessage: { type: string, maxLength: 1000 }
+        result: { $ref: "#/components/schemas/DirectorProposal" }
+        links: { $ref: "#/components/schemas/StoryboardAsyncJobLinks" }
     DirectorProposalResult:
       type: object
       additionalProperties: false
