@@ -1442,6 +1442,24 @@ export default function LongFormStoryboardStudio({
                 onChange={(projectReferences) =>
                   setForm((current) => ({ ...current, projectReferences }))
                 }
+                globalSeed={form.globalSeed}
+                seedPolicy={form.seedPolicy}
+                onSeedPolicyChange={(seedPolicy) =>
+                  setForm((current) =>
+                    markAcceptedClipsStale(
+                      { ...current, seedPolicy },
+                      "The visual seed policy changed after this clip was accepted. Render this scene again before assembly.",
+                    ),
+                  )
+                }
+                onGlobalSeedChange={(globalSeed) =>
+                  setForm((current) =>
+                    markAcceptedClipsStale(
+                      { ...current, globalSeed },
+                      "The global visual seed changed after this clip was accepted. Render this scene again before assembly.",
+                    ),
+                  )
+                }
               />
               <section className="lf-scenes">
                 <div className="lf-section-head">
@@ -2271,11 +2289,19 @@ function ProjectReferencePanel({
   sceneIds,
   evidence,
   onChange,
+  globalSeed,
+  seedPolicy,
+  onSeedPolicyChange,
+  onGlobalSeedChange,
 }: {
   references: StoryboardProjectReference[];
   sceneIds: string[];
   evidence: LongFormGenerationPayload["referencePlanningEvidence"];
   onChange: (references: StoryboardProjectReference[]) => void;
+  globalSeed: number;
+  seedPolicy: LongFormGenerationPayload["seedPolicy"];
+  onSeedPolicyChange: (seedPolicy: LongFormGenerationPayload["seedPolicy"]) => void;
+  onGlobalSeedChange: (globalSeed: number) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [type, setType] =
@@ -2384,6 +2410,38 @@ function ProjectReferencePanel({
             other reference media remain planning-only until runtime capability
             evidence is available.
           </p>
+          <div className="lf-seed-controls">
+            <Field
+              label="Visual seed policy"
+              help="A locked seed gives every scene the same identity anchor. Scene overrides allow deliberate variation without random drift."
+            >
+              <select
+                value={seedPolicy}
+                onChange={(event) =>
+                  onSeedPolicyChange(
+                    event.target.value as
+                      LongFormGenerationPayload["seedPolicy"],
+                  )
+                }
+              >
+                <option value="global_locked">
+                  Lock one seed across the film
+                </option>
+                <option value="scene_overrides">
+                  Allow deliberate scene overrides
+                </option>
+              </select>
+            </Field>
+            <NumberField
+              label="Global visual seed"
+              help="Keeps reproducible visual choices across the film. It does not replace prompt or frame continuity."
+              value={globalSeed}
+              min={0}
+              max={999999999}
+              step={1}
+              onChange={onGlobalSeedChange}
+            />
+          </div>
           <div className="lf-reference-create">
             <Field label="Reference type">
               <select
