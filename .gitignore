@@ -24,3 +24,4 @@ models/
 outputs/
 uploads/
 runtime-data/
+.DS_Store

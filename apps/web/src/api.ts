@@ -1,4 +1,7 @@
-import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
+import {
+  forbiddenGeneratedTextNegativePrompt,
+  MAX_STORYBOARD_SCENES,
+} from "@video-lab/contracts";
 import type {
   DirectorProposal,
   DirectorProposalJob,
@@ -18,6 +21,8 @@ import type {
   StoryboardEnhancementResponse,
   StoryboardReferenceType,
   StoryboardReferencePlanningEvidence,
+  StoryboardGeneratedTextIntent,
+  StoryboardGeneratedTextPolicy,
 } from "@video-lab/contracts";
 import { getApiToken } from "./auth.js";
 
@@ -511,6 +516,7 @@ export interface StoryboardScenePayload {
   referenceIds?: string[];
   recommendedControls?: string[];
   audioIntent?: StoryboardAudioIntent;
+  generatedTextIntent?: StoryboardGeneratedTextIntent;
 }
 
 export interface StoryboardTemporalKeyframePayload {
@@ -623,12 +629,20 @@ export interface LongFormGenerationPayload {
   scenes: StoryboardScenePayload[];
   continuityBible: StoryboardContinuityBible;
   audioPolicy: StoryboardAudioPolicy;
+  generatedTextPolicy: StoryboardGeneratedTextPolicy;
   candidateCount: number;
   projectReferences: StoryboardProjectReference[];
   videoModel?: LongFormVideoModel;
   directorAssumptions?: string[];
   instructionBundle?: StoryboardEnhancementResponse["instructionBundle"];
   referencePlanningEvidence?: StoryboardReferencePlanningEvidence;
+}
+
+export function effectiveNegativePrompt(value: string) {
+  const existing = value.trim().replace(/,+\s*$/, "");
+  return [existing, forbiddenGeneratedTextNegativePrompt]
+    .filter(Boolean)
+    .join(", ");
 }
 
 export async function generateLongFormVideo(
@@ -703,10 +717,11 @@ export async function generateLongFormVideo(
         overallGoal: payload.overallGoal,
         originalMasterPrompt: payload.originalOverallGoal ?? payload.overallGoal,
         audioPolicy: payload.audioPolicy,
+        generatedTextPolicy: payload.generatedTextPolicy,
         projectId,
         operationScope: "project",
         filmBible: payload.continuityBible,
-        negativePrompt: payload.negativePrompt,
+        negativePrompt: effectiveNegativePrompt(payload.negativePrompt),
         resolution: payload.resolution,
         fps: payload.fps,
         imageSteps: payload.imageSteps,
@@ -786,6 +801,7 @@ export function storyboardEnhancementRequest(
     // The API replaces this with its server-owned capability allow-list.
     availableControls: [],
     audioPolicy: payload.audioPolicy,
+    generatedTextPolicy: payload.generatedTextPolicy,
     requestedCandidateCount: payload.candidateCount,
     videoModel: payload.videoModel ?? "ltx-2.3",
     shots: payload.scenes.map((scene, index) => ({
@@ -804,6 +820,11 @@ export function storyboardEnhancementRequest(
       audioIntent: scene.audioIntent ?? {
         mode: "silent",
         reason: "No scene-specific audio direction has been accepted.",
+      },
+      generatedTextIntent: scene.generatedTextIntent ?? {
+        mode: "none",
+        visibleText: [],
+        reason: "Visible generated text is disabled for the Creator launch workflow.",
       },
       carryPreviousFrame: scene.carryPreviousFrame,
       firstFrameAvailable: Boolean(scene.startFrame || scene.startFrameGenerationId),
@@ -886,7 +907,9 @@ export async function generateStoryboardFrame(
         overallGoal: payload.overallGoal,
         originalMasterPrompt: payload.originalOverallGoal ?? payload.overallGoal,
         audioPolicy: payload.audioPolicy,
+        generatedTextPolicy: payload.generatedTextPolicy,
         filmBible: payload.continuityBible,
+        negativePrompt: effectiveNegativePrompt(payload.negativePrompt),
         resolution: payload.resolution,
         imageSteps: payload.imageSteps,
         seedMode: payload.seedPolicy,
@@ -943,8 +966,9 @@ export async function generateStoryboardScene(
         overallGoal: payload.overallGoal,
         originalMasterPrompt: payload.originalOverallGoal ?? payload.overallGoal,
         audioPolicy: payload.audioPolicy,
+        generatedTextPolicy: payload.generatedTextPolicy,
         filmBible: payload.continuityBible,
-        negativePrompt: payload.negativePrompt,
+        negativePrompt: effectiveNegativePrompt(payload.negativePrompt),
         resolution: payload.resolution,
         fps: payload.fps,
         imageSteps: payload.imageSteps,
@@ -997,6 +1021,7 @@ export async function assembleStoryboardFilm(
         overallGoal: payload.overallGoal,
         originalMasterPrompt: payload.originalOverallGoal ?? payload.overallGoal,
         audioPolicy: payload.audioPolicy,
+        generatedTextPolicy: payload.generatedTextPolicy,
         resolution: payload.resolution,
         fps: payload.fps,
         outputFormat: payload.outputFormat,

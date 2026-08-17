@@ -202,6 +202,30 @@ describe("SulphurLtxRuntimeAdapter", () => {
     expect(status.message).not.toContain("private upstream");
   });
 
+  it("reports bounded unwanted-text repair without exposing OCR details", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({
+        id: "text-repair-job",
+        status: "running",
+        progress: 82,
+        stage: "repairing_generated_text",
+        message: "tesseract /tmp/private-frame.png detected internal token data",
+      })),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.test",
+      payloadMode: "intelligensi-api",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+
+    await expect(adapter.getGenerationStatus("text-repair-job")).resolves.toMatchObject({
+      state: "generating",
+      stage: "repairing_generated_text",
+      message: "Repairing unwanted text",
+    });
+  });
+
   it("never exposes upstream infrastructure details as creator progress", async () => {
     vi.stubGlobal(
       "fetch",
@@ -429,6 +453,11 @@ describe("SulphurLtxRuntimeAdapter", () => {
         fps: 24,
         overallGoal: "Keep the monolith visually consistent",
         negativePrompt: "flicker",
+        generatedTextPolicy: {
+          mode: "forbidden", captions: false, subtitles: false, closedCaptions: false,
+          titleCards: false, textOverlays: false, logos: false, watermarks: false,
+          signage: "avoid_readable_text",
+        },
         referenceConditioning: [{
           id: "reference-monolith",
           type: "product",
@@ -449,6 +478,7 @@ describe("SulphurLtxRuntimeAdapter", () => {
             transitionDuration: 0.75,
             carryPreviousFrame: true,
             referenceIds: ["reference-monolith"],
+            generatedTextIntent: { mode: "none", visibleText: [], reason: "No visible text requested." },
             seedOverride: true,
             summary: "The monolith is fully visible above the mist.",
             continuityOverrides: { lighting: "Warm dawn rim light" },
@@ -468,6 +498,11 @@ describe("SulphurLtxRuntimeAdapter", () => {
       video_model: "ltx-2.5",
       overall_goal: "Keep the monolith visually consistent",
       negative_prompt: "flicker",
+      generated_text_policy: {
+        mode: "forbidden", captions: false, subtitles: false, closedCaptions: false,
+        titleCards: false, textOverlays: false, logos: false, watermarks: false,
+        signage: "avoid_readable_text",
+      },
       resolution: "1024x576",
       reference_conditioning: [{
         id: "reference-monolith",
@@ -487,6 +522,7 @@ describe("SulphurLtxRuntimeAdapter", () => {
           transition: "cut",
           carry_previous_frame: true,
           reference_ids: ["reference-monolith"],
+          generated_text_intent: { mode: "none", visibleText: [], reason: "No visible text requested." },
           seed_override: true,
           summary: "The monolith is fully visible above the mist.",
           continuity_overrides: { lighting: "Warm dawn rim light" },

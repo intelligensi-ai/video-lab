@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { defaultGeneratedTextPolicy } from "@video-lab/contracts";
 import type {
   DirectorActionType,
   DirectorProposal,
@@ -101,6 +102,7 @@ export function freshDirectorForm(): LongFormGenerationPayload {
     scenes: [newScene(0), newScene(1)],
     continuityBible: emptyContinuityBible(),
     audioPolicy: DEFAULT_AUDIO,
+    generatedTextPolicy: defaultGeneratedTextPolicy(),
     candidateCount: 3,
     projectReferences: [],
     videoModel: "ltx-2.3",

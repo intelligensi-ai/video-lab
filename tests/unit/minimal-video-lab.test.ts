@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  creatorScenesForTotalDuration,
   formForStudioVariant,
   generationPayloadForStudioVariant,
 } from "../../apps/web/src/LongFormStoryboardStudio.js";
@@ -59,7 +60,7 @@ function projectForm(): LongFormGenerationPayload {
 }
 
 describe("minimal VideoLab project safety", () => {
-  it("preserves hidden advanced scenes while submitting only the visible clip", () => {
+  it("preserves and submits the Director's complete minimal storyboard", () => {
     const original = projectForm();
     const restored = formForStudioVariant(original, true);
     const submitted = generationPayloadForStudioVariant(restored, true);
@@ -68,13 +69,51 @@ describe("minimal VideoLab project safety", () => {
       "scene-1",
       "scene-2",
     ]);
-    expect(submitted.scenes.map((item) => item.id)).toEqual(["scene-1"]);
+    expect(submitted.scenes.map((item) => item.id)).toEqual([
+      "scene-1",
+      "scene-2",
+    ]);
     expect(original.scenes).toHaveLength(2);
-    expect(submitted).not.toBe(restored);
+    expect(submitted).toBe(restored);
   });
 
   it("leaves the advanced generation payload intact", () => {
     const original = projectForm();
     expect(generationPayloadForStudioVariant(original, false)).toBe(original);
+  });
+
+  it("turns an exact Creator length into the smallest balanced valid storyboard", () => {
+    const original = [scene("scene-1", 5)];
+    const planned = creatorScenesForTotalDuration(original, 17, 4000);
+
+    expect(planned).toHaveLength(3);
+    expect(planned.map((item) => item.duration)).toEqual([6, 6, 5]);
+    expect(planned.reduce((total, item) => total + item.duration, 0)).toBe(17);
+    expect(planned.every((item) => item.duration >= 1 && item.duration <= 8)).toBe(true);
+    expect(planned.map((item) => item.seed)).toEqual([1337, 4001, 4002]);
+  });
+
+  it("respects the runtime scene limit and exact bounded duration", () => {
+    const planned = creatorScenesForTotalDuration(
+      [scene("scene-1", 5)],
+      24,
+      9000,
+      2,
+    );
+
+    expect(planned.map((item) => item.duration)).toEqual([8, 8]);
+    expect(planned.reduce((total, item) => total + item.duration, 0)).toBe(16);
+  });
+
+  it("does not remove or resize scenes that already contain successful media", () => {
+    const protectedScene = {
+      ...scene("scene-1", 5),
+      startFrameGenerationId: "frame-accepted",
+      acceptedVideoGenerationId: "video-accepted",
+    };
+    const original = [protectedScene, scene("scene-2", 4)];
+
+    expect(creatorScenesForTotalDuration(original, 4, 1337)).toBe(original);
+    expect(creatorScenesForTotalDuration(original, 12, 1337)).toBe(original);
   });
 });

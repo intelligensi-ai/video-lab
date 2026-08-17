@@ -76,6 +76,7 @@ const enhancementBody = (masterPrompt: string, shotCount: number, targetShotNumb
     referenceIds: [],
     selectedControls: [],
     audioIntent: { mode: "silent", reason: "" },
+    generatedTextIntent: { mode: "none", visibleText: [], reason: "Generated visible text is disabled." },
     carryPreviousFrame: index > 0,
     firstFrameAvailable: false,
     lastFrameAvailable: false,
@@ -88,6 +89,11 @@ const enhancementBody = (masterPrompt: string, shotCount: number, targetShotNumb
   audioPolicy: {
     mode: "intent_only", dialogue: "prompted_only", soundEffects: "intent_only", ambience: "intent_only",
     music: "prompted_or_unambiguous_performance", preserveSourceAudio: false,
+  },
+  generatedTextPolicy: {
+    mode: "forbidden", captions: false, subtitles: false, closedCaptions: false,
+    titleCards: false, textOverlays: false, logos: false, watermarks: false,
+    signage: "avoid_readable_text",
   },
   requestedCandidateCount: 3,
 });

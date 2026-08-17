@@ -35,7 +35,7 @@ The following is the recommended Windows PowerShell quick start. It launches
 the web app and API without using paid infrastructure:
 
 ```powershell
-cd "\Video-Lab"
+Set-Location "E:\OneDrive\Back-up\Projects\Project_Intelligensi\Video-Lab"
 
 corepack enable
 corepack prepare pnpm@10.28.1 --activate
@@ -102,12 +102,13 @@ backend communicates with the allow-listed Deploy Studio gateway.
 3. Choose the video model, aspect ratio, resolution and length. LTX 2.3 remains
    the proven default. LTX 2.5 is selectable only when an approved compatible
    runtime advertises that it is ready.
-4. Optionally add project references for characters, places, products or
-   visual style.
-5. Select **Improve with Director**. Video Lab queues the request durably and
-   returns immediately; the page then shows queued, model-starting, planning and
-   validation stages while the local Gemma Director creates the exact requested
-   storyboard. Refreshing reconnects to the same job rather than starting again.
+4. Select **Create storyboard**. Video Lab divides the selected total length
+   into the smallest balanced set of 1-8 second scenes, then queues the request
+   durably. The Director creates the content for exactly that application-owned
+   scene count; it cannot change the requested total duration or scene order.
+5. Submission returns immediately. The page shows queued, model-starting,
+   planning and validation stages while the local Gemma Director creates the storyboard.
+   Refreshing reconnects to the same job rather than starting again.
 6. Review and edit the scene direction, first-frame prompt and last-frame
    prompt. Generated text remains editable.
 7. Generate the first and last anchor frames. Either frame can be regenerated
@@ -122,6 +123,18 @@ backend communicates with the allow-listed Deploy Studio gateway.
 
 Use **Advanced** only when detailed scene, reference and Director controls are
 needed. The minimal `/videolab` workspace is the normal creator entry point.
+
+The default Creator policy does not request captions, subtitles, title cards,
+text overlays, logos, watermarks or readable signage. That policy is enforced by
+the Director contract, frame/video workflow prompts, stream stripping, runtime
+visible-text checks and a fail-closed Video Lab completion boundary. Quoted
+dialogue does not imply burned-in subtitles. If text is artistically required,
+use a separately reviewed advanced project policy; the minimal Creator does not
+silently enable it.
+
+See [Minimal Creator launch contract](docs/minimal-creator-launch-contract-2026-08-17.md)
+for the complete Director, scene-duration, generated-text and acceptance
+boundaries.
 
 ### Runtime unavailable
 

@@ -6,7 +6,10 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
+import {
+  defaultGeneratedTextPolicy,
+  MAX_STORYBOARD_SCENES,
+} from "@video-lab/contracts";
 import type {
   Generation,
   LongFormVideoModel,
@@ -212,6 +215,88 @@ function seedScenes(isClassic: boolean): StoryboardScenePayload[] {
   return isClassic ? scenes.map((scene) => ({ ...scene, title: "" })) : scenes;
 }
 
+const MAX_CREATOR_DURATION_SECONDS = 24;
+const MAX_CREATOR_SCENES = 3;
+
+function sceneHasGeneratedMedia(scene: StoryboardScenePayload) {
+  return Boolean(
+    scene.startFrame ||
+      scene.endFrame ||
+      scene.startFrameGenerationId ||
+      scene.endFrameGenerationId ||
+      scene.acceptedVideoGenerationId ||
+      scene.candidateGenerationIds?.length,
+  );
+}
+
+/**
+ * Converts the Creator's single total-length choice into the smallest valid
+ * storyboard. Application code owns the count and durations; the Director
+ * fills the creative content for those exact scenes.
+ */
+export function creatorScenesForTotalDuration(
+  scenes: StoryboardScenePayload[],
+  requestedSeconds: number,
+  globalSeed: number,
+  maxScenes = MAX_CREATOR_SCENES,
+): StoryboardScenePayload[] {
+  const boundedMaxScenes = Math.max(1, Math.min(MAX_CREATOR_SCENES, maxScenes));
+  const totalSeconds = Math.max(
+    1,
+    Math.min(
+      MAX_CREATOR_DURATION_SECONDS,
+      boundedMaxScenes * 8,
+      Math.round(requestedSeconds),
+    ),
+  );
+  const sceneCount = Math.ceil(totalSeconds / 8);
+  const baseDuration = Math.floor(totalSeconds / sceneCount);
+  const remainder = totalSeconds % sceneCount;
+  const durations = Array.from(
+    { length: sceneCount },
+    (_, index) => baseDuration + (index < remainder ? 1 : 0),
+  );
+
+  const wouldChangeGeneratedWork = scenes.some(
+    (scene, index) =>
+      sceneHasGeneratedMedia(scene) &&
+      (index >= sceneCount || scene.duration !== durations[index]),
+  );
+  if (wouldChangeGeneratedWork) return scenes;
+
+  return durations.map((duration, index) => {
+    const existing = scenes[index];
+    if (existing) {
+      return {
+        ...existing,
+        duration,
+        trimStart: 0,
+        trimEnd: duration,
+      };
+    }
+    return {
+      id: crypto.randomUUID(),
+      title: "",
+      prompt: "",
+      duration,
+      trimStart: 0,
+      trimEnd: duration,
+      seed: globalSeed + index,
+      seedOverrideEnabled: false,
+      summary: "",
+      continuityOverrides: {},
+      transition: index === 0 ? "cut" : "crossfade",
+      transitionDuration: 0.75,
+      carryPreviousFrame: index > 0,
+      generatedTextIntent: {
+        mode: "none",
+        visibleText: [],
+        reason: "Visible generated text is disabled for the Creator launch workflow.",
+      },
+    };
+  });
+}
+
 const formatPresets: Array<{
   key: string;
   label: string;
@@ -344,6 +429,7 @@ const initialForm: LongFormGenerationPayload = {
     music: "prompted_or_unambiguous_performance",
     preserveSourceAudio: false,
   },
+  generatedTextPolicy: defaultGeneratedTextPolicy(),
   candidateCount: 3,
   projectReferences: [],
   videoModel: "ltx-2.3",
@@ -360,6 +446,9 @@ function normalizePersistedForm(
     ...saved,
     videoModel: saved.videoModel === "ltx-2.5" ? "ltx-2.5" : "ltx-2.3",
     audioPolicy: saved.audioPolicy ?? freshInitialForm().audioPolicy,
+    generatedTextPolicy: saved.generatedTextPolicy?.mode === "forbidden"
+      ? defaultGeneratedTextPolicy()
+      : saved.generatedTextPolicy ?? defaultGeneratedTextPolicy(),
     candidateCount: Math.min(4, Math.max(1, saved.candidateCount ?? 3)),
     projectReferences: (saved.projectReferences ?? []).map((reference) => {
       const assetVersionIds = reference.assetVersionIds?.length
@@ -393,6 +482,11 @@ export function formForStudioVariant(
         summary: scene.summary ?? "",
         continuityOverrides: scene.continuityOverrides ?? {},
         seedOverrideEnabled: scene.seedOverrideEnabled === true,
+        generatedTextIntent: scene.generatedTextIntent ?? {
+          mode: "none",
+          visibleText: [],
+          reason: "Visible generated text is disabled for the Creator launch workflow.",
+        },
       }))
     : seedScenes(isClassic);
   return { ...normalized, scenes };
@@ -400,9 +494,9 @@ export function formForStudioVariant(
 
 export function generationPayloadForStudioVariant(
   form: LongFormGenerationPayload,
-  isClassic: boolean,
+  _isClassic: boolean,
 ): LongFormGenerationPayload {
-  return isClassic ? { ...form, scenes: form.scenes.slice(0, 1) } : form;
+  return form;
 }
 
 function markAcceptedClipsStale(
@@ -612,6 +706,7 @@ export default function LongFormStoryboardStudio({
                     referenceIds: enhanced.referenceIds,
                     recommendedControls: enhanced.recommendedControls,
                     audioIntent: enhanced.audioIntent,
+                    generatedTextIntent: enhanced.generatedTextIntent,
                     candidateVariations: enhanced.candidateVariations,
                     promptOrigin: "agent",
                     staleReason:
@@ -647,6 +742,7 @@ export default function LongFormStoryboardStudio({
               referenceIds: enhanced.referenceIds,
               recommendedControls: enhanced.recommendedControls,
               audioIntent: enhanced.audioIntent,
+              generatedTextIntent: enhanced.generatedTextIntent,
               candidateVariations: enhanced.candidateVariations,
               promptOrigin: "agent" as const,
               staleReason:
@@ -668,7 +764,7 @@ export default function LongFormStoryboardStudio({
         form,
         undefined,
         projectId,
-        "enhance_master_prompt",
+        "plan_storyboard",
         {
           onProgress: (job) =>
             setEnhancementProgress(storyboardAsyncProgressMessage(job)),
@@ -676,8 +772,8 @@ export default function LongFormStoryboardStudio({
       ),
     onSuccess: (result) => {
       setUndoForm(form);
-      setForm((current) =>
-        markAcceptedClipsStale(
+      setForm((current) => ({
+        ...markAcceptedClipsStale(
           {
             ...current,
             originalOverallGoal:
@@ -688,9 +784,33 @@ export default function LongFormStoryboardStudio({
             instructionBundle: result.instructionBundle,
             referencePlanningEvidence: referencePlanningEvidence(result, current),
           },
-          "The video brief changed after this clip was accepted. Render this scene again before assembly.",
+          "The Director changed this scene after its clip was accepted. Render it again before assembly.",
         ),
-      );
+        scenes: current.scenes.map((scene, index) => {
+          const enhanced = result.shots[index];
+          return {
+            ...scene,
+            title: enhanced.title,
+            narrativePurpose: enhanced.narrativePurpose,
+            prompt: enhanced.prompt,
+            firstFramePrompt: enhanced.firstFramePrompt,
+            lastFramePrompt: enhanced.lastFramePrompt,
+            continuityNotes: enhanced.continuityNotes,
+            referenceIds: enhanced.referenceIds,
+            recommendedControls: enhanced.recommendedControls,
+            audioIntent: enhanced.audioIntent,
+            generatedTextIntent: enhanced.generatedTextIntent,
+            candidateVariations: enhanced.candidateVariations,
+            promptOrigin: "agent" as const,
+            staleReason:
+              scene.startFrame ||
+              scene.endFrame ||
+              scene.acceptedVideoGenerationId
+                ? "The Director changed this scene after its anchors or video were created. Review or regenerate them before rendering."
+                : scene.staleReason,
+          };
+        }),
+      }));
     },
     onSettled: () => setEnhancementProgress(""),
   });
@@ -1123,12 +1243,12 @@ export default function LongFormStoryboardStudio({
         : { ...current, scenes: current.scenes.filter((_, i) => i !== index) },
     );
   const invalid = !form.overallGoal.trim() || !form.scenes.length;
-  const runtimeMaxScenes = isClassic
-    ? 1
-    : Math.min(
-        MAX_STORYBOARD_SCENES,
-        runtime.data?.capabilities?.maxScenes ?? MAX_STORYBOARD_SCENES,
-      );
+  const runtimeMaxScenes = Math.min(
+    MAX_STORYBOARD_SCENES,
+    runtime.data?.capabilities?.maxScenes ?? MAX_STORYBOARD_SCENES,
+  );
+  const creatorMaxScenes = Math.min(MAX_CREATOR_SCENES, runtimeMaxScenes);
+  const creatorLengthLocked = form.scenes.some(sceneHasGeneratedMedia);
   const runtimeFeatureStatus = runtime.data?.capabilities?.featureStatus ?? {};
   const videoModels = longFormVideoModelsForRuntime(runtime.data);
   const changeVideoModel = async (videoModel: LongFormVideoModel) => {
@@ -1255,7 +1375,7 @@ export default function LongFormStoryboardStudio({
                 {enhancement.isPending || classicBriefEnhancement.isPending
                   ? "Director is working…"
                   : isClassic
-                    ? "Improve with Director"
+                    ? "Create storyboard"
                     : "Polish brief"}
               </button>
             </div>
@@ -1452,7 +1572,7 @@ export default function LongFormStoryboardStudio({
                       <span className="lf-label lf-format-heading">
                         Length
                         <output className="lf-duration-value">
-                          {form.scenes[0].duration}
+                          {totalSeconds}
                           <small>s</small>
                         </output>
                       </span>
@@ -1460,24 +1580,29 @@ export default function LongFormStoryboardStudio({
                         type="range"
                         className="lf-minimal-duration-slider"
                         aria-label="Video length"
-                        disabled={!sessionReady}
+                        disabled={!sessionReady || creatorLengthLocked}
                         min={1}
-                        max={8}
+                        max={creatorMaxScenes * 8}
                         step={1}
-                        value={form.scenes[0].duration}
+                        value={Math.min(totalSeconds, creatorMaxScenes * 8)}
                         onChange={(event) => {
                           const value = Number(event.target.value);
-                          updateScene(0, {
-                            duration: value,
-                            trimStart: 0,
-                            trimEnd: value,
-                            staleReason: form.scenes[0]
-                              .acceptedVideoGenerationId
-                              ? "The video length changed after its accepted clip was rendered. Generate it again to use the new length."
-                              : form.scenes[0].staleReason,
-                          });
+                          setForm((current) => ({
+                            ...current,
+                            scenes: creatorScenesForTotalDuration(
+                              current.scenes,
+                              value,
+                              current.globalSeed,
+                              creatorMaxScenes,
+                            ),
+                          }));
                         }}
                       />
+                      <small>
+                        {creatorLengthLocked
+                          ? "Length is locked after previews or video are created. Start a new project to choose another length."
+                          : `${form.scenes.length} planned ${form.scenes.length === 1 ? "scene" : "scenes"}; the Director will shape each one.`}
+                      </small>
                     </div>
                   )}
                 </div>
@@ -1485,7 +1610,7 @@ export default function LongFormStoryboardStudio({
             )}
           </section>
           <>
-              <ProjectReferencePanel
+              {!isClassic && <ProjectReferencePanel
                 references={form.projectReferences}
                 sceneIds={form.scenes.map((scene) => scene.id)}
                 evidence={form.referencePlanningEvidence}
@@ -1510,12 +1635,12 @@ export default function LongFormStoryboardStudio({
                     ),
                   )
                 }
-              />
+              />}
               <section className="lf-scenes">
                 <div className="lf-section-head">
                   <div>
                     <span className="lf-label">Timeline</span>
-                    <h2>{isClassic ? "Scene" : "Storyboard scenes"}</h2>
+                    <h2>{isClassic ? "Storyboard" : "Storyboard scenes"}</h2>
                   </div>
                   {!isClassic && (
                     <button
@@ -2168,7 +2293,8 @@ export default function LongFormStoryboardStudio({
               Boolean(projectId) &&
               !invalid &&
               !mutation.isPending &&
-              !enhancement.isPending
+              !enhancement.isPending &&
+              !classicBriefEnhancement.isPending
             }
             generateLabel={
               mutation.isPending

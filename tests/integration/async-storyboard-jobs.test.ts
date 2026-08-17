@@ -42,6 +42,7 @@ function enhancementBody(shotCount = 2) {
       referenceIds: [],
       selectedControls: [],
       audioIntent: { mode: "silent", reason: "" },
+      generatedTextIntent: { mode: "none", visibleText: [], reason: "Generated visible text is disabled." },
       carryPreviousFrame: index > 0,
       firstFrameAvailable: false,
       lastFrameAvailable: false,
@@ -57,6 +58,11 @@ function enhancementBody(shotCount = 2) {
       ambience: "intent_only",
       music: "prompted_or_unambiguous_performance",
       preserveSourceAudio: false,
+    },
+    generatedTextPolicy: {
+      mode: "forbidden", captions: false, subtitles: false, closedCaptions: false,
+      titleCards: false, textOverlays: false, logos: false, watermarks: false,
+      signage: "avoid_readable_text",
     },
     requestedCandidateCount: 3,
   };
@@ -83,6 +89,7 @@ function projectForm() {
     candidateCount: 3,
     projectReferences: [],
     audioPolicy: enhancementBody().audioPolicy,
+    generatedTextPolicy: enhancementBody().generatedTextPolicy,
     scenes: [1, 2].map((number) => ({
       id: `scene-${number}`,
       title: `Scene ${number}`,

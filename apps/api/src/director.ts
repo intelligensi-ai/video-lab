@@ -1,4 +1,4 @@
-import { MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
+import { defaultGeneratedTextPolicy, MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
 import type {
   DirectorActionType,
   DirectorExecutionClass,
@@ -311,6 +311,15 @@ export function buildDirectorEnhancementRequest(
             reason: String(asRecord(scene.audioIntent).reason ?? ""),
           }
         : { mode: "silent", reason: "No scene-specific audio direction has been accepted." },
+      generatedTextIntent: asRecord(scene.generatedTextIntent).mode
+        ? {
+            mode: String(asRecord(scene.generatedTextIntent).mode) as StoryboardEnhancementRequest["shots"][number]["generatedTextIntent"]["mode"],
+            visibleText: Array.isArray(asRecord(scene.generatedTextIntent).visibleText)
+              ? (asRecord(scene.generatedTextIntent).visibleText as unknown[]).map(String)
+              : [],
+            reason: String(asRecord(scene.generatedTextIntent).reason ?? ""),
+          }
+        : { mode: "none", visibleText: [], reason: "Generated visible text is disabled for the minimal launch workflow." },
       carryPreviousFrame: index > 0 && scene.carryPreviousFrame !== false,
       firstFrameAvailable: Boolean(scene.startFrameGenerationId || scene.startFrame),
       lastFrameAvailable: Boolean(scene.endFrameGenerationId || scene.endFrame),
@@ -321,6 +330,7 @@ export function buildDirectorEnhancementRequest(
     references: projectReferences(form),
     availableControls,
     audioPolicy: audioPolicy(form),
+    generatedTextPolicy: defaultGeneratedTextPolicy(),
     requestedCandidateCount: Math.min(4, Math.max(1, Number(form.candidateCount) || 3)),
     videoModel: form.videoModel === "ltx-2.5" ? "ltx-2.5" : "ltx-2.3",
   };

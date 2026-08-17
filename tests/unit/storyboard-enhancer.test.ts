@@ -42,6 +42,7 @@ const request: StoryboardEnhancementRequest = {
     referenceIds: ["ref_character_01"],
     selectedControls: [],
     audioIntent: { mode: "silent" as const, reason: "" },
+    generatedTextIntent: { mode: "none" as const, visibleText: [], reason: "Generated visible text is disabled." },
     carryPreviousFrame: shotNumber > 1,
     firstFrameAvailable: false,
     lastFrameAvailable: false,
@@ -65,6 +66,17 @@ const request: StoryboardEnhancementRequest = {
     ambience: "intent_only",
     music: "prompted_or_unambiguous_performance",
     preserveSourceAudio: false,
+  },
+  generatedTextPolicy: {
+    mode: "forbidden",
+    captions: false,
+    subtitles: false,
+    closedCaptions: false,
+    titleCards: false,
+    textOverlays: false,
+    logos: false,
+    watermarks: false,
+    signage: "avoid_readable_text",
   },
   requestedCandidateCount: 3,
 };
@@ -90,6 +102,18 @@ describe("storyboard enhancer contract", () => {
     invalid.shots[1].shotNumber = 1;
     expect(() => validateStoryboardEnhancement(invalid, request)).toThrow(
       "shot order",
+    );
+  });
+
+  it("rejects Director-visible text when the project policy forbids it", () => {
+    const invalid = mockStoryboardEnhancement(request);
+    invalid.shots[0].generatedTextIntent = {
+      mode: "explicit_overlay",
+      visibleText: ["London, 1666"],
+      reason: "The model invented a title card.",
+    };
+    expect(() => validateStoryboardEnhancement(invalid, request)).toThrow(
+      "project policy",
     );
   });
 
@@ -261,6 +285,7 @@ describe("storyboard enhancer contract", () => {
             referenceIds: shot.referenceIds,
             selectedControls: shot.selectedControls,
             audioIntent: shot.audioIntent,
+            generatedTextIntent: shot.generatedTextIntent,
             carryPreviousFrame: shot.carryPreviousFrame,
             firstFrameAvailable: shot.firstFrameAvailable,
             lastFrameAvailable: shot.lastFrameAvailable,
@@ -270,6 +295,7 @@ describe("storyboard enhancer contract", () => {
           references: request.references,
           availableControls: request.availableControls,
           audioPolicy: request.audioPolicy,
+          generatedTextPolicy: request.generatedTextPolicy,
           requestedCandidateCount: request.requestedCandidateCount,
           correlationId: runtimeContext.correlationId,
           visualReferences: [],

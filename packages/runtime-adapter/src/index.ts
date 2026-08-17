@@ -16,6 +16,7 @@ const publicRuntimeStages = new Set([
   "generating_start_frame",
   "generating_end_frame",
   "generating_scene",
+  "repairing_generated_text",
   "cancelling",
   "assembly",
   "assembling",
@@ -70,6 +71,8 @@ function publicRuntimeMessage(
         "The requested settings are not supported by the active generator.",
       runtime_workflow_unavailable:
         "The requested generation workflow is temporarily unavailable.",
+      runtime_generated_text_policy_failed:
+        "The result contained unwanted captions or visible text after a bounded repair attempt. Your previous successful version remains available; retry with a new seed.",
     };
     return (
       (failureCode ? knownMessages[failureCode] : undefined) ??
@@ -87,6 +90,7 @@ function publicRuntimeMessage(
   if (stage === "assembly" || stage === "assembling") return "Assembling film";
   if (stage === "validating") return "Validating generation";
   if (stage === "generating_scene") return "Rendering scene";
+  if (stage === "repairing_generated_text") return "Repairing unwanted text";
   return "Rendering generation";
 }
 
@@ -158,6 +162,7 @@ export interface RuntimeVideoSettings {
   overallGoal?: string;
   originalMasterPrompt?: string;
   audioPolicy?: Record<string, unknown>;
+  generatedTextPolicy?: Record<string, unknown>;
   projectId?: string;
   operationScope?:
     "project" | "scene" | "start_frame" | "end_frame" | "assembly";
@@ -193,6 +198,7 @@ export interface RuntimeVideoSettings {
     transitionDuration: number;
     carryPreviousFrame: boolean;
     referenceIds?: string[];
+    generatedTextIntent?: Record<string, unknown>;
     startFrameBase64?: string;
     endFrameBase64?: string;
     keyframes?: Array<{
@@ -459,7 +465,22 @@ export class MockVideoRuntimeAdapter implements VideoRuntimeAdapter {
     if (age < 50) return { state: "preparing", progress: 15 };
     if (age < 100) return { state: "generating", progress: 55 };
     if (age < 150) return { state: "uploading", progress: 90 };
-    return { state: "completed", progress: 100 };
+    return {
+      state: "completed",
+      progress: 100,
+      qualityAssessment: {
+        version: "generated-text-qc-v1",
+        advisory: true,
+        score: 100,
+        recommendation: "recommended",
+        checks: [{
+          id: "generated_text_policy",
+          status: "passed",
+          confidence: 1,
+          detail: "Mock output contains no generated visible text.",
+        }],
+      },
+    };
   }
 
   async cancelGeneration(id: string): Promise<RuntimeCancelResult> {
@@ -689,6 +710,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
           overall_goal: settings.overallGoal ?? input.prompt,
           original_master_prompt: settings.originalMasterPrompt ?? settings.overallGoal ?? input.prompt,
           audio_policy: settings.audioPolicy,
+          generated_text_policy: settings.generatedTextPolicy,
           prompt: input.prompt,
           negative_prompt: settings.negativePrompt,
           resolution: settings.resolution ?? resolution,
@@ -733,6 +755,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
             transition_duration: scene.transitionDuration,
             carry_previous_frame: scene.carryPreviousFrame,
             reference_ids: scene.referenceIds,
+            generated_text_intent: scene.generatedTextIntent,
             start_frame_base64: scene.startFrameBase64,
             end_frame_base64: scene.endFrameBase64,
             keyframes: scene.keyframes?.map((keyframe) => ({

@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { boundedInteger } from "./config.js";
+import { defaultGeneratedTextPolicy } from "@video-lab/contracts";
 import type {
   EnhancedStoryboardShot,
   StoryboardAudioIntent,
@@ -8,6 +9,7 @@ import type {
   StoryboardEnhancementRequest,
   StoryboardEnhancementRuntimeContext,
   StoryboardEnhancementResponse,
+  StoryboardGeneratedTextIntent,
 } from "@video-lab/contracts";
 
 const continuityKeys: Array<keyof StoryboardContinuityBible> = [
@@ -49,6 +51,7 @@ const shotKeys = new Set([
   "referenceIds",
   "recommendedControls",
   "audioIntent",
+  "generatedTextIntent",
   "candidateVariations",
 ]);
 const enhancementProviders = new Set(["ollama", "llama_cpp", "mock"]);
@@ -112,6 +115,7 @@ function runtimeApiEnhancementRequest(
       referenceIds: shot.referenceIds,
       selectedControls: shot.selectedControls,
       audioIntent: shot.audioIntent,
+      generatedTextIntent: shot.generatedTextIntent,
       carryPreviousFrame: shot.carryPreviousFrame,
       firstFrameAvailable: shot.firstFrameAvailable,
       lastFrameAvailable: shot.lastFrameAvailable,
@@ -124,6 +128,7 @@ function runtimeApiEnhancementRequest(
     references: request.references,
     availableControls: request.availableControls,
     audioPolicy: request.audioPolicy,
+    generatedTextPolicy: request.generatedTextPolicy,
     requestedCandidateCount: request.requestedCandidateCount,
     videoModel: request.videoModel ?? "ltx-2.3",
     correlationId: runtimeContext?.correlationId ?? randomUUID(),
@@ -155,10 +160,16 @@ function deployStudioEnhancementRequest(
       referenceIds: shot.referenceIds,
       selectedControls: shot.selectedControls,
       audioIntent: shot.audioIntent,
+      generatedTextIntent: shot.generatedTextIntent,
     })),
     ...(request.targetShotNumber === undefined
       ? {}
       : { targetShotNumber: request.targetShotNumber }),
+    aspectRatio: request.aspectRatio,
+    resolution: request.resolution,
+    audioPolicy: request.audioPolicy,
+    generatedTextPolicy: request.generatedTextPolicy,
+    videoModel: request.videoModel ?? "ltx-2.3",
   };
 }
 
@@ -198,6 +209,45 @@ function text(
 function stringList(value: unknown, label: string, maximumItems: number, maximumLength: number) {
   if (!Array.isArray(value) || value.length > maximumItems) throw new Error(`${label} is invalid`);
   return value.map((entry) => text(entry, label, maximumLength));
+}
+
+function generatedTextIntent(
+  value: unknown,
+  request: StoryboardEnhancementRequest,
+): StoryboardGeneratedTextIntent {
+  const intent = object(
+    value ?? { mode: "none", visibleText: [], reason: "Generated visible text defaults to forbidden." },
+    "Shot generated-text intent",
+  );
+  exactKeys(
+    intent,
+    new Set(["mode", "visibleText", "reason"]),
+    "Shot generated-text intent",
+  );
+  const mode = String(intent.mode) as StoryboardGeneratedTextIntent["mode"];
+  if (!["none", "environmental", "explicit_overlay"].includes(mode)) {
+    throw new Error("Shot generated-text intent is invalid");
+  }
+  const visibleText = stringList(
+    intent.visibleText,
+    "Visible generated text",
+    12,
+    200,
+  );
+  if (
+    (request.generatedTextPolicy ?? defaultGeneratedTextPolicy()).mode === "forbidden" &&
+    (mode !== "none" || visibleText.length > 0)
+  ) {
+    throw new Error("Shot generated-text intent violates the project policy");
+  }
+  if (mode === "none" && visibleText.length > 0) {
+    throw new Error("Shot generated-text intent contains undeclared visible text");
+  }
+  return {
+    mode,
+    visibleText,
+    reason: text(intent.reason, "Generated-text intent reason", 1_000),
+  };
 }
 
 function recordOrUndefined(value: unknown): Record<string, unknown> | undefined {
@@ -274,6 +324,7 @@ function normalizeDeployStudioEnhancement(
     const requestShot = request.shots.find((shot) => shot.shotNumber === shotNumber);
     const fallbackShot = fallback.shots[index];
     const audioIntent = recordOrUndefined(rawShot.audioIntent);
+    const generatedTextIntent = recordOrUndefined(rawShot.generatedTextIntent);
     const rawCandidates = optionalStringArray(rawShot.candidateVariations) ?? [];
     const candidateVariations = Array.from(
       { length: candidateCount },
@@ -297,6 +348,13 @@ function normalizeDeployStudioEnhancement(
           ? audioIntent?.mode
           : fallbackShot.audioIntent.mode,
         reason: optionalString(audioIntent?.reason, fallbackShot.audioIntent.reason),
+      },
+      generatedTextIntent: {
+        mode: ["none", "environmental", "explicit_overlay"].includes(String(generatedTextIntent?.mode))
+          ? generatedTextIntent?.mode
+          : fallbackShot.generatedTextIntent.mode,
+        visibleText: optionalStringArray(generatedTextIntent?.visibleText) ?? fallbackShot.generatedTextIntent.visibleText,
+        reason: optionalString(generatedTextIntent?.reason, fallbackShot.generatedTextIntent.reason),
       },
       candidateVariations,
     };
@@ -450,6 +508,7 @@ export function validateStoryboardEnhancement(
       referenceIds,
       recommendedControls,
       audioIntent: { mode: audioMode, reason: text(rawAudioIntent.reason, "Audio intent reason", 1_000) },
+      generatedTextIntent: generatedTextIntent(shot.generatedTextIntent, request),
       candidateVariations,
     };
   });
@@ -656,6 +715,11 @@ export function mockStoryboardEnhancement(
         referenceIds: references.map((reference) => reference.id),
         recommendedControls: availableControls.filter((control) => ["start_frame", "end_frame"].includes(control)),
         audioIntent: { mode: "silent", reason: "The deterministic test enhancer does not infer sound." },
+        generatedTextIntent: {
+          mode: "none",
+          visibleText: [],
+          reason: "Visible generated text is disabled for the Creator launch workflow.",
+        },
         candidateVariations: Array.from(
           { length: candidateCount },
           (_, index) => `Draft ${index + 1}: preserve the story and continuity while varying one camera, pacing, blocking or lighting choice.`,

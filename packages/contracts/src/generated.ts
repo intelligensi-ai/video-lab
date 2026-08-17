@@ -605,6 +605,7 @@ export interface components {
             overallGoal?: string;
             originalMasterPrompt?: string;
             audioPolicy?: components["schemas"]["StoryboardAudioPolicy"];
+            generatedTextPolicy?: components["schemas"]["StoryboardGeneratedTextPolicy"];
             /** @enum {string} */
             operationScope?: "project" | "scene" | "start_frame" | "end_frame" | "assembly";
             operationSceneId?: string;
@@ -741,6 +742,7 @@ export interface components {
             referenceIds: string[];
             selectedControls: string[];
             audioIntent: components["schemas"]["StoryboardAudioIntent"];
+            generatedTextIntent: components["schemas"]["StoryboardGeneratedTextIntent"];
             carryPreviousFrame: boolean;
             firstFrameAvailable: boolean;
             lastFrameAvailable: boolean;
@@ -771,6 +773,25 @@ export interface components {
         StoryboardAudioIntent: {
             /** @enum {string} */
             mode: "silent" | "dialogue" | "ambience" | "sound_effects" | "music" | "mixed";
+            reason: string;
+        };
+        StoryboardGeneratedTextPolicy: {
+            /** @enum {string} */
+            mode: "forbidden" | "prompted_only" | "allowed";
+            captions: boolean;
+            subtitles: boolean;
+            closedCaptions: boolean;
+            titleCards: boolean;
+            textOverlays: boolean;
+            logos: boolean;
+            watermarks: boolean;
+            /** @enum {string} */
+            signage: "avoid_readable_text" | "incidental" | "allowed";
+        };
+        StoryboardGeneratedTextIntent: {
+            /** @enum {string} */
+            mode: "none" | "environmental" | "explicit_overlay";
+            visibleText: string[];
             reason: string;
         };
         StoryboardReferenceUsage: {
@@ -820,6 +841,7 @@ export interface components {
             references: components["schemas"]["StoryboardReferenceSummary"][];
             availableControls: string[];
             audioPolicy: components["schemas"]["StoryboardAudioPolicy"];
+            generatedTextPolicy: components["schemas"]["StoryboardGeneratedTextPolicy"];
             requestedCandidateCount: number;
             /**
              * @default ltx-2.3
@@ -838,6 +860,7 @@ export interface components {
             referenceIds: string[];
             recommendedControls: string[];
             audioIntent: components["schemas"]["StoryboardAudioIntent"];
+            generatedTextIntent: components["schemas"]["StoryboardGeneratedTextIntent"];
             candidateVariations: string[];
         };
         StoryboardEnhancementResponse: {

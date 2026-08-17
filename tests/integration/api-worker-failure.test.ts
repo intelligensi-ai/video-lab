@@ -312,7 +312,15 @@ describe('generation worker failure handling', () => {
         });
       }
       if (url.endsWith('/jobs/reference-runtime-job')) {
-        return Response.json({ id: 'reference-runtime-job', status: 'completed', progress: 100 });
+        return Response.json({
+          id: 'reference-runtime-job',
+          status: 'completed',
+          progress: 100,
+          quality_report: {
+            version: 'generated-text-qc-v1', advisory: true, score: 100, recommendation: 'recommended',
+            checks: [{ id: 'generated_text_policy', status: 'passed', confidence: 1 }],
+          },
+        });
       }
       return Response.json({ id: 'runtime-probe', status: 'running' });
     }));
@@ -518,7 +526,14 @@ describe('generation worker failure handling', () => {
         status: 200,
         headers: { 'Content-Type': 'video/mp4', 'X-Video-Duration-Seconds': '4' },
       });
-      if (url.includes('/jobs/')) return Response.json({ status: 'completed', progress: 1 });
+      if (url.includes('/jobs/')) return Response.json({
+        status: 'completed',
+        progress: 1,
+        quality_report: {
+          version: 'generated-text-qc-v1', advisory: true, score: 100, recommendation: 'recommended',
+          checks: [{ id: 'generated_text_policy', status: 'passed', confidence: 1 }],
+        },
+      });
       throw new Error(`Unexpected test request: ${url}`);
     }));
 

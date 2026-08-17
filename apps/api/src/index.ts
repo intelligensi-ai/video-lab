@@ -15,7 +15,12 @@ import { applicationDefault, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getAppCheck } from "firebase-admin/app-check";
 import { getFunctions } from "firebase-admin/functions";
-import { longFormVideoModels, MAX_STORYBOARD_SCENES } from "@video-lab/contracts";
+import {
+  defaultGeneratedTextPolicy,
+  forbiddenGeneratedTextNegativePrompt,
+  longFormVideoModels,
+  MAX_STORYBOARD_SCENES,
+} from "@video-lab/contracts";
 import type {
   CreditWallet,
   DirectorProposal,
@@ -34,6 +39,7 @@ import type {
   StoryboardEnhancementJob,
   StoryboardEnhancementResponse,
   StoryboardEnhancementRuntimeContext,
+  StoryboardGeneratedTextPolicy,
   StoryboardReferenceSummary,
   StoryboardReferenceType,
   StoryboardVisualReferenceEnvelope,
@@ -1951,6 +1957,35 @@ function generationRequestHash(value: unknown) {
     .digest("hex");
 }
 
+function creatorGeneratedTextPolicy(value: unknown): StoryboardGeneratedTextPolicy {
+  const expected = defaultGeneratedTextPolicy();
+  if (value === undefined) return expected;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw problem(400, "invalid_generated_text_policy", "Generated-text policy is invalid");
+  }
+  const source = value as Record<string, unknown>;
+  if (
+    Object.keys(source).length !== Object.keys(expected).length ||
+    Object.entries(expected).some(([key, expectedValue]) => source[key] !== expectedValue)
+  ) {
+    throw problem(
+      400,
+      "generated_text_not_supported",
+      "Visible generated text is not supported in the Creator launch workflow",
+    );
+  }
+  return expected;
+}
+
+function creatorNegativePrompt(value: unknown) {
+  const existing = typeof value === "string"
+    ? value.trim().replace(/,+\s*$/, "").slice(0, 10_000)
+    : "";
+  return [existing, forbiddenGeneratedTextNegativePrompt]
+    .filter(Boolean)
+    .join(", ");
+}
+
 async function findIdempotentGeneration(
   uid: string,
   key: string,
@@ -1984,11 +2019,38 @@ function outputExtension(contentType: StoredGeneration["outputContentType"]) {
           : "mp4";
 }
 
+export function requireGeneratedTextAcceptance(
+  generation: StoredGeneration,
+  qualityAssessment?: Generation["qualityAssessment"],
+) {
+  const rawPolicy = generation.settings.generatedTextPolicy;
+  const policy = rawPolicy && typeof rawPolicy === "object" && !Array.isArray(rawPolicy)
+    ? rawPolicy as Record<string, unknown>
+    : undefined;
+  if (!policy || policy.mode !== "forbidden") return;
+  const check = qualityAssessment?.checks.find((candidate) => candidate.id === "generated_text_policy");
+  if (!check) {
+    throw problem(
+      502,
+      "generated_text_validation_missing",
+      "The generated media was not accepted because visible-text validation did not run. Please retry.",
+    );
+  }
+  if (check.status !== "passed") {
+    throw problem(
+      422,
+      "generated_text_policy_failed",
+      "The generated media may contain unwanted captions or visible text. Your previous successful work is unchanged; retry with a new seed.",
+    );
+  }
+}
+
 async function completeGenerationFromRuntime(
   generation: StoredGeneration,
   runtimeJobId: string,
   qualityAssessment?: Generation["qualityAssessment"],
 ) {
+  requireGeneratedTextAcceptance(generation, qualityAssessment);
   const out = await runtime.fetchOutput(runtimeJobId);
   if (creditLimitsEnabled())
     wallets.set(
@@ -2614,7 +2676,7 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
   exact(source, new Set([
     "contractVersion", "projectId", "projectRevision", "operation", "userInstruction", "masterPrompt", "shotCount",
     "generationMode", "continuityBible", "shots", "targetShotNumber", "aspectRatio", "resolution", "references",
-    "availableControls", "audioPolicy", "requestedCandidateCount",
+    "availableControls", "audioPolicy", "generatedTextPolicy", "requestedCandidateCount",
     "videoModel",
   ]), "Storyboard enhancement input");
   if (source.contractVersion !== "2") invalid("incompatible_runtime", "Storyboard enhancement contract version 2 is required");
@@ -2646,11 +2708,12 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
     invalid("invalid_storyboard", "Available controls are server-owned and must not be supplied by the browser");
   }
   const audioIntentModes = new Set(["silent", "dialogue", "ambience", "sound_effects", "music", "mixed"]);
+  const generatedTextIntentModes = new Set(["none", "environmental", "explicit_overlay"]);
   const shots = rawShots.map((entry, index) => {
     const shot = object(entry, `Shot ${index + 1}`);
     exact(shot, new Set([
       "shotNumber", "title", "narrativePurpose", "prompt", "firstFramePrompt", "lastFramePrompt", "continuityNotes",
-      "durationSeconds", "generationMode", "referenceIds", "selectedControls", "audioIntent", "carryPreviousFrame",
+      "durationSeconds", "generationMode", "referenceIds", "selectedControls", "audioIntent", "generatedTextIntent", "carryPreviousFrame",
       "firstFrameAvailable", "lastFrameAvailable",
     ]), `Shot ${index + 1}`);
     if (shot.shotNumber !== index + 1) invalid("invalid_storyboard", "Shot numbers must be unique, contiguous and ordered");
@@ -2661,6 +2724,13 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
     const rawIntent = object(shot.audioIntent, `Shot ${index + 1} audio intent`);
     exact(rawIntent, new Set(["mode", "reason"]), `Shot ${index + 1} audio intent`);
     if (!audioIntentModes.has(String(rawIntent.mode))) invalid("invalid_storyboard", `Shot ${index + 1} audio intent is invalid`);
+    const rawGeneratedTextIntent = object(
+      shot.generatedTextIntent ?? { mode: "none", visibleText: [], reason: "Generated visible text defaults to forbidden." },
+      `Shot ${index + 1} generated-text intent`,
+    );
+    exact(rawGeneratedTextIntent, new Set(["mode", "visibleText", "reason"]), `Shot ${index + 1} generated-text intent`);
+    if (!generatedTextIntentModes.has(String(rawGeneratedTextIntent.mode))) invalid("invalid_storyboard", `Shot ${index + 1} generated-text intent is invalid`);
+    const visibleText = stringList(rawGeneratedTextIntent.visibleText, `Shot ${index + 1} visible text`, 12, 200);
     if (typeof shot.carryPreviousFrame !== "boolean" || typeof shot.firstFrameAvailable !== "boolean" || typeof shot.lastFrameAvailable !== "boolean") invalid("invalid_storyboard", `Shot ${index + 1} frame state is invalid`);
     return {
       shotNumber: index + 1,
@@ -2677,6 +2747,11 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
       audioIntent: {
         mode: rawIntent.mode as StoryboardEnhancementRequest["shots"][number]["audioIntent"]["mode"],
         reason: string(rawIntent.reason, `Shot ${index + 1} audio reason`, 1_000, true),
+      },
+      generatedTextIntent: {
+        mode: rawGeneratedTextIntent.mode as StoryboardEnhancementRequest["shots"][number]["generatedTextIntent"]["mode"],
+        visibleText,
+        reason: string(rawGeneratedTextIntent.reason, `Shot ${index + 1} generated-text reason`, 1_000, true),
       },
       carryPreviousFrame: shot.carryPreviousFrame as boolean,
       firstFrameAvailable: shot.firstFrameAvailable as boolean,
@@ -2725,6 +2800,24 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
     || typeof rawAudioPolicy.preserveSourceAudio !== "boolean") invalid("invalid_storyboard", "Audio policy is invalid");
   const audioPolicy = rawAudioPolicy as unknown as StoryboardAudioPolicy;
   if (audioPolicy.mode === "silent" && (audioPolicy.dialogue !== "off" || audioPolicy.soundEffects !== "off" || audioPolicy.ambience !== "off" || audioPolicy.music !== "off" || audioPolicy.preserveSourceAudio)) invalid("invalid_storyboard", "Silent audio policy contains enabled audio");
+  const rawGeneratedTextPolicy = object(source.generatedTextPolicy ?? defaultGeneratedTextPolicy(), "Generated-text policy");
+  exact(rawGeneratedTextPolicy, new Set([
+    "mode", "captions", "subtitles", "closedCaptions", "titleCards", "textOverlays", "logos", "watermarks", "signage",
+  ]), "Generated-text policy");
+  if (!["forbidden", "prompted_only", "allowed"].includes(String(rawGeneratedTextPolicy.mode))
+    || !["avoid_readable_text", "incidental", "allowed"].includes(String(rawGeneratedTextPolicy.signage))
+    || ["captions", "subtitles", "closedCaptions", "titleCards", "textOverlays", "logos", "watermarks"].some((key) => typeof rawGeneratedTextPolicy[key] !== "boolean")) {
+    invalid("invalid_generated_text_policy", "Generated-text policy is invalid");
+  }
+  const generatedTextPolicy = rawGeneratedTextPolicy as unknown as StoryboardGeneratedTextPolicy;
+  if (generatedTextPolicy.mode === "forbidden" && (
+    generatedTextPolicy.captions || generatedTextPolicy.subtitles || generatedTextPolicy.closedCaptions
+    || generatedTextPolicy.titleCards || generatedTextPolicy.textOverlays || generatedTextPolicy.logos
+    || generatedTextPolicy.watermarks || generatedTextPolicy.signage !== "avoid_readable_text"
+  )) invalid("invalid_generated_text_policy", "Forbidden generated-text policy cannot enable visible text");
+  if (generatedTextPolicy.mode === "forbidden" && shots.some((shot) => shot.generatedTextIntent.mode !== "none" || shot.generatedTextIntent.visibleText.length > 0)) {
+    invalid("invalid_generated_text_policy", "A shot requests visible text that the project policy forbids");
+  }
   if (!Number.isInteger(source.requestedCandidateCount) || Number(source.requestedCandidateCount) < 1 || Number(source.requestedCandidateCount) > 4) invalid("invalid_storyboard", "Candidate count is invalid");
   const videoModel = String(source.videoModel ?? "ltx-2.3");
   if (!(longFormVideoModels as readonly string[]).includes(videoModel)) invalid("invalid_video_model", "Video model is not supported");
@@ -2745,6 +2838,7 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
     references,
     availableControls: [...allowedControls],
     audioPolicy,
+    generatedTextPolicy,
     requestedCandidateCount: source.requestedCandidateCount as number,
     videoModel: videoModel as StoryboardEnhancementRequest["videoModel"],
   };
@@ -2772,6 +2866,7 @@ const draftKeys = new Set([
   "seedPolicy",
   "continuityBible",
   "audioPolicy",
+  "generatedTextPolicy",
   "candidateCount",
   "projectReferences",
   "directorAssumptions",
@@ -2802,6 +2897,7 @@ const draftSceneKeys = new Set([
   "referenceIds",
   "recommendedControls",
   "audioIntent",
+  "generatedTextIntent",
   "firstFramePrompt",
   "lastFramePrompt",
   "narrativePurpose",
@@ -3008,6 +3104,21 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
           .map((control) => String(control))
           .filter((control) => ["start_frame", "end_frame", "multi_keyframe"].includes(control)))]
       : [];
+    const generatedTextIntent = scene.generatedTextIntent && typeof scene.generatedTextIntent === "object" && !Array.isArray(scene.generatedTextIntent)
+      ? scene.generatedTextIntent as Record<string, unknown>
+      : {};
+    const generatedTextMode = ["none", "environmental", "explicit_overlay"].includes(String(generatedTextIntent.mode))
+      ? String(generatedTextIntent.mode)
+      : "none";
+    scene.generatedTextIntent = {
+      mode: generatedTextMode,
+      visibleText: generatedTextMode === "none"
+        ? []
+        : Array.isArray(generatedTextIntent.visibleText)
+          ? generatedTextIntent.visibleText.slice(0, 12).map((value) => String(value).trim().slice(0, 200)).filter(Boolean)
+          : [],
+      reason: String(generatedTextIntent.reason ?? "Visible generated text is disabled by default.").trim().slice(0, 1_000),
+    };
     const sceneDuration = Number(scene.duration);
     if (!Number.isFinite(sceneDuration) || sceneDuration < 1 || sceneDuration > 8) {
       throw problem(400, "invalid_storyboard_draft", `Shot ${index + 1} duration is invalid`);
@@ -3032,6 +3143,36 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
     music: ["off", "prompted_or_unambiguous_performance", "on"].includes(String(audioSource.music)) ? audioSource.music : audioMode === "silent" ? "off" : "prompted_or_unambiguous_performance",
     preserveSourceAudio: audioMode !== "silent" && audioSource.preserveSourceAudio === true,
   };
+  const generatedTextPolicySource = draft.generatedTextPolicy && typeof draft.generatedTextPolicy === "object" && !Array.isArray(draft.generatedTextPolicy)
+    ? draft.generatedTextPolicy as Record<string, unknown>
+    : defaultGeneratedTextPolicy();
+  const generatedTextMode = ["forbidden", "prompted_only", "allowed"].includes(String(generatedTextPolicySource.mode))
+    ? String(generatedTextPolicySource.mode)
+    : "forbidden";
+  draft.generatedTextPolicy = generatedTextMode === "forbidden"
+    ? defaultGeneratedTextPolicy()
+    : {
+        mode: generatedTextMode,
+        captions: generatedTextPolicySource.captions === true,
+        subtitles: generatedTextPolicySource.subtitles === true,
+        closedCaptions: generatedTextPolicySource.closedCaptions === true,
+        titleCards: generatedTextPolicySource.titleCards === true,
+        textOverlays: generatedTextPolicySource.textOverlays === true,
+        logos: generatedTextPolicySource.logos === true,
+        watermarks: generatedTextPolicySource.watermarks === true,
+        signage: ["avoid_readable_text", "incidental", "allowed"].includes(String(generatedTextPolicySource.signage))
+          ? generatedTextPolicySource.signage
+          : "avoid_readable_text",
+      };
+  if (generatedTextMode === "forbidden") {
+    (draft.scenes as Array<Record<string, unknown>>).forEach((scene) => {
+      scene.generatedTextIntent = {
+        mode: "none",
+        visibleText: [],
+        reason: "Visible generated text is disabled for the Creator launch workflow.",
+      };
+    });
+  }
   draft.projectReferences = Array.isArray(draft.projectReferences)
     ? draft.projectReferences.slice(0, 32).map((entry) => {
         if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw problem(400, "invalid_reference", "Project reference is invalid");
@@ -5483,6 +5624,10 @@ app.post(
         requestedSettings,
         p.uid,
       )) as Generation["settings"];
+      settings.generatedTextPolicy = creatorGeneratedTextPolicy(
+        settings.generatedTextPolicy,
+      );
+      settings.negativePrompt = creatorNegativePrompt(settings.negativePrompt);
       const requestedVideoModel = String(settings.videoModel ?? "ltx-2.3");
       if (!(longFormVideoModels as readonly string[]).includes(requestedVideoModel)) {
         throw problem(400, "invalid_video_model", "Video model is not supported");
@@ -5551,6 +5696,24 @@ app.post(
               `Scene ${index + 1} is invalid`,
             );
           const scene = entry as Record<string, unknown>;
+          const generatedTextIntent = scene.generatedTextIntent;
+          if (generatedTextIntent !== undefined) {
+            if (!generatedTextIntent || typeof generatedTextIntent !== "object" || Array.isArray(generatedTextIntent)) {
+              throw problem(400, "invalid_generated_text_intent", "Scene generated-text intent is invalid");
+            }
+            const intent = generatedTextIntent as Record<string, unknown>;
+            if (
+              intent.mode !== "none" ||
+              !Array.isArray(intent.visibleText) ||
+              intent.visibleText.length !== 0
+            ) {
+              throw problem(
+                400,
+                "generated_text_not_supported",
+                "Visible generated text is not supported in the Creator launch workflow",
+              );
+            }
+          }
           const sceneId = String(scene.id ?? "");
           if (!/^[A-Za-z0-9_-]{1,200}$/.test(sceneId) || sceneIds.has(sceneId))
             throw problem(

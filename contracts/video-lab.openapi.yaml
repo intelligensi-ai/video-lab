@@ -881,6 +881,7 @@ components:
             overallGoal: { type: string },
             originalMasterPrompt: { type: string },
             audioPolicy: { $ref: "#/components/schemas/StoryboardAudioPolicy" },
+            generatedTextPolicy: { $ref: "#/components/schemas/StoryboardGeneratedTextPolicy" },
             operationScope:
               {
                 type: string,
@@ -1108,7 +1109,7 @@ components:
       {
         type: object,
         additionalProperties: false,
-        required: [shotNumber, title, narrativePurpose, prompt, firstFramePrompt, lastFramePrompt, continuityNotes, durationSeconds, generationMode, referenceIds, selectedControls, audioIntent, carryPreviousFrame, firstFrameAvailable, lastFrameAvailable],
+        required: [shotNumber, title, narrativePurpose, prompt, firstFramePrompt, lastFramePrompt, continuityNotes, durationSeconds, generationMode, referenceIds, selectedControls, audioIntent, generatedTextIntent, carryPreviousFrame, firstFrameAvailable, lastFrameAvailable],
         properties:
           {
             shotNumber: { type: integer, minimum: 1, maximum: 24 },
@@ -1124,6 +1125,7 @@ components:
             referenceIds: { type: array, maxItems: 16, items: { type: string, maxLength: 64 } },
             selectedControls: { type: array, maxItems: 16, items: { type: string, pattern: "^[a-z][a-z0-9_]{1,63}$" } },
             audioIntent: { $ref: "#/components/schemas/StoryboardAudioIntent" },
+            generatedTextIntent: { $ref: "#/components/schemas/StoryboardGeneratedTextIntent" },
             carryPreviousFrame: { type: boolean },
             firstFrameAvailable: { type: boolean },
             lastFrameAvailable: { type: boolean },
@@ -1161,6 +1163,31 @@ components:
       required: [mode, reason]
       properties:
         mode: { type: string, enum: [silent, dialogue, ambience, sound_effects, music, mixed] }
+        reason: { type: string, maxLength: 1000 }
+    StoryboardGeneratedTextPolicy:
+      type: object
+      additionalProperties: false
+      required: [mode, captions, subtitles, closedCaptions, titleCards, textOverlays, logos, watermarks, signage]
+      properties:
+        mode: { type: string, enum: [forbidden, prompted_only, allowed] }
+        captions: { type: boolean }
+        subtitles: { type: boolean }
+        closedCaptions: { type: boolean }
+        titleCards: { type: boolean }
+        textOverlays: { type: boolean }
+        logos: { type: boolean }
+        watermarks: { type: boolean }
+        signage: { type: string, enum: [avoid_readable_text, incidental, allowed] }
+    StoryboardGeneratedTextIntent:
+      type: object
+      additionalProperties: false
+      required: [mode, visibleText, reason]
+      properties:
+        mode: { type: string, enum: [none, environmental, explicit_overlay] }
+        visibleText:
+          type: array
+          maxItems: 12
+          items: { type: string, maxLength: 200 }
         reason: { type: string, maxLength: 1000 }
     StoryboardReferenceUsage:
       type: object
@@ -1205,7 +1232,7 @@ components:
         type: object,
         additionalProperties: false,
         required:
-          [contractVersion, operation, masterPrompt, shotCount, generationMode, continuityBible, shots, aspectRatio, resolution, references, availableControls, audioPolicy, requestedCandidateCount],
+          [contractVersion, operation, masterPrompt, shotCount, generationMode, continuityBible, shots, aspectRatio, resolution, references, availableControls, audioPolicy, generatedTextPolicy, requestedCandidateCount],
         properties:
           {
             contractVersion: { type: string, const: "2" },
@@ -1235,6 +1262,7 @@ components:
             references: { type: array, maxItems: 32, items: { $ref: "#/components/schemas/StoryboardReferenceSummary" } },
             availableControls: { type: array, maxItems: 0, items: { type: string } },
             audioPolicy: { $ref: "#/components/schemas/StoryboardAudioPolicy" },
+            generatedTextPolicy: { $ref: "#/components/schemas/StoryboardGeneratedTextPolicy" },
             requestedCandidateCount: { type: integer, minimum: 1, maximum: 4 },
             videoModel: { type: string, enum: ["ltx-2.3", "ltx-2.5"], default: "ltx-2.3" },
           },
@@ -1255,6 +1283,7 @@ components:
             referenceIds,
             recommendedControls,
             audioIntent,
+            generatedTextIntent,
             candidateVariations,
           ],
         properties:
@@ -1269,6 +1298,7 @@ components:
             referenceIds: { type: array, items: { type: string } },
             recommendedControls: { type: array, items: { type: string } },
             audioIntent: { $ref: "#/components/schemas/StoryboardAudioIntent" },
+            generatedTextIntent: { $ref: "#/components/schemas/StoryboardGeneratedTextIntent" },
             candidateVariations: { type: array, minItems: 1, maxItems: 4, items: { type: string } },
           },
       }

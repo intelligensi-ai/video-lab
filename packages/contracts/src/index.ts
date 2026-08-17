@@ -180,6 +180,7 @@ export interface StoryboardEnhancementShotInput {
   referenceIds: string[];
   selectedControls: string[];
   audioIntent: StoryboardAudioIntent;
+  generatedTextIntent: StoryboardGeneratedTextIntent;
   carryPreviousFrame: boolean;
   firstFrameAvailable: boolean;
   lastFrameAvailable: boolean;
@@ -250,6 +251,53 @@ export interface StoryboardAudioIntent {
   reason: string;
 }
 
+export interface StoryboardGeneratedTextPolicy {
+  mode: "forbidden" | "prompted_only" | "allowed";
+  captions: boolean;
+  subtitles: boolean;
+  closedCaptions: boolean;
+  titleCards: boolean;
+  textOverlays: boolean;
+  logos: boolean;
+  watermarks: boolean;
+  signage: "avoid_readable_text" | "incidental" | "allowed";
+}
+
+export interface StoryboardGeneratedTextIntent {
+  mode: "none" | "environmental" | "explicit_overlay";
+  visibleText: string[];
+  reason: string;
+}
+
+export const defaultGeneratedTextPolicy = (): StoryboardGeneratedTextPolicy => ({
+  mode: "forbidden",
+  captions: false,
+  subtitles: false,
+  closedCaptions: false,
+  titleCards: false,
+  textOverlays: false,
+  logos: false,
+  watermarks: false,
+  signage: "avoid_readable_text",
+});
+
+export const forbiddenGeneratedTextNegativePrompt = [
+  "captions",
+  "subtitles",
+  "closed captions",
+  "title cards",
+  "lower thirds",
+  "text overlays",
+  "speech bubbles",
+  "interface text",
+  "readable labels",
+  "readable signage",
+  "watermarks",
+  "logos",
+  "random letters",
+  "random numbers",
+].join(", ");
+
 export interface StoryboardReferenceUsage {
   referenceId: string;
   shotNumbers: number[];
@@ -273,6 +321,7 @@ export interface StoryboardEnhancementRequest {
   references: StoryboardReferenceSummary[];
   availableControls: string[];
   audioPolicy: StoryboardAudioPolicy;
+  generatedTextPolicy: StoryboardGeneratedTextPolicy;
   requestedCandidateCount: number;
   videoModel?: LongFormVideoModel;
 }
@@ -288,6 +337,7 @@ export interface EnhancedStoryboardShot {
   referenceIds: string[];
   recommendedControls: string[];
   audioIntent: StoryboardAudioIntent;
+  generatedTextIntent: StoryboardGeneratedTextIntent;
   candidateVariations: string[];
 }
 
