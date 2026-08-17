@@ -1212,16 +1212,26 @@ function GalleryArtifact({
 
   if (isFrame && media.objectUrl) {
     return (
-      <div className="gallery-media gallery-frame">
+      <Link
+        className="gallery-media gallery-frame"
+        to={`/generations/${generation.id}`}
+        aria-label="Open generation details"
+      >
         <img src={media.objectUrl} alt="Generated frame" />
-      </div>
+      </Link>
     );
   }
 
   if (isVideo && thumbnail) {
     return (
-      <div className="gallery-media gallery-thumbnail">
-        <img src={thumbnail} alt="Video thumbnail" />
+      <div className="gallery-media-wrap">
+        <Link
+          className="gallery-media gallery-thumbnail"
+          to={`/generations/${generation.id}`}
+          aria-label="Open generation details"
+        >
+          <img src={thumbnail} alt="Video thumbnail" />
+        </Link>
         <button
           className="gallery-edit-button"
           type="button"
@@ -1245,13 +1255,17 @@ function GalleryArtifact({
     );
   }
   return (
-    <div className="thumb gallery-media">
+    <Link
+      className="thumb gallery-media"
+      to={`/generations/${generation.id}`}
+      aria-label="Open generation details"
+    >
       {generation.output?.downloadUrl ? (
         <VideoRetrievalMark compact />
       ) : (
         generation.status
       )}
-    </div>
+    </Link>
   );
 }
 
@@ -1550,78 +1564,138 @@ function Detail() {
   const media = useAuthenticatedVideo(g?.output?.downloadUrl);
   const isVideo = isVideoOutput(g);
   const isFrame = isFrameOutput(g);
+  const statusLabel = g?.status.replace("_", " ") ?? "";
+  const createdLabel = g
+    ? new Date(g.createdAt).toLocaleString(undefined, {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "";
+  const durationLabel =
+    g?.output?.durationSeconds ?? g?.settings.durationSeconds
+      ? `${Number(g.output?.durationSeconds ?? g.settings.durationSeconds).toFixed(1)}s`
+      : "—";
   return (
-    <main>
+    <main className="generation-detail-page">
       {g && (
         <>
-          <h1>Generation</h1>
-          <section className="panel generation-detail-panel">
-            {isVideo && media.objectUrl ? (
-              <video
-                className="video-preview"
-                src={media.objectUrl}
-                controls
-                playsInline
-                preload="metadata"
-              />
-            ) : isFrame && media.objectUrl ? (
-              <img
-                className="video-preview generation-frame-preview"
-                src={media.objectUrl}
-                alt="Generated frame"
-              />
-            ) : (
-              <div className="thumb big">
-                {g.output?.downloadUrl ? <VideoRetrievalMark /> : g.status}
+          <header className="generation-detail-hero">
+            <Link className="generation-back-link" to="/gallery">
+              Back to gallery
+            </Link>
+            <div>
+              <span className="gallery-eyebrow">Generation details</span>
+              <h1>{g.prompt}</h1>
+            </div>
+            <div className="generation-detail-status">
+              <span>{statusLabel}</span>
+              <small>{createdLabel}</small>
+            </div>
+          </header>
+          <section className="generation-detail-layout">
+            <div className="generation-detail-media">
+              {isVideo && media.objectUrl ? (
+                <video
+                  className="video-preview"
+                  src={media.objectUrl}
+                  controls
+                  playsInline
+                  preload="metadata"
+                />
+              ) : isFrame && media.objectUrl ? (
+                <img
+                  className="video-preview generation-frame-preview"
+                  src={media.objectUrl}
+                  alt="Generated frame"
+                />
+              ) : (
+                <div className="thumb big">
+                  {g.output?.downloadUrl ? <VideoRetrievalMark /> : g.status}
+                </div>
+              )}
+              {media.error && (
+                <p className="error">Output retrieval failed: {media.error}</p>
+              )}
+            </div>
+            <aside className="generation-detail-sidebar">
+              <div className="generation-detail-metrics">
+                <div>
+                  <span>Status</span>
+                  <strong>{statusLabel}</strong>
+                </div>
+                <div>
+                  <span>Output</span>
+                  <strong>{isFrame ? "Frame" : "Video"}</strong>
+                </div>
+                <div>
+                  <span>Duration</span>
+                  <strong>{durationLabel}</strong>
+                </div>
+                <div>
+                  <span>Model</span>
+                  <strong>{String(g.settings.videoModel ?? "ltx-2.3")}</strong>
+                </div>
               </div>
-            )}
-            {media.error && (
-              <p className="error">Output retrieval failed: {media.error}</p>
-            )}
-            <p>{g.prompt}</p>
-            <p>Created {new Date(g.createdAt).toLocaleString()}</p>
-            {g.safeErrorMessage && (
-              <p className="error">{g.safeErrorMessage}</p>
-            )}
-            <div className="generation-detail-actions">
-              {isVideo && media.objectUrl && (
-                <button
-                  type="button"
-                  className="generation-edit-action"
-                  onClick={() => setEditorOpen(true)}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M12 20h9" />
-                    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                  </svg>
-                  <span>Edit trim</span>
-                </button>
+              <section className="generation-prompt-card">
+                <span>Prompt</span>
+                <p>{g.prompt}</p>
+              </section>
+              {g.safeErrorMessage && (
+                <p className="error">{g.safeErrorMessage}</p>
               )}
-              {media.objectUrl && (
-                <a
-                  className="button"
-                  href={media.objectUrl}
-                  download={`${g.id}.${isFrame ? "png" : "mp4"}`}
-                >
-                  Download
-                </a>
-              )}
-              <button onClick={() => navigator.clipboard.writeText(g.prompt)}>
-                Copy prompt
-              </button>
-              <Link className="button" to="/videolab">
-                Create Variation
-              </Link>
-              {!["completed", "failed", "cancelled"].includes(g.status) && (
-                <button onClick={() => cancel.mutate()}>Cancel</button>
-              )}
-              {import.meta.env.DEV &&
-                import.meta.env.VITE_ENABLE_DEMO_API === "true" && (
-                  <button onClick={() => proc.mutate()}>
-                    Run local mock worker
+              <div className="generation-detail-actions">
+                {isVideo && media.objectUrl && (
+                  <button
+                    type="button"
+                    className="generation-edit-action"
+                    onClick={() => setEditorOpen(true)}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 20h9" />
+                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                    </svg>
+                    <span>Edit trim</span>
                   </button>
                 )}
-            </div>
+                {media.objectUrl && (
+                  <a
+                    className="button"
+                    href={media.objectUrl}
+                    download={`${g.id}.${isFrame ? "png" : "mp4"}`}
+                  >
+                    Download
+                  </a>
+                )}
+                <button onClick={() => navigator.clipboard.writeText(g.prompt)}>
+                  Copy prompt
+                </button>
+                <Link className="button" to="/videolab">
+                  Create Variation
+                </Link>
+                {!["completed", "failed", "cancelled"].includes(g.status) && (
+                  <button onClick={() => cancel.mutate()}>Cancel</button>
+                )}
+                {import.meta.env.DEV &&
+                  import.meta.env.VITE_ENABLE_DEMO_API === "true" && (
+                    <button onClick={() => proc.mutate()}>
+                      Run local mock worker
+                    </button>
+                  )}
+              </div>
+              <dl className="generation-detail-record">
+                <div>
+                  <dt>Created</dt>
+                  <dd>{createdLabel}</dd>
+                </div>
+                <div>
+                  <dt>ID</dt>
+                  <dd>{g.id}</dd>
+                </div>
+              </dl>
+            </aside>
           </section>
           {isVideo && editorOpen && (
             <GalleryVideoEditor

@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { boundedInteger } from "./config.js";
 import type {
   EnhancedStoryboardShot,
@@ -132,6 +132,36 @@ function runtimeApiEnhancementRequest(
   };
 }
 
+function deployStudioEnhancementRequest(
+  request: StoryboardEnhancementRequest,
+): Record<string, unknown> {
+  return {
+    projectId: request.projectId,
+    masterPrompt: request.masterPrompt,
+    overallGoal: request.masterPrompt,
+    shotCount: request.shotCount,
+    generationMode: request.generationMode,
+    continuityBible: request.continuityBible,
+    shots: request.shots.map((shot) => ({
+      shotNumber: shot.shotNumber,
+      title: shot.title || `Scene ${shot.shotNumber}`,
+      narrativePurpose: shot.narrativePurpose,
+      prompt: shot.prompt,
+      firstFramePrompt: shot.firstFramePrompt,
+      lastFramePrompt: shot.lastFramePrompt,
+      continuityNotes: shot.continuityNotes,
+      durationSeconds: shot.durationSeconds,
+      generationMode: shot.generationMode,
+      referenceIds: shot.referenceIds,
+      selectedControls: shot.selectedControls,
+      audioIntent: shot.audioIntent,
+    })),
+    ...(request.targetShotNumber === undefined
+      ? {}
+      : { targetShotNumber: request.targetShotNumber }),
+  };
+}
+
 function object(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} is invalid`);
@@ -168,6 +198,141 @@ function text(
 function stringList(value: unknown, label: string, maximumItems: number, maximumLength: number) {
   if (!Array.isArray(value) || value.length > maximumItems) throw new Error(`${label} is invalid`);
   return value.map((entry) => text(entry, label, maximumLength));
+}
+
+function recordOrUndefined(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function optionalString(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function optionalStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((entry): entry is string => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean);
+}
+
+function normalizeDeployStudioProvider(provider: unknown): StoryboardEnhancementResponse["provider"] {
+  const normalized = typeof provider === "string" ? provider.trim().toLowerCase() : "";
+  if (normalized === "ollama" || normalized === "llama_cpp" || normalized === "mock") return normalized;
+  return "llama_cpp";
+}
+
+function normalizeDeployStudioEnhancement(
+  value: unknown,
+  request: StoryboardEnhancementRequest,
+  runtimeContext?: StoryboardEnhancementRuntimeContext,
+): unknown {
+  const envelope = recordOrUndefined(value) ?? {};
+  const source = recordOrUndefined(envelope.response) ?? envelope;
+  const fallback = mockStoryboardEnhancement(request, runtimeContext);
+  const rawBible = recordOrUndefined(source.continuityBible) ?? {};
+  const continuityBible = Object.fromEntries(
+    continuityKeys.map((key) => [
+      key,
+      typeof rawBible[key] === "string"
+        ? rawBible[key]
+        : request.continuityBible[key] ?? "",
+    ]),
+  );
+  const expectedNumbers = request.targetShotNumber
+    ? [request.targetShotNumber]
+    : Array.from({ length: request.shotCount }, (_, index) => index + 1);
+  const candidateCount = request.requestedCandidateCount ?? 3;
+  const allowedReferenceIds = new Set((request.references ?? []).map((reference) => reference.id));
+  const allowedControls = new Set(request.availableControls ?? []);
+  const rawShots = Array.isArray(source.shots) ? source.shots : [];
+  const expectedVisuals = runtimeContext?.visualReferences ?? [];
+  const textOnlyReferenceIds = runtimeContext?.textOnlyReferenceIds ?? [];
+  const rawUsagePlan = Array.isArray(source.referenceUsagePlan) ? source.referenceUsagePlan : [];
+  const referenceUsagePlan = rawUsagePlan.flatMap((entry) => {
+    const rawUsage = recordOrUndefined(entry);
+    if (!rawUsage) return [];
+    const referenceId = optionalString(rawUsage.referenceId, "");
+    if (!allowedReferenceIds.has(referenceId)) return [];
+    const shotNumbers = Array.isArray(rawUsage.shotNumbers)
+      ? [...new Set(rawUsage.shotNumbers.filter((number): number is number => Number.isInteger(number) && expectedNumbers.includes(number)))]
+      : [];
+    if (!shotNumbers.length) return [];
+    return [{
+      referenceId,
+      shotNumbers,
+      purpose: optionalString(rawUsage.purpose, "Use this reference to preserve continuity for the selected shots."),
+    }];
+  });
+  const rawAnalyses = Array.isArray(source.visualReferenceAnalyses) ? source.visualReferenceAnalyses : [];
+  const visualReferenceAnalyses = rawAnalyses.length === expectedVisuals.length
+    ? rawAnalyses
+    : fallback.visualReferenceAnalyses;
+  const shots = expectedNumbers.map((shotNumber, index) => {
+    const rawShot = recordOrUndefined(
+      rawShots.find((entry) => recordOrUndefined(entry)?.shotNumber === shotNumber) ?? rawShots[index],
+    ) ?? {};
+    const requestShot = request.shots.find((shot) => shot.shotNumber === shotNumber);
+    const fallbackShot = fallback.shots[index];
+    const audioIntent = recordOrUndefined(rawShot.audioIntent);
+    const rawCandidates = optionalStringArray(rawShot.candidateVariations) ?? [];
+    const candidateVariations = Array.from(
+      { length: candidateCount },
+      (_, candidateIndex) =>
+        rawCandidates[candidateIndex] ??
+        fallbackShot.candidateVariations[candidateIndex] ??
+        `Draft ${candidateIndex + 1}: preserve the Director-enhanced story and continuity while varying one camera, pacing, blocking or lighting choice.`,
+    );
+    return {
+      shotNumber,
+      title: optionalString(rawShot.title, requestShot?.title || fallbackShot.title),
+      narrativePurpose: optionalString(rawShot.narrativePurpose, fallbackShot.narrativePurpose),
+      prompt: optionalString(rawShot.prompt, requestShot?.prompt || fallbackShot.prompt),
+      firstFramePrompt: optionalString(rawShot.firstFramePrompt, requestShot?.firstFramePrompt || fallbackShot.firstFramePrompt),
+      lastFramePrompt: optionalString(rawShot.lastFramePrompt, requestShot?.lastFramePrompt || fallbackShot.lastFramePrompt),
+      continuityNotes: optionalString(rawShot.continuityNotes, requestShot?.continuityNotes || fallbackShot.continuityNotes),
+      referenceIds: (optionalStringArray(rawShot.referenceIds) ?? fallbackShot.referenceIds).filter((id) => allowedReferenceIds.has(id)),
+      recommendedControls: (optionalStringArray(rawShot.recommendedControls) ?? fallbackShot.recommendedControls).filter((control) => allowedControls.has(control)),
+      audioIntent: {
+        mode: ["silent", "dialogue", "ambience", "sound_effects", "music", "mixed"].includes(String(audioIntent?.mode))
+          ? audioIntent?.mode
+          : fallbackShot.audioIntent.mode,
+        reason: optionalString(audioIntent?.reason, fallbackShot.audioIntent.reason),
+      },
+      candidateVariations,
+    };
+  });
+  const instructionBundle = recordOrUndefined(source.instructionBundle);
+  const bundleHash = optionalString(
+    instructionBundle?.hash,
+    createHash("sha256").update(JSON.stringify({
+      projectId: request.projectId,
+      masterPrompt: request.masterPrompt,
+      model: source.model,
+      provider: source.provider,
+    })).digest("hex"),
+  ).toLowerCase();
+  return {
+    contractVersion: "2",
+    polishedMasterPrompt: optionalString(source.polishedMasterPrompt, request.masterPrompt),
+    continuityBible,
+    referenceUsagePlan: referenceUsagePlan.length ? referenceUsagePlan : fallback.referenceUsagePlan,
+    assumptions: optionalStringArray(source.assumptions) ?? fallback.assumptions,
+    shots,
+    visualReferenceAnalyses,
+    vision: {
+      mode: "planning_only",
+      attachedReferenceIds: expectedVisuals.map((reference) => reference.referenceId),
+      textOnlyReferenceIds,
+    },
+    provider: normalizeDeployStudioProvider(source.provider),
+    model: optionalString(source.model, "deploy-studio-director"),
+    instructionBundle: {
+      directorVersion: optionalString(instructionBundle?.directorVersion, "deploy-studio-director"),
+      enhancerVersion: optionalString(instructionBundle?.enhancerVersion, "deploy-studio-enhancer"),
+      framePromptVersion: optionalString(instructionBundle?.framePromptVersion, "deploy-studio-frame-prompts"),
+      hash: /^[a-f0-9]{64}$/.test(bundleHash) ? bundleHash : createHash("sha256").update(bundleHash).digest("hex"),
+    },
+  };
 }
 
 export function validateStoryboardEnhancement(
@@ -324,6 +489,7 @@ export interface DeployStudioStoryboardEnhancerConfig {
   baseUrl: string;
   token: string;
   runtimeId?: string;
+  requestFormat?: "deploy-studio" | "runtime-api";
   path?: string;
   authHeaderName?: string;
   authScheme?: string;
@@ -356,7 +522,9 @@ export class DeployStudioStoryboardEnhancerClient {
     runtimeContext?: StoryboardEnhancementRuntimeContext,
   ): Promise<StoryboardEnhancementResponse> {
     assertStoryboardEnhancementContextBudget(request, runtimeContext);
-    const runtimeApi = Boolean(this.config.runtimeId);
+    const runtimeApi = this.config.requestFormat
+      ? this.config.requestFormat === "runtime-api"
+      : Boolean(this.config.runtimeId);
     const path =
       this.config.path ??
       (runtimeApi
@@ -377,12 +545,9 @@ export class DeployStudioStoryboardEnhancerClient {
         : `${authScheme} ${this.config.token}`;
     let response: Response;
     const body = JSON.stringify(
-      runtimeApi ? runtimeApiEnhancementRequest(request, runtimeContext) : {
-        ...request,
-        correlationId: runtimeContext?.correlationId ?? randomUUID(),
-        visualReferences: runtimeContext?.visualReferences ?? [],
-        textOnlyReferenceIds: runtimeContext?.textOnlyReferenceIds ?? [],
-      },
+      runtimeApi
+        ? runtimeApiEnhancementRequest(request, runtimeContext)
+        : deployStudioEnhancementRequest(request),
     );
     if (new TextEncoder().encode(body).byteLength > MAX_ENHANCEMENT_REQUEST_BYTES) {
       throw new Error("storyboard_enhancement_request_too_large");
@@ -424,7 +589,14 @@ export class DeployStudioStoryboardEnhancerClient {
       );
     }
     try {
-      const result = validateStoryboardEnhancement(await boundedJson(response), request, runtimeContext);
+      const rawResult = await boundedJson(response);
+      const result = validateStoryboardEnhancement(
+        runtimeApi
+          ? rawResult
+          : normalizeDeployStudioEnhancement(rawResult, request, runtimeContext),
+        request,
+        runtimeContext,
+      );
       if (runtimeApi && result.provider === "mock") {
         throw new Error("stable_runtime_provider_invalid");
       }

@@ -144,8 +144,25 @@ function fileToDataUrl(file?: File) {
   });
 }
 
+function supportedImageContentType(file: File) {
+  const browserType = file.type.toLowerCase();
+  if (
+    browserType === "image/jpeg" ||
+    browserType === "image/png" ||
+    browserType === "image/webp"
+  ) {
+    return browserType;
+  }
+  const extension = file.name.toLowerCase().split(".").pop();
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "png") return "image/png";
+  if (extension === "webp") return "image/webp";
+  throw new Error("Upload a still JPEG, PNG, or WebP frame.");
+}
+
 export async function storeUserAsset(file: File | undefined, purpose: string) {
   if (!file) return undefined;
+  const contentType = supportedImageContentType(file);
   const normalizedPurpose = purpose.includes("start")
     ? "start_frame"
     : purpose.includes("end")
@@ -159,7 +176,7 @@ export async function storeUserAsset(file: File | undefined, purpose: string) {
     method: "POST",
     body: JSON.stringify({
       fileName: file.name,
-      contentType: file.type,
+      contentType,
       sizeBytes: file.size,
       purpose: normalizedPurpose,
     }),
@@ -169,11 +186,16 @@ export async function storeUserAsset(file: File | undefined, purpose: string) {
     method: target.method,
     headers: {
       authorization: `Bearer ${token}`,
-      "content-type": file.type,
+      "content-type": contentType,
     },
     body: file,
   });
-  if (!response.ok) throw new Error("The frame upload could not be completed.");
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(
+      body.detail ?? body.title ?? "The frame upload could not be completed.",
+    );
+  }
   return target.assetId;
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { app } from "../../apps/api/src/index.js";
 
@@ -58,6 +58,44 @@ async function createProject(owner: string) {
     .expect(201);
 }
 
+const memoryEnvKeys = [
+  "DIRECTOR_MEMORY_ENABLED",
+  "DIRECTOR_MEMORY_BASE_URL",
+  "DIRECTOR_MEMORY_API_TOKEN",
+  "DIRECTOR_MEMORY_RETRIEVAL_LIMIT",
+  "DIRECTOR_MEMORY_TIMEOUT_MS",
+  "DIRECTOR_MEMORY_WRITE_CANDIDATES",
+  "DIRECTOR_MEMORY_REQUIRE_RETRIEVAL",
+] as const;
+const originalMemoryEnv = Object.fromEntries(memoryEnvKeys.map((key) => [key, process.env[key]]));
+
+afterEach(() => {
+  for (const key of memoryEnvKeys) {
+    const value = originalMemoryEnv[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  vi.restoreAllMocks();
+});
+
+function enableMemory(overrides: Record<string, string> = {}) {
+  process.env.DIRECTOR_MEMORY_ENABLED = "true";
+  process.env.DIRECTOR_MEMORY_BASE_URL = "https://director-memory.test";
+  process.env.DIRECTOR_MEMORY_API_TOKEN = "test-memory-token";
+  process.env.DIRECTOR_MEMORY_TIMEOUT_MS = "1000";
+  process.env.DIRECTOR_MEMORY_RETRIEVAL_LIMIT = "6";
+  process.env.DIRECTOR_MEMORY_WRITE_CANDIDATES = "false";
+  process.env.DIRECTOR_MEMORY_REQUIRE_RETRIEVAL = "false";
+  Object.assign(process.env, overrides);
+}
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 describe("Director proposals", () => {
   it("returns an answer without mutating the project", async () => {
     const owner = "director-answer-owner";
@@ -90,6 +128,130 @@ describe("Director proposals", () => {
     expect(accepted.body.project.form.scenes[0].prompt).toBe(projectForm().scenes[0].prompt);
     expect(accepted.body.project.form.scenes[1].prompt).not.toBe(projectForm().scenes[1].prompt);
     expect(accepted.body.project.form.scenes[1].prompt).toContain("scene 2");
+  });
+
+  it("continues the Improve with Director flow when memory is disabled", async () => {
+    const owner = "director-memory-disabled-owner";
+    const project = await createProject(owner);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const proposal = await request(app)
+      .post("/v1/storyboards/director/proposals")
+      .set("authorization", `Bearer ${owner}`)
+      .send({ projectId: project.body.id, selectedSceneId: "scene-1", message: "Improve this scene with the Director." })
+      .expect(201);
+    expect(proposal.body).toMatchObject({ kind: "draft_change", action: "propose_scene_change" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("retrieves approved memory and includes only safe summaries in the private Director instruction", async () => {
+    enableMemory();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
+      schemaVersion: 1,
+      degraded: false,
+      items: [{
+        id: "memory-1",
+        scope: "project",
+        category: "prompt_improvement",
+        title: "Stable camera tension",
+        summary: "Build tension with slower blocking and one clear camera move.",
+        confidence: 0.9,
+        modelTags: ["ltx-2.3"],
+        embedding: [1, 2, 3],
+      }],
+    }));
+    const owner = "director-memory-enabled-owner";
+    const project = await createProject(owner);
+    const proposal = await request(app)
+      .post("/v1/storyboards/director/proposals")
+      .set("authorization", `Bearer ${owner}`)
+      .send({ projectId: project.body.id, selectedSceneId: "scene-2", message: "Improve this scene with the Director." })
+      .expect(201);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("https://director-memory.test/director-memory/retrieve");
+    expect((init as RequestInit).headers).toMatchObject({ authorization: "Bearer test-memory-token" });
+    const requestBody = JSON.parse(String((init as RequestInit).body));
+    expect(requestBody).toMatchObject({
+      ownerUid: owner,
+      projectId: project.body.id,
+      selectedSceneId: "scene-2",
+      intent: "improve_with_director",
+    });
+    expect(JSON.stringify(proposal.body)).not.toContain("test-memory-token");
+    expect(JSON.stringify(proposal.body)).not.toContain("director-memory.test");
+    expect(JSON.stringify(proposal.body)).not.toContain("embedding");
+    expect(proposal.body.diff[0].after).toContain("Stable camera tension");
+    expect(proposal.body.diff[0].after).toContain("advisory only");
+  });
+
+  it("fails open on optional memory retrieval failure and blocks when retrieval is required", async () => {
+    enableMemory();
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network includes https://director-memory.test and token test-memory-token"));
+    const owner = "director-memory-failure-owner";
+    const project = await createProject(owner);
+    await request(app)
+      .post("/v1/storyboards/director/proposals")
+      .set("authorization", `Bearer ${owner}`)
+      .send({ projectId: project.body.id, selectedSceneId: "scene-1", message: "Improve this scene with the Director." })
+      .expect(201);
+
+    process.env.DIRECTOR_MEMORY_REQUIRE_RETRIEVAL = "true";
+    await request(app)
+      .post("/v1/storyboards/director/proposals")
+      .set("authorization", `Bearer ${owner}`)
+      .send({ projectId: project.body.id, selectedSceneId: "scene-1", message: "Improve this scene with the Director." })
+      .expect(500);
+  });
+
+  it("writes a draft memory candidate after an accepted Director text proposal when enabled", async () => {
+    enableMemory({ DIRECTOR_MEMORY_WRITE_CANDIDATES: "true" });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      if (String(url).endsWith("/director-memory/retrieve")) return jsonResponse({ schemaVersion: 1, items: [] });
+      if (String(url).endsWith("/director-memory/candidates")) return jsonResponse({ id: "candidate-1", status: "draft" });
+      return jsonResponse({}, 404);
+    });
+    const owner = "director-memory-candidate-owner";
+    const project = await createProject(owner);
+    const proposal = await request(app)
+      .post("/v1/storyboards/director/proposals")
+      .set("authorization", `Bearer ${owner}`)
+      .send({ projectId: project.body.id, selectedSceneId: "scene-1", message: "Make this scene more tense." })
+      .expect(201);
+    await request(app)
+      .post(`/v1/storyboards/director/proposals/${proposal.body.id}/accept`)
+      .set("authorization", `Bearer ${owner}`)
+      .send({})
+      .expect(200);
+    await vi.waitFor(() => {
+      expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/director-memory/candidates"))).toBe(true);
+    });
+    const candidateCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/director-memory/candidates"));
+    const body = JSON.parse(String((candidateCall?.[1] as RequestInit).body));
+    expect(body).toMatchObject({
+      scope: "project",
+      ownerUid: owner,
+      projectId: project.body.id,
+      category: "prompt_improvement",
+      title: "Director improvement accepted",
+      source: { type: "video_lab_director", id: proposal.body.id },
+    });
+    expect(body.status).toBeUndefined();
+  });
+
+  it("rejects browser-supplied memory fields", async () => {
+    const owner = "director-memory-injection-owner";
+    const project = await createProject(owner);
+    await request(app)
+      .post("/v1/storyboards/director/proposals")
+      .set("authorization", `Bearer ${owner}`)
+      .send({
+        projectId: project.body.id,
+        selectedSceneId: "scene-1",
+        message: "Improve this scene with the Director.",
+        memoryItems: [{ title: "Injected" }],
+        directorMemoryBaseUrl: "https://attacker.example",
+      })
+      .expect(400);
   });
 
   it("requires review for GPU work and does not create a generation merely by accepting", async () => {

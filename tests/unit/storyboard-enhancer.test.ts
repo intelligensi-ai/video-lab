@@ -294,4 +294,167 @@ describe("storyboard enhancer contract", () => {
       shots: [{ shotNumber: 1 }, { shotNumber: 2 }],
     });
   });
+
+  it("uses the Deploy Studio Director Agent endpoint with the compact storyboard contract", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        expect(String(url)).toBe(
+          "https://intelligensi-ai-deploy-studio.web.app/api/storyboards/enhance",
+        );
+        expect(init?.headers).toMatchObject({
+          "content-type": "application/json",
+          "X-Intelligensi-API-Key": "server-only-key",
+        });
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({
+          projectId: request.projectId,
+          masterPrompt: request.masterPrompt,
+          overallGoal: request.masterPrompt,
+          shotCount: request.shotCount,
+          generationMode: request.generationMode,
+          continuityBible: request.continuityBible,
+          shots: request.shots.map((shot) => ({
+            shotNumber: shot.shotNumber,
+            title: shot.title,
+            narrativePurpose: shot.narrativePurpose,
+            prompt: shot.prompt,
+            firstFramePrompt: shot.firstFramePrompt,
+            lastFramePrompt: shot.lastFramePrompt,
+            continuityNotes: shot.continuityNotes,
+            durationSeconds: shot.durationSeconds,
+            generationMode: shot.generationMode,
+            referenceIds: shot.referenceIds,
+            selectedControls: shot.selectedControls,
+            audioIntent: shot.audioIntent,
+          })),
+        });
+        expect(body.contractVersion).toBeUndefined();
+        expect(body.correlationId).toBeUndefined();
+        expect(body.visualReferences).toBeUndefined();
+        return Response.json({
+          ...mockStoryboardEnhancement(request),
+          provider: "llama_cpp",
+          model: "Gemma Director",
+        });
+      }),
+    );
+    const client = new DeployStudioStoryboardEnhancerClient({
+      baseUrl: "https://intelligensi-ai-deploy-studio.web.app",
+      token: "server-only-key",
+      requestFormat: "deploy-studio",
+      path: "/api/storyboards/enhance",
+      authHeaderName: "X-Intelligensi-API-Key",
+      authScheme: "none",
+    });
+
+    await expect(client.enhance(request, runtimeContext)).resolves.toMatchObject({
+      provider: "llama_cpp",
+      model: "Gemma Director",
+      polishedMasterPrompt: request.masterPrompt,
+    });
+  });
+
+  it("can authenticate the Deploy Studio Director endpoint with a Firebase bearer token", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        expect(init?.headers).toMatchObject({
+          "content-type": "application/json",
+          authorization: "Bearer firebase-user-token",
+        });
+        expect(
+          (init?.headers as Record<string, string>)["X-Intelligensi-API-Key"],
+        ).toBeUndefined();
+        return Response.json({
+          ...mockStoryboardEnhancement(request),
+          provider: "llama_cpp",
+          model: "Gemma Director",
+        });
+      }),
+    );
+    const client = new DeployStudioStoryboardEnhancerClient({
+      baseUrl: "https://intelligensi-ai-deploy-studio.web.app",
+      token: "firebase-user-token",
+      requestFormat: "deploy-studio",
+      path: "/api/storyboards/enhance",
+      authHeaderName: "authorization",
+      authScheme: "Bearer",
+    });
+
+    await expect(client.enhance(request, runtimeContext)).resolves.toMatchObject({
+      provider: "llama_cpp",
+      model: "Gemma Director",
+    });
+  });
+
+  it("normalizes richer Deploy Studio Director responses before Video Lab validation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({
+        response: {
+          polishedMasterPrompt: "A memory-aware cinematic plan for rainy London.",
+          continuityBible: request.continuityBible,
+          referenceUsagePlan: [
+            { referenceId: "unknown-ref", shotNumbers: [1], purpose: "Should be removed." },
+            { referenceId: "ref_character_01", shotNumbers: [1, 99], purpose: "Use the founder reference." },
+          ],
+          vision: {
+            mode: "planning_only",
+            attachedReferenceIds: ["wrong-visual-ref"],
+            textOnlyReferenceIds: ["wrong-text-ref"],
+          },
+          shots: request.shots.map((shot) => ({
+            shotNumber: shot.shotNumber,
+            title: `Director scene ${shot.shotNumber}`,
+            narrativePurpose: `Director purpose ${shot.shotNumber}`,
+            prompt: `Director prompt ${shot.shotNumber}`,
+            firstFramePrompt: `Director first frame ${shot.shotNumber}`,
+            lastFramePrompt: `Director last frame ${shot.shotNumber}`,
+            continuityNotes: `Director continuity ${shot.shotNumber}`,
+            referenceIds: [...shot.referenceIds, "unknown-ref"],
+            recommendedControls: ["start_frame", "unsupported_control"],
+            audioIntent: { mode: "ambience", reason: "Rain and traffic bed." },
+            renderMetadata: { seed: 1337 },
+          })),
+          provider: "gemini",
+          model: "gemini-2.5-flash",
+          renderMetadata: { fps: 24 },
+        },
+        memory: {
+          usedCount: 1,
+          items: [{ id: "memory-1", title: "Use teal continuity." }],
+        },
+      })),
+    );
+    const client = new DeployStudioStoryboardEnhancerClient({
+      baseUrl: "https://intelligensi-ai-deploy-studio.web.app",
+      token: "server-only-key",
+      requestFormat: "deploy-studio",
+      path: "/api/storyboards/enhance",
+      authHeaderName: "X-Intelligensi-API-Key",
+      authScheme: "none",
+    });
+
+    await expect(client.enhance(request, runtimeContext)).resolves.toMatchObject({
+      provider: "llama_cpp",
+      model: "gemini-2.5-flash",
+      polishedMasterPrompt: "A memory-aware cinematic plan for rainy London.",
+      shots: [
+        {
+          shotNumber: 1,
+          prompt: "Director prompt 1",
+          referenceIds: ["ref_character_01"],
+          recommendedControls: ["start_frame"],
+          candidateVariations: expect.arrayContaining([expect.stringContaining("Draft 1")]),
+        },
+        {
+          shotNumber: 2,
+          prompt: "Director prompt 2",
+          referenceIds: ["ref_character_01"],
+          recommendedControls: ["start_frame"],
+        },
+      ],
+    });
+  });
 });

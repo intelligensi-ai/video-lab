@@ -9,6 +9,7 @@ import {
   sendPasswordResetEmail,
   signInAnonymously,
   signInWithEmailAndPassword,
+  signInWithPopup,
   signInWithRedirect,
   signOut,
   updateProfile,
@@ -62,7 +63,16 @@ export async function signInWithGoogle() {
   if (!firebaseAuth) throw new Error('Firebase Auth is not configured');
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
-  await signInWithRedirect(firebaseAuth, provider);
+  try {
+    return (await signInWithPopup(firebaseAuth, provider)).user;
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === 'auth/popup-blocked' || code === 'auth/cancelled-popup-request') {
+      await signInWithRedirect(firebaseAuth, provider);
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 export async function registerWithEmail(name: string, email: string, password: string) {

@@ -30,10 +30,11 @@ describe('prompt suggestion expansion', () => {
     expect(fallback).toContain('anamorphic');
   });
 
-  it('provides a generic cinematic fallback if prompt assistance is unavailable', () => {
+  it('provides a local fallback if prompt assistance is unavailable', () => {
     const fallback = getPromptExpansionFallback('A diver finds a glowing cave', 'video-scene');
     expect(fallback).toContain('A diver finds a glowing cave');
-    expect(fallback).toContain('production-ready cinematic shot');
-    expect(fallback).toContain('motivated camera movement');
+    expect(fallback).toContain('Develop the idea');
+    expect(fallback).toContain('purposeful camera movement');
+    expect(fallback).not.toContain('Create one production-ready cinematic shot');
   });
 });

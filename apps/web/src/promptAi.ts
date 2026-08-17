@@ -70,7 +70,7 @@ export function getPromptExpansionFallback(
   if (kind === "storyboard-scene") {
     return `${seed}. Build this as one precise storyboard beat with a clear subject action, motivated camera movement, lens and framing, lighting progression and a final composition that hands visual continuity to the next scene.`;
   }
-  return `${seed}. Create one production-ready cinematic shot with a clear subject action, specific setting, motivated camera movement, lens and framing, lighting direction, colour palette, tactile atmosphere and a deliberate final composition.`;
+  return `${seed}. Develop the idea with one concrete subject action, a specific setting, purposeful camera movement, lens and framing, lighting direction, material detail, atmosphere and a strong final frame.`;
 }
 
 function trimAtWord(text: string, maxLength = 1200) {

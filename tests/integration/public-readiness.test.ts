@@ -249,6 +249,26 @@ describe("public runtime readiness boundaries", () => {
       .expect(204);
   });
 
+  it("accepts browser image content-type parameters on frame uploads", async () => {
+    const bytes = onePixelPng();
+    const target = await request(app)
+      .post("/v1/assets/upload-url")
+      .set("authorization", "Bearer upload-owner-parameterized")
+      .send({
+        fileName: "opening.png",
+        contentType: "image/png",
+        sizeBytes: bytes.length,
+        purpose: "start_frame",
+      })
+      .expect(201);
+    await request(app)
+      .put(target.body.uploadUrl)
+      .set("authorization", "Bearer upload-owner-parameterized")
+      .set("content-type", "image/png; charset=utf-8")
+      .send(bytes)
+      .expect(204);
+  });
+
   it("persists only owner-scoped intermediate frame identifiers and timing metadata", async () => {
     const owner = "temporal-anchor-owner";
     const bytes = onePixelPng();

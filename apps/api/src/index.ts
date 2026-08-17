@@ -68,6 +68,11 @@ import {
   proposalCopy,
 } from "./director.js";
 import {
+  createDirectorMemoryCandidate,
+  formatDirectorMemoryForDirectorContext,
+  retrieveDirectorMemory,
+} from "./directorMemory.js";
+import {
   MAX_DIRECTOR_VISUAL_BYTES,
   MAX_DIRECTOR_VISUAL_REFERENCES,
   normalizeVisualReference,
@@ -75,6 +80,10 @@ import {
   type SupportedReferenceContentType,
 } from "./visualReferences.js";
 type Principal = { uid: string; email: string; admin: boolean };
+type AuthenticatedLocals = {
+  principal: Principal;
+  firebaseIdToken?: string;
+};
 let runtime = createRuntimeFromEnv();
 type StoredGeneration = Generation & {
   uid: string;
@@ -2223,11 +2232,17 @@ async function refreshQueueDepth() {
       );
   }
 }
-async function principal(req: express.Request): Promise<Principal> {
+function bearerToken(req: express.Request): string | undefined {
   const h = req.header("authorization");
   if (!h?.startsWith("Bearer "))
+    return undefined;
+  const token = h.slice(7).trim();
+  return token || undefined;
+}
+async function principal(req: express.Request): Promise<Principal> {
+  const token = bearerToken(req);
+  if (!token)
     throw problem(401, "unauthenticated", "Missing Firebase bearer token");
-  const token = h.slice(7);
   if (localAuth) {
     if (token === "admin-token")
       return { uid: "admin", email: "admin@example.test", admin: true };
@@ -2280,6 +2295,7 @@ async function auth(
     const p = await principal(req);
     ensureUser(p);
     res.locals.principal = p;
+    res.locals.firebaseIdToken = bearerToken(req);
     next();
   } catch (e) {
     next(e);
@@ -2317,6 +2333,16 @@ const continuityKeys: Array<keyof StoryboardContinuityBible> = [
   "visualStyle",
   "audio",
 ];
+
+const supportedAssetContentTypes = new Set<SupportedReferenceContentType>([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+function canonicalContentType(value: string | undefined) {
+  return value?.split(";")[0]?.trim().toLowerCase();
+}
 
 function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
   const invalid = (code: string, detail: string): never => {
@@ -3330,11 +3356,79 @@ function directorDiff(
   return [];
 }
 
+function enhancementMemoryQuery(request: StoryboardEnhancementRequest) {
+  const target = request.targetShotNumber
+    ? request.shots.find((shot) => shot.shotNumber === request.targetShotNumber)
+    : undefined;
+  const shotText = target
+    ? [
+        `Scene ${target.shotNumber}: ${target.title}`,
+        target.narrativePurpose,
+        target.prompt,
+        target.firstFramePrompt,
+        target.lastFramePrompt,
+        target.continuityNotes,
+      ]
+    : request.shots.flatMap((shot) => [
+        `Scene ${shot.shotNumber}: ${shot.title}`,
+        shot.narrativePurpose,
+        shot.prompt,
+      ]);
+  return [
+    request.userInstruction ?? "",
+    request.masterPrompt,
+    ...shotText,
+    Object.values(request.continuityBible).join(" "),
+  ].filter(Boolean).join("\n").slice(0, 8_000);
+}
+
+function appendDirectorMemoryContext(request: StoryboardEnhancementRequest, context: string): StoryboardEnhancementRequest {
+  if (!context) return request;
+  return {
+    ...request,
+    userInstruction: [
+      request.userInstruction?.trim() || "Improve this storyboard with the Director.",
+      "",
+      context,
+    ].join("\n").slice(0, 4_000),
+  };
+}
+
+function directorMemoryModelTags(request: StoryboardEnhancementRequest) {
+  return ["gemma-director", request.videoModel === "ltx-2.5" ? "ltx-2.5" : "ltx-2.3"];
+}
+
+async function attachDirectorMemory(
+  uid: string,
+  request: StoryboardEnhancementRequest,
+  selectedSceneId: string | undefined,
+  intent: string,
+) {
+  if (!request.projectId) return request;
+  const items = await retrieveDirectorMemory({
+    ownerUid: uid,
+    projectId: request.projectId,
+    selectedSceneId,
+    intent,
+    query: enhancementMemoryQuery(request),
+    modelTags: directorMemoryModelTags(request),
+  });
+  return appendDirectorMemoryContext(request, formatDirectorMemoryForDirectorContext(items));
+}
+
+function acceptedDirectorMemorySummary(proposal: StoredDirectorProposal) {
+  const diff = proposal.diff.find((item) => typeof item.after === "string" && item.after.trim());
+  const before = diff?.before ? ` Replaced prior text: ${String(diff.before).slice(0, 180)}` : "";
+  const after = diff?.after ? ` Accepted direction: ${String(diff.after).slice(0, 420)}` : proposal.explanation;
+  return `${proposal.summary}.${after}${before}`.replace(/\s+/g, " ").slice(0, 700);
+}
+
 async function createDirectorProposal(
   uid: string,
   project: StoredStoryboardProject,
   message: string,
   selectedSceneId?: string,
+  options: { firebaseIdToken?: string } = {},
 ) {
   const scenes = directorSceneRecords(project.form);
   const selectedScene = scenes.find((scene) => String(scene.id) === selectedSceneId) ?? scenes[0];
@@ -3360,14 +3454,19 @@ async function createDirectorProposal(
     if (!String(project.form.overallGoal ?? "").trim()) {
       throw problem(400, "missing_creative_brief", "Add a creative brief before asking the Director to rewrite it");
     }
-    const enhancementRequest = buildDirectorEnhancementRequest(
+    const enhancementRequest = await attachDirectorMemory(
+      uid,
+      buildDirectorEnhancementRequest(
         project.form,
         message,
         intent,
         resolvedSceneId,
         directorControls(),
         project.id,
-      );
+      ),
+      resolvedSceneId,
+      "improve_with_director",
+    );
     const resolved = await resolveEnhancementRuntimeContext(
       uid,
       project,
@@ -3376,6 +3475,7 @@ async function createDirectorProposal(
     const enhancement = await enhanceStoryboard(
       resolved.request,
       resolved.runtimeContext,
+      { firebaseIdToken: options.firebaseIdToken },
     );
     payload.enhancement = enhancement;
     payload.referencePlanningEvidence = {
@@ -3430,18 +3530,34 @@ async function createDirectorProposal(
 async function enhanceStoryboard(
   request: StoryboardEnhancementRequest,
   runtimeContext?: StoryboardEnhancementRuntimeContext,
+  options: { firebaseIdToken?: string } = {},
 ) {
-  const useStableApi = usesIntelligensiRuntimeApi;
-  const baseUrl = useStableApi
+  const enhancerProvider =
+    process.env.VIDEO_STORYBOARD_ENHANCER_PROVIDER ??
+    (usesIntelligensiRuntimeApi ? "runtime-api" : "deploy-studio");
+  const useDeployStudioEnhancer = enhancerProvider === "deploy-studio";
+  const useStableApi = usesIntelligensiRuntimeApi && !useDeployStudioEnhancer;
+  const baseUrl = useDeployStudioEnhancer
+    ? normalizeRuntimeOrigin(
+        process.env.VIDEO_DEPLOY_STUDIO_BASE_URL ??
+          process.env.VIDEO_RUNTIME_BASE_URL,
+        {
+          production: process.env.NODE_ENV === "production",
+          allowPrivate: localAuth,
+        },
+      )
+    : useStableApi
     ? normalizeRuntimeBaseUrl(process.env.VIDEO_RUNTIME_BASE_URL)
     : normalizeRuntimeOrigin(process.env.VIDEO_DEPLOY_STUDIO_BASE_URL, {
         production: process.env.NODE_ENV === "production",
         allowPrivate: localAuth,
       });
   const token = (
-    useStableApi
-      ? videoLabRuntimeApiKey()
-      : process.env.VIDEO_DEPLOY_STUDIO_API_TOKEN
+    useDeployStudioEnhancer
+      ? process.env.VIDEO_DEPLOY_STUDIO_API_TOKEN ?? videoLabRuntimeApiKey()
+      : useStableApi
+        ? videoLabRuntimeApiKey()
+        : process.env.VIDEO_DEPLOY_STUDIO_API_TOKEN
   )?.trim();
   if (baseUrl && token) {
     try {
@@ -3452,15 +3568,30 @@ async function enhanceStoryboard(
           ? process.env.VIDEO_RUNTIME_ID ??
             "longform-ltx-storyboard-studio"
           : undefined,
+        requestFormat: useStableApi ? "runtime-api" : "deploy-studio",
         path: useStableApi
           ? process.env.VIDEO_RUNTIME_STORYBOARD_ENHANCE_PATH
           : process.env.VIDEO_DEPLOY_STUDIO_STORYBOARD_ENHANCE_PATH,
         authHeaderName: useStableApi
           ? process.env.VIDEO_RUNTIME_AUTH_HEADER
-          : undefined,
+          : useDeployStudioEnhancer && process.env.VIDEO_DEPLOY_STUDIO_API_TOKEN
+            ? process.env.VIDEO_DEPLOY_STUDIO_AUTH_HEADER
+          : options.firebaseIdToken
+            ? "authorization"
+            : process.env.VIDEO_DEPLOY_STUDIO_AUTH_HEADER ??
+            (process.env.VIDEO_DEPLOY_STUDIO_API_TOKEN
+              ? undefined
+              : process.env.VIDEO_RUNTIME_AUTH_HEADER),
         authScheme: useStableApi
           ? process.env.VIDEO_RUNTIME_AUTH_SCHEME
-          : undefined,
+          : useDeployStudioEnhancer && process.env.VIDEO_DEPLOY_STUDIO_API_TOKEN
+            ? process.env.VIDEO_DEPLOY_STUDIO_AUTH_SCHEME
+          : options.firebaseIdToken
+            ? "Bearer"
+            : process.env.VIDEO_DEPLOY_STUDIO_AUTH_SCHEME ??
+            (process.env.VIDEO_DEPLOY_STUDIO_API_TOKEN
+              ? undefined
+              : process.env.VIDEO_RUNTIME_AUTH_SCHEME),
         timeoutMs: boundedInteger(
           process.env.VIDEO_STORYBOARD_ENHANCER_TIMEOUT_MS,
           250_000,
@@ -3702,7 +3833,18 @@ app.post(
           project,
           enhancement,
         );
-        enhancement = resolved.request;
+        const selectedSceneId = enhancement.targetShotNumber
+          ? String(
+              directorSceneRecords(project.form)[enhancement.targetShotNumber - 1]
+                ?.id ?? "",
+            ) || undefined
+          : undefined;
+        enhancement = await attachDirectorMemory(
+          res.locals.principal.uid,
+          resolved.request,
+          selectedSceneId,
+          "improve_with_director",
+        );
         runtimeContext = resolved.runtimeContext;
       } else if (enhancement.references.length) {
         throw problem(
@@ -3711,7 +3853,9 @@ app.post(
           "Project references require a saved project",
         );
       }
-      const result = await enhanceStoryboard(enhancement, runtimeContext);
+      const result = await enhanceStoryboard(enhancement, runtimeContext, {
+        firebaseIdToken: (res.locals as AuthenticatedLocals).firebaseIdToken,
+      });
       log("storyboard_enhanced", {
         correlationId: runtimeContext?.correlationId ?? nanoid(20),
         shotCount: enhancement.shotCount,
@@ -3794,6 +3938,7 @@ app.post(
         project,
         input.message,
         input.selectedSceneId,
+        { firebaseIdToken: (res.locals as AuthenticatedLocals).firebaseIdToken },
       );
       log("director_proposal_created", {
         uid: res.locals.principal.uid,
@@ -3900,6 +4045,24 @@ app.post(
         proposalId: proposal.id,
         action: proposal.action,
       });
+      if (proposal.kind === "draft_change") {
+        void createDirectorMemoryCandidate({
+          ownerUid: res.locals.principal.uid,
+          projectId: proposal.projectId,
+          category: "prompt_improvement",
+          title: "Director improvement accepted",
+          summary: acceptedDirectorMemorySummary(proposal),
+          source: { type: "video_lab_director", id: proposal.id },
+          modelTags: [
+            "gemma-director",
+            String(
+              (project.form as Record<string, unknown>).videoModel === "ltx-2.5"
+                ? "ltx-2.5"
+                : "ltx-2.3",
+            ),
+          ],
+        });
+      }
       const result: DirectorProposalResult = {
         proposal: visible,
         ...(publicProject ? { project: publicProject } : {}),
@@ -3950,7 +4113,7 @@ app.post("/v1/assets/upload-url", auth, async (req, res, next) => {
       typeof fileName !== "string" ||
       fileName.trim().length < 1 ||
       fileName.length > 160 ||
-      !["image/jpeg", "image/png", "image/webp"].includes(contentType) ||
+      !supportedAssetContentTypes.has(canonicalContentType(contentType) as SupportedReferenceContentType) ||
       !Number.isInteger(sizeBytes) ||
       sizeBytes < 1 ||
       sizeBytes > 10485760
@@ -3967,7 +4130,7 @@ app.post("/v1/assets/upload-url", auth, async (req, res, next) => {
       uid: res.locals.principal.uid,
       purpose,
       objectPath,
-      contentType,
+      contentType: canonicalContentType(contentType) as SupportedReferenceContentType,
       expectedSize: sizeBytes,
       createdAt: nowIso(),
       uploadExpiresAt,
@@ -4010,10 +4173,11 @@ app.put(
         );
       }
       const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      const requestContentType = canonicalContentType(req.header("content-type"));
       if (
         !body.length ||
         body.length !== asset.expectedSize ||
-        req.header("content-type") !== asset.contentType ||
+        requestContentType !== asset.contentType ||
         !imageSignatureMatches(body, asset.contentType)
       ) {
         throw problem(
@@ -4031,6 +4195,16 @@ app.put(
       } catch (error) {
         const animated =
           error instanceof Error && error.message === "reference_image_animated";
+        const cause = error instanceof Error ? error.cause : undefined;
+        log("asset_normalize_failed", {
+          correlationId: nanoid(20),
+          assetId: asset.id,
+          purpose: asset.purpose,
+          contentType: asset.contentType,
+          sizeBytes: body.length,
+          reason: error instanceof Error ? error.message : String(error),
+          cause: cause instanceof Error ? cause.message : cause ? String(cause) : undefined,
+        });
         throw problem(
           400,
           animated ? "animated_asset_unsupported" : "invalid_asset",
@@ -5240,6 +5414,12 @@ export const api =
           secrets: [
             (await import("firebase-functions/params")).defineSecret(
               "VIDEO_LAB_RUNTIME_API_KEY",
+            ),
+            (await import("firebase-functions/params")).defineSecret(
+              "VIDEO_DEPLOY_STUDIO_API_TOKEN",
+            ),
+            (await import("firebase-functions/params")).defineSecret(
+              "DIRECTOR_MEMORY_API_TOKEN",
             ),
           ],
         },
