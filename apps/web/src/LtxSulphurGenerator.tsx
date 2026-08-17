@@ -21,7 +21,7 @@ const initialReferences: RefState[] = [
   { label: 'Start Frame', role: 'startFrame', strength: 0.75 }, { label: 'End Frame', role: 'endFrame', strength: 0.75 }, { label: 'Reference Image', role: 'referenceImage', strength: 0.6 }, { label: 'Style Reference', role: 'styleReference', strength: 0.5 }, { label: 'Subject Reference', role: 'subjectReference', strength: 0.65 },
 ];
 
-function initialForm(): FormState { return { prompt: '', rewrittenPrompt: '', negativePrompt: '', promptMode: 'Cinematic', quality: 'standard', duration: 4, resolution: '1280x720', aspectRatio: '16:9', frameRate: 24, guidance: 5, cfgGuidance: 5, motionStrength: 0.55, cameraMotion: 'Slow dolly in', frameInfluence: 0.65, enhancePrompt: true, outputFormat: 'mp4', references: initialReferences }; }
+export function initialForm(): FormState { return { prompt: '', rewrittenPrompt: '', negativePrompt: '', promptMode: 'Cinematic', quality: 'standard', duration: 4, resolution: '1280x720', aspectRatio: '16:9', frameRate: 24, guidance: 5, cfgGuidance: 5, motionStrength: 0.55, cameraMotion: 'Slow dolly in', frameInfluence: 0.65, enhancePrompt: false, outputFormat: 'mp4', references: initialReferences }; }
 
 export function hasSulphurGenerationInput(form: FormState) { return form.prompt.trim().length > 0 || form.references.some((ref) => ref.file); }
 export function previewFileAssetId(ref: RefState) { return ref.file ? `${ref.role}:${ref.file.name}` : undefined; }
@@ -189,7 +189,6 @@ function PromptComposer({
         <div className="prompt-field-heading"><span>Negative prompt</span><PromptSuggestion value={form.negativePrompt} suggestion="Avoid flicker, warped anatomy, duplicate subjects, unreadable text, watermarks and abrupt camera movement." expansion="Also exclude visual artefacts, identity drift, inconsistent lighting, unwanted text, unstable motion and anything that conflicts with the intended cinematic style." kind="negative" onUse={(suggestion) => setForm((current) => ({ ...current, negativePrompt: suggestion }))}/></div>
         <textarea className="small-textarea" aria-label="Negative prompt" value={form.negativePrompt} placeholder="Describe anything the model should avoid…" onChange={(event) => setForm((current) => ({ ...current, negativePrompt: event.target.value }))}/>
       </div>
-      <label className="studio-check"><input type="checkbox" checked={form.enhancePrompt} onChange={(event) => setForm((current) => ({ ...current, enhancePrompt: event.target.checked }))}/><span>Enhance my prompt automatically</span></label>
     </details>
   </section>;
 }
@@ -204,6 +203,7 @@ function VisualReferencePanel({
   const uploadedCount = form.references.filter((reference) => reference.file).length;
   return <details className="panel studio-disclosure">
     <summary><span>Frames &amp; identity</span><small>{uploadedCount ? `${uploadedCount} reference${uploadedCount === 1 ? '' : 's'} added` : 'Optional start, end and style references'}</small></summary>
+    <label className="studio-check"><input type="checkbox" checked={form.enhancePrompt} onChange={(event) => setForm((current) => ({ ...current, enhancePrompt: event.target.checked }))}/><span>Enhance my prompt automatically</span></label>
     <div className="reference-grid">
       {form.references.map((reference, index) => <ReferenceUploadCard
         key={reference.role}
