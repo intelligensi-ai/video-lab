@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   creatorScenesForTotalDuration,
@@ -60,6 +61,31 @@ function projectForm(): LongFormGenerationPayload {
 }
 
 describe("minimal VideoLab project safety", () => {
+  it("keeps the consolidated launch runbook linked and explicit about release evidence", () => {
+    const readme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
+    const runbook = readFileSync(
+      new URL("../../docs/creator-minimal-launch-runbook-2026-08-17.md", import.meta.url),
+      "utf8",
+    );
+    const normalizedRunbook = runbook.replace(/\s+/g, " ").toLowerCase();
+
+    expect(readme).toContain("docs/creator-minimal-launch-runbook-2026-08-17.md");
+    for (const requiredBoundary of [
+      "## Architecture and trust boundaries",
+      "## Minimal Creator input",
+      "## Director output and authority",
+      "## Semantic Director memory",
+      "## LTX engine selection",
+      "## Unwanted captions and generated text",
+      "## Audio policy",
+      "## Paid acceptance procedure",
+      "## Known limitations and deferred work",
+      "production promotion remains a separate explicit decision",
+    ]) {
+      expect(normalizedRunbook).toContain(requiredBoundary.toLowerCase());
+    }
+  });
+
   it("preserves and submits the Director's complete minimal storyboard", () => {
     const original = projectForm();
     const restored = formForStudioVariant(original, true);

@@ -102,7 +102,7 @@ backend communicates with the allow-listed Deploy Studio gateway.
 3. Choose the video model, aspect ratio, resolution and length. LTX 2.3 remains
    the proven default. LTX 2.5 is selectable only when an approved compatible
    runtime advertises that it is ready.
-4. Select **Create storyboard**. Video Lab divides the selected total length
+4. Select **Improve with Director**. Video Lab divides the selected total length
    into the smallest balanced set of 1-8 second scenes, then queues the request
    durably. The Director creates the content for exactly that application-owned
    scene count; it cannot change the requested total duration or scene order.
@@ -135,6 +135,11 @@ silently enable it.
 See [Minimal Creator launch contract](docs/minimal-creator-launch-contract-2026-08-17.md)
 for the complete Director, scene-duration, generated-text and acceptance
 boundaries.
+
+Use the [Minimal Creator launch runbook](docs/creator-minimal-launch-runbook-2026-08-17.md)
+as the consolidated developer and operator reference for architecture,
+Director input/output, semantic memory, LTX model differences, caption and
+audio enforcement, local verification, paid acceptance and deferred ownership.
 
 ### Runtime unavailable
 

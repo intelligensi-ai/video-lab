@@ -1307,11 +1307,12 @@ components:
         type: object,
         additionalProperties: false,
         required:
-          [contractVersion, polishedMasterPrompt, continuityBible, referenceUsagePlan, assumptions, shots, visualReferenceAnalyses, vision, provider, model, instructionBundle],
+          [contractVersion, polishedMasterPrompt, negativePrompt, continuityBible, referenceUsagePlan, assumptions, shots, visualReferenceAnalyses, vision, provider, model, instructionBundle],
         properties:
           {
             contractVersion: { type: string, const: "2" },
             polishedMasterPrompt: { type: string },
+            negativePrompt: { type: string, minLength: 1, maxLength: 4000 },
             continuityBible:
               { $ref: "#/components/schemas/StoryboardContinuityBible" },
             referenceUsagePlan: { type: array, items: { $ref: "#/components/schemas/StoryboardReferenceUsage" } },

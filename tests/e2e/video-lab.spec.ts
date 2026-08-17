@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const apiBaseUrl = process.env.VIDEO_LAB_E2E_API_BASE_URL ?? "http://127.0.0.1:5101";
+
 test("landing page presents the creator entry point", async ({ page }) => {
   await page.goto("/");
   await expect(
@@ -16,6 +18,62 @@ test("minimal VideoLab exposes only Director, preview, generation and three outp
   await page.addInitScript(() =>
     localStorage.setItem("vl_token", "e2e-minimal-video-user"),
   );
+  await page.route("**/api/v1/storyboard-enhancements", async (route) => {
+    const request = route.request().postDataJSON() as {
+      shotCount: number;
+      masterPrompt: string;
+    };
+    const result = {
+      contractVersion: "2",
+      polishedMasterPrompt: `Director plan: ${request.masterPrompt}`,
+      negativePrompt: "blur, flicker, malformed anatomy, duplicate subjects, unwanted visible text",
+      continuityBible: {
+        characters: "One recurring musician.", wardrobe: "A dark raincoat.", props: "A blue hand light.", location: "A rain-dark city.", sceneGeometry: "Travel continues left to right.", timeOfDay: "Night.", lighting: "Blue practical light and warm windows.", palette: "Blue and amber.", lens: "35mm.", cameraPosition: "Eye level.", cameraMovement: "Measured tracking.", visualStyle: "Grounded cinematic realism.", audio: "No audio unless requested.",
+      },
+      referenceUsagePlan: [],
+      assumptions: ["The blue light is handheld."],
+      shots: Array.from({ length: request.shotCount }, (_, index) => ({
+        shotNumber: index + 1,
+        title: `Director scene ${index + 1}`,
+        narrativePurpose: `Advance story beat ${index + 1}.`,
+        prompt: `The musician follows the blue light in scene ${index + 1}.`,
+        firstFramePrompt: `Opening composition for scene ${index + 1}.`,
+        lastFramePrompt: `Closing composition for scene ${index + 1}.`,
+        continuityNotes: "Preserve the musician, raincoat, blue light and direction of travel.",
+        referenceIds: [],
+        recommendedControls: [],
+        audioIntent: { mode: "silent", reason: "No sound was requested." },
+        generatedTextIntent: { mode: "none", visibleText: [], reason: "Visible text is forbidden." },
+        candidateVariations: ["Measured tracking variation."],
+      })),
+      visualReferenceAnalyses: [],
+      vision: { mode: "planning_only", attachedReferenceIds: [], textOnlyReferenceIds: [] },
+      provider: "mock",
+      model: "e2e-director",
+      instructionBundle: {
+        directorVersion: "e2e",
+        enhancerVersion: "e2e",
+        framePromptVersion: "e2e",
+        hash: "0".repeat(64),
+      },
+    };
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "enhance_e2e_01",
+        kind: "storyboard_enhancement",
+        status: "completed",
+        stage: "completed",
+        projectId: "e2e-project",
+        attempt: 1,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        result,
+        links: { self: "/v1/storyboard-enhancements/enhance_e2e_01", cancel: null },
+      }),
+    });
+  });
   await page.goto("/videolab");
   const brief = page.getByLabel("Overall artistic goal");
   await expect(brief).toBeEnabled();
@@ -25,20 +83,31 @@ test("minimal VideoLab exposes only Director, preview, generation and three outp
   ).toBeEnabled();
   await page.getByLabel("Aspect ratio").selectOption("16:9");
   await page.getByLabel("Resolution").selectOption("1280x720");
-  await page.getByLabel("Video length").selectOption("5");
+  await page.getByLabel("Video length").fill("5");
   await expect(page.getByLabel("Aspect ratio")).toHaveValue("16:9");
   await expect(page.getByLabel("Resolution")).toHaveValue("1280x720");
+  await expect(page.getByLabel("Sound behaviour")).toHaveValue("intent_only");
   await expect(page.getByLabel("Video length")).toHaveValue("5");
   await page.getByLabel("Aspect ratio").selectOption("9:16");
   await expect(page.getByLabel("Resolution")).toHaveValue("720x1280");
-  await page.getByLabel("Video length").selectOption("8");
+  await page.getByLabel("Video length").fill("8");
   await expect(page.getByLabel("Video length")).toHaveValue("8");
+  await page.getByRole("button", { name: "Improve with Director" }).click();
+  await expect(brief).toHaveValue(/Director plan:/);
+  await expect(page.getByLabel("Scene 1 title")).toHaveValue("Director scene 1");
+  await expect(page.getByLabel("Shared negative prompt").first()).toHaveValue(/unwanted visible text/);
+  await page.getByText("Scene purpose, continuity and sound").first().click();
+  await expect(page.getByLabel("Scene 1 narrative purpose")).toHaveValue("Advance story beat 1.");
+  await expect(page.getByLabel("Scene 1 continuity notes")).toHaveValue(/Preserve the musician/);
+  await expect(page.getByLabel("Scene 1 sound intent")).toHaveValue("silent");
   await expect(page.getByText("Project references")).toHaveCount(0);
-  await expect(page.getByText("Scene direction")).toHaveCount(0);
-  await expect(page.getByText("First frame / last frame")).toHaveCount(0);
+  await expect(page.getByText("Scene direction")).toBeVisible();
+  await expect(page.getByText("First frame / last frame")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "3 · Generate video" }),
-  ).toBeEnabled();
+  ).toBeDisabled();
+  await expect(page.getByText(/Generate and review the first and last frame/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "2 · Generate missing previews" })).toBeEnabled();
   await expect(page.getByRole("link", { name: /Advanced/ })).toHaveAttribute(
     "href",
     "/storyboard/advanced",
@@ -138,7 +207,7 @@ test("minimal VideoLab restores the accepted completed video for a reopened proj
     ],
   });
   const created = await request.post(
-    "http://127.0.0.1:5001/v1/storyboards/projects",
+    `${apiBaseUrl}/v1/storyboards/projects`,
     {
       headers,
       data: {
@@ -150,7 +219,7 @@ test("minimal VideoLab restores the accepted completed video for a reopened proj
   expect(created.status()).toBe(201);
   const project = await created.json();
   const submitted = await request.post(
-    "http://127.0.0.1:5001/v1/generations",
+    `${apiBaseUrl}/v1/generations`,
     {
       headers: {
         ...headers,
@@ -190,7 +259,7 @@ test("minimal VideoLab restores the accepted completed video for a reopened proj
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const current = await request.get(
-      `http://127.0.0.1:5001/v1/generations/${generation.id}`,
+      `${apiBaseUrl}/v1/generations/${generation.id}`,
       { headers },
     );
     const body = await current.json();
@@ -198,13 +267,13 @@ test("minimal VideoLab restores the accepted completed video for a reopened proj
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   const completed = await request.get(
-    `http://127.0.0.1:5001/v1/generations/${generation.id}`,
+    `${apiBaseUrl}/v1/generations/${generation.id}`,
     { headers },
   );
   expect((await completed.json()).status).toBe("completed");
 
   const updated = await request.put(
-    `http://127.0.0.1:5001/v1/storyboards/projects/${project.id}`,
+    `${apiBaseUrl}/v1/storyboards/projects/${project.id}`,
     {
       headers,
       data: {
@@ -247,6 +316,9 @@ test("mobile storyboard has no page-level horizontal overflow", async ({
 test("Director workspace uses real project state and reviewable proposals", async ({
   page,
 }) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("vl_token", "e2e-director-workspace-user"),
+  );
   await page.goto("/storyboard/advanced");
   await expect(
     page.getByRole("heading", { name: "What would you like to make?" }),

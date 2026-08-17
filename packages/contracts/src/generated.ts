@@ -867,6 +867,7 @@ export interface components {
             /** @constant */
             contractVersion: "2";
             polishedMasterPrompt: string;
+            negativePrompt: string;
             continuityBible: components["schemas"]["StoryboardContinuityBible"];
             referenceUsagePlan: components["schemas"]["StoryboardReferenceUsage"][];
             assumptions: string[];

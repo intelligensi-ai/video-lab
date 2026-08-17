@@ -447,12 +447,14 @@ export function applyDirectorProposal(form: Record<string, unknown>, proposal: D
   } else if (proposal.action === "enhance_master_prompt" && enhancement) {
     next.originalOverallGoal = next.originalOverallGoal ?? next.overallGoal;
     next.overallGoal = enhancement.polishedMasterPrompt;
+    next.negativePrompt = enhancement.negativePrompt;
     next.continuityBible = enhancement.continuityBible;
     next.directorAssumptions = enhancement.assumptions;
     next.instructionBundle = enhancement.instructionBundle;
   } else if (proposal.action === "plan_storyboard" && enhancement) {
     next.originalOverallGoal = next.originalOverallGoal ?? next.overallGoal;
     next.overallGoal = enhancement.polishedMasterPrompt;
+    next.negativePrompt = enhancement.negativePrompt;
     next.continuityBible = enhancement.continuityBible;
     next.directorAssumptions = enhancement.assumptions;
     next.instructionBundle = enhancement.instructionBundle;

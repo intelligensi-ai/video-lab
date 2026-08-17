@@ -30,6 +30,7 @@ const continuityKeys: Array<keyof StoryboardContinuityBible> = [
 const responseKeys = new Set([
   "contractVersion",
   "polishedMasterPrompt",
+  "negativePrompt",
   "continuityBible",
   "referenceUsagePlan",
   "assumptions",
@@ -372,6 +373,7 @@ function normalizeDeployStudioEnhancement(
   return {
     contractVersion: "2",
     polishedMasterPrompt: optionalString(source.polishedMasterPrompt, request.masterPrompt),
+    negativePrompt: optionalString(source.negativePrompt, fallback.negativePrompt),
     continuityBible,
     referenceUsagePlan: referenceUsagePlan.length ? referenceUsagePlan : fallback.referenceUsagePlan,
     assumptions: optionalStringArray(source.assumptions) ?? fallback.assumptions,
@@ -527,6 +529,7 @@ export function validateStoryboardEnhancement(
       "Polished master prompt",
       12_000,
     ),
+    negativePrompt: text(root.negativePrompt, "Negative prompt", 4_000),
     continuityBible,
     referenceUsagePlan,
     assumptions,
@@ -679,6 +682,7 @@ export function mockStoryboardEnhancement(
   return {
     contractVersion: "2",
     polishedMasterPrompt: request.masterPrompt,
+    negativePrompt: "blur, flicker, malformed anatomy, duplicate subjects, identity drift, inconsistent lighting, compression artefacts, unwanted visible text",
     continuityBible: request.continuityBible,
     referenceUsagePlan: references.map((reference) => ({
       referenceId: reference.id,

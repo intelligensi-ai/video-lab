@@ -370,6 +370,7 @@ export interface StoryboardReferencePlanningEvidence {
 export interface StoryboardEnhancementResponse {
   contractVersion: "2";
   polishedMasterPrompt: string;
+  negativePrompt: string;
   continuityBible: StoryboardContinuityBible;
   referenceUsagePlan: StoryboardReferenceUsage[];
   assumptions: string[];

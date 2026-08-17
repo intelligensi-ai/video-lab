@@ -5475,9 +5475,25 @@ body:not(:has(.home)) textarea:focus::placeholder {
   padding-top: 0.75rem;
   border-top: 1px solid #1112;
 }
+.lf-minimal-preview-gate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #159d913d;
+  border-radius: 1rem;
+  background: #f4fbf9;
+}
+.lf-minimal-preview-gate p {
+  margin: 0;
+  color: #40514d;
+  font-size: 0.78rem;
+}
 .lf-minimal-output-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.65rem;
 }
 .lf-minimal-output-grid .lf-field {
@@ -6436,6 +6452,10 @@ body:not(:has(.home)) textarea:focus::placeholder {
   }
   .lf-minimal-output-grid {
     grid-template-columns: 1fr;
+  }
+  .lf-minimal-preview-gate {
+    align-items: stretch;
+    flex-direction: column;
   }
   .lf-stats {
     grid-template-columns: 1fr;

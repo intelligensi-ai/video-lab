@@ -95,6 +95,51 @@ describe("storyboard enhancer contract", () => {
       request,
     );
     expect(result.shots.map((shot) => shot.shotNumber)).toEqual([1, 2]);
+    expect(result.negativePrompt).toContain("unwanted visible text");
+  });
+
+  it("requires a bounded Director negative prompt", () => {
+    const missing = { ...mockStoryboardEnhancement(request) } as Record<string, unknown>;
+    delete missing.negativePrompt;
+    expect(() => validateStoryboardEnhancement(missing, request)).toThrow(
+      "missing required fields",
+    );
+
+    expect(() => validateStoryboardEnhancement({
+      ...mockStoryboardEnhancement(request),
+      negativePrompt: "x".repeat(4_001),
+    }, request)).toThrow("Negative prompt");
+  });
+
+  it("keeps four sequential project prompts isolated", () => {
+    const ideas = [
+      "A paper boat crosses a rain-filled London gutter.",
+      "A desert astronomer opens an observatory at dawn.",
+      "A ceramicist shapes a blue bowl in a quiet workshop.",
+      "A diver follows bioluminescent fish through a dark reef.",
+    ];
+    const completed = ideas.map((masterPrompt, index) => {
+      const isolatedRequest: StoryboardEnhancementRequest = {
+        ...request,
+        projectId: `project_isolated_${index + 1}`,
+        masterPrompt,
+        shotCount: 1,
+        shots: [{ ...request.shots[0], shotNumber: 1, prompt: masterPrompt }],
+        references: [],
+      };
+      return validateStoryboardEnhancement(
+        mockStoryboardEnhancement(isolatedRequest),
+        isolatedRequest,
+      );
+    });
+
+    expect(completed.map((result) => result.polishedMasterPrompt)).toEqual(ideas);
+    completed.forEach((result, index) => {
+      const serialized = JSON.stringify(result);
+      ideas.forEach((idea, otherIndex) => {
+        if (otherIndex !== index) expect(serialized).not.toContain(idea);
+      });
+    });
   });
 
   it("rejects duplicated or incorrectly ordered shots", () => {

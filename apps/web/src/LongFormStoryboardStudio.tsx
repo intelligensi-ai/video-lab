@@ -613,6 +613,7 @@ export default function LongFormStoryboardStudio({
   const [frameStates, setFrameStates] = useState<Record<string, FrameState>>(
     {},
   );
+  const [previewBatchBusy, setPreviewBatchBusy] = useState(false);
   const [sceneRenderStates, setSceneRenderStates] = useState<
     Record<string, SceneRenderState>
   >({});
@@ -674,6 +675,7 @@ export default function LongFormStoryboardStudio({
               originalOverallGoal:
                 current.originalOverallGoal ?? current.overallGoal,
               overallGoal: result.polishedMasterPrompt,
+              negativePrompt: result.negativePrompt,
               continuityBible: result.continuityBible,
               directorAssumptions: result.assumptions,
               instructionBundle: result.instructionBundle,
@@ -725,6 +727,7 @@ export default function LongFormStoryboardStudio({
           originalOverallGoal:
             current.originalOverallGoal ?? current.overallGoal,
           overallGoal: result.polishedMasterPrompt,
+          negativePrompt: result.negativePrompt,
           continuityBible: result.continuityBible,
           directorAssumptions: result.assumptions,
           instructionBundle: result.instructionBundle,
@@ -779,6 +782,7 @@ export default function LongFormStoryboardStudio({
             originalOverallGoal:
               current.originalOverallGoal ?? current.overallGoal,
             overallGoal: result.polishedMasterPrompt,
+            negativePrompt: result.negativePrompt,
             continuityBible: result.continuityBible,
             directorAssumptions: result.assumptions,
             instructionBundle: result.instructionBundle,
@@ -1117,6 +1121,22 @@ export default function LongFormStoryboardStudio({
       }));
     }
   };
+  const generateMissingCreatorPreviews = async () => {
+    setPreviewBatchBusy(true);
+    try {
+      for (let index = 0; index < form.scenes.length; index += 1) {
+        const scene = form.scenes[index];
+        if (!scene.startFrame && !scene.startFrameGenerationId) {
+          await regenerateFrame(index, "start");
+        }
+        if (!scene.endFrame && !scene.endFrameGenerationId) {
+          await regenerateFrame(index, "end");
+        }
+      }
+    } finally {
+      setPreviewBatchBusy(false);
+    }
+  };
   const renderScene = async (index: number) => {
     const scene = form.scenes[index];
     if (!projectId) return;
@@ -1249,6 +1269,11 @@ export default function LongFormStoryboardStudio({
   );
   const creatorMaxScenes = Math.min(MAX_CREATOR_SCENES, runtimeMaxScenes);
   const creatorLengthLocked = form.scenes.some(sceneHasGeneratedMedia);
+  const creatorPreviewReady = form.scenes.every(
+    (scene) =>
+      Boolean(scene.startFrame || scene.startFrameGenerationId) &&
+      Boolean(scene.endFrame || scene.endFrameGenerationId),
+  );
   const runtimeFeatureStatus = runtime.data?.capabilities?.featureStatus ?? {};
   const videoModels = longFormVideoModelsForRuntime(runtime.data);
   const changeVideoModel = async (videoModel: LongFormVideoModel) => {
@@ -1375,7 +1400,7 @@ export default function LongFormStoryboardStudio({
                 {enhancement.isPending || classicBriefEnhancement.isPending
                   ? "Director is working…"
                   : isClassic
-                    ? "Create storyboard"
+                    ? "Improve with Director"
                     : "Polish brief"}
               </button>
             </div>
@@ -1531,6 +1556,37 @@ export default function LongFormStoryboardStudio({
                           {option.label}
                         </option>
                       ))}
+                    </select>
+                  </Field>
+                  <Field label="Sound behaviour">
+                    <select
+                      aria-label="Sound behaviour"
+                      disabled={!sessionReady}
+                      value={form.audioPolicy.mode}
+                      onChange={(event) => {
+                        const mode = event.target.value as LongFormGenerationPayload["audioPolicy"]["mode"];
+                        setForm((current) =>
+                          markAcceptedClipsStale(
+                            {
+                              ...current,
+                              audioPolicy: {
+                                ...current.audioPolicy,
+                                mode,
+                                dialogue: mode === "silent" ? "off" : current.audioPolicy.dialogue,
+                                soundEffects: mode === "silent" ? "off" : current.audioPolicy.soundEffects,
+                                ambience: mode === "silent" ? "off" : current.audioPolicy.ambience,
+                                music: mode === "silent" ? "off" : current.audioPolicy.music,
+                                preserveSourceAudio: mode !== "silent" && current.audioPolicy.preserveSourceAudio,
+                              },
+                            },
+                            "The sound policy changed after this clip was accepted. Generate it again to use the new sound behaviour.",
+                          ),
+                        );
+                      }}
+                    >
+                      <option value="silent">Silent</option>
+                      <option value="intent_only">Only when requested</option>
+                      <option value="directed">Directed sound</option>
                     </select>
                   </Field>
                 </div>
@@ -2284,6 +2340,21 @@ export default function LongFormStoryboardStudio({
               </div>
             </details>
           )}
+          {isClassic && !creatorPreviewReady && (
+            <div className="lf-minimal-preview-gate" role="status">
+              <p>
+                Generate and review the first and last frame for every scene before creating the video.
+              </p>
+              <button
+                type="button"
+                className="lf-primary"
+                disabled={!sessionReady || previewBatchBusy || enhancement.isPending || classicBriefEnhancement.isPending}
+                onClick={() => void generateMissingCreatorPreviews()}
+              >
+                {previewBatchBusy ? "Generating previews…" : "2 · Generate missing previews"}
+              </button>
+            </div>
+          )}
           <Preview
             generation={currentGeneration}
             loading={isRendering}
@@ -2292,6 +2363,7 @@ export default function LongFormStoryboardStudio({
               sessionReady &&
               Boolean(projectId) &&
               !invalid &&
+              (!isClassic || creatorPreviewReady) &&
               !mutation.isPending &&
               !enhancement.isPending &&
               !classicBriefEnhancement.isPending
@@ -3389,7 +3461,7 @@ function SceneCard({
           </details>
           {classic && (
             <details className="lf-frame-details lf-negative-details">
-              <summary>Negative prompt</summary>
+              <summary>Project negative prompt</summary>
               <div className="lf-negative-panel">
                 <textarea
                   className="lf-negative"
@@ -3400,6 +3472,69 @@ function SceneCard({
                     onNegativePromptChange?.(event.target.value)
                   }
                 />
+              </div>
+            </details>
+          )}
+          {classic && (
+            <details className="lf-frame-details lf-creator-scene-details">
+              <summary>Scene purpose, continuity and sound</summary>
+              <div className="lf-scene-copy-grid">
+                <label>
+                  <span>Narrative purpose</span>
+                  <textarea
+                    aria-label={`Scene ${index + 1} narrative purpose`}
+                    value={scene.narrativePurpose ?? ""}
+                    placeholder="What changes in the story during this scene?"
+                    onChange={(event) => onChange({ narrativePurpose: event.target.value })}
+                  />
+                </label>
+                <label>
+                  <span>Continuity handoff</span>
+                  <textarea
+                    aria-label={`Scene ${index + 1} continuity notes`}
+                    value={scene.continuityNotes ?? ""}
+                    placeholder="What must the next scene preserve?"
+                    onChange={(event) => onChange({ continuityNotes: event.target.value })}
+                  />
+                </label>
+                <label>
+                  <span>Sound intent</span>
+                  <select
+                    aria-label={`Scene ${index + 1} sound intent`}
+                    value={scene.audioIntent?.mode ?? "silent"}
+                    onChange={(event) =>
+                      onChange({
+                        audioIntent: {
+                          mode: event.target.value as NonNullable<StoryboardScenePayload["audioIntent"]>["mode"],
+                          reason: scene.audioIntent?.reason ?? "",
+                        },
+                      })
+                    }
+                  >
+                    <option value="silent">Silent</option>
+                    <option value="dialogue">Dialogue</option>
+                    <option value="ambience">Ambience</option>
+                    <option value="sound_effects">Sound effects</option>
+                    <option value="music">Music</option>
+                    <option value="mixed">Mixed sound</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Sound direction</span>
+                  <textarea
+                    aria-label={`Scene ${index + 1} sound direction`}
+                    value={scene.audioIntent?.reason ?? ""}
+                    placeholder="Why should this scene include—or omit—sound?"
+                    onChange={(event) =>
+                      onChange({
+                        audioIntent: {
+                          mode: scene.audioIntent?.mode ?? "silent",
+                          reason: event.target.value,
+                        },
+                      })
+                    }
+                  />
+                </label>
               </div>
             </details>
           )}
