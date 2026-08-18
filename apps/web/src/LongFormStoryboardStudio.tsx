@@ -600,6 +600,11 @@ export default function LongFormStoryboardStudio({
   }));
   const [history, setHistory] = useState<Generation[]>([]);
   const [selected, setSelected] = useState<Generation>();
+  const autoSelectedRef = useRef(true);
+  const pinSelected = (generation: Generation) => {
+    autoSelectedRef.current = false;
+    setSelected(generation);
+  };
   const [helpMode, setHelpMode] = useState(false);
   const [sessionOwner, setSessionOwner] = useState("");
   const [projects, setProjects] = useState<StoryboardProjectSummary[]>([]);
@@ -635,7 +640,7 @@ export default function LongFormStoryboardStudio({
       );
     },
     onSuccess: (generation) => {
-      setSelected(generation);
+      pinSelected(generation);
       setHistory((items) => [generation, ...items].slice(0, 8));
     },
   });
@@ -645,7 +650,7 @@ export default function LongFormStoryboardStudio({
       return assembleStoryboardFilm(form, projectId);
     },
     onSuccess: (generation) => {
-      setSelected(generation);
+      pinSelected(generation);
       setHistory((items) => [generation, ...items].slice(0, 8));
     },
   });
@@ -821,7 +826,7 @@ export default function LongFormStoryboardStudio({
   useEffect(() => {
     const items = gallery.data?.items ?? [];
     setHistory(items.slice(0, 8));
-    if (!selected) {
+    if (autoSelectedRef.current) {
       const acceptedVideoIds = new Set(
         form.scenes
           .map((scene) => scene.acceptedVideoGenerationId)
@@ -943,7 +948,7 @@ export default function LongFormStoryboardStudio({
   const cancellation = useMutation({
     mutationFn: () => cancelGeneration(currentGeneration!.id),
     onSuccess: (cancelled) => {
-      setSelected(cancelled);
+      pinSelected(cancelled);
       setHistory((items) =>
         items.map((item) => (item.id === cancelled.id ? cancelled : item)),
       );
@@ -1166,7 +1171,7 @@ export default function LongFormStoryboardStudio({
           candidateScene,
           projectId,
         );
-        setSelected(submitted);
+        pinSelected(submitted);
         setHistory((items) => [submitted, ...items].slice(0, 12));
         setSceneRenderStates((current) => ({
           ...current,
@@ -1194,7 +1199,7 @@ export default function LongFormStoryboardStudio({
               : candidate,
           ),
         }));
-        setSelected(completed);
+        pinSelected(completed);
         setHistory((items) =>
           items.map((item) => (item.id === completed.id ? completed : item)),
         );
@@ -2384,7 +2389,7 @@ export default function LongFormStoryboardStudio({
             headerControls={isClassic ? sessionControls : undefined}
           />
           {!isClassic && (
-            <History generations={history} onSelect={setSelected} />
+            <History generations={history} onSelect={pinSelected} />
           )}
         </aside>
       </div>
