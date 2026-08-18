@@ -1286,8 +1286,9 @@ export default function LongFormStoryboardStudio({
   const creatorLengthLocked = form.scenes.some(sceneHasGeneratedMedia);
   const creatorPreviewReady = form.scenes.every(
     (scene) =>
-      Boolean(scene.startFrame || scene.startFrameGenerationId) &&
-      Boolean(scene.endFrame || scene.endFrameGenerationId),
+      Boolean(scene.acceptedVideoGenerationId || scene.candidateGenerationIds?.length) ||
+      (Boolean(scene.startFrame || scene.startFrameGenerationId) &&
+        Boolean(scene.endFrame || scene.endFrameGenerationId)),
   );
   const runtimeFeatureStatus = runtime.data?.capabilities?.featureStatus ?? {};
   const videoModels = longFormVideoModelsForRuntime(runtime.data);
