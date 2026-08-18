@@ -1677,7 +1677,7 @@ async function persistGeneration(g: StoredGeneration) {
     .doc(g.id)
     .set(clean);
 }
-async function findGeneration(id: string) {
+export async function findGeneration(id: string) {
   const memory = gens.get(id);
   if (memory || localAuth) return memory;
   adminApp();
@@ -1686,6 +1686,53 @@ async function findGeneration(id: string) {
   const generation = snapshot.data() as StoredGeneration;
   gens.set(id, generation);
   return generation;
+}
+const terminalGenerationStatuses = ["completed", "failed", "cancelled"] as const;
+/**
+ * The in-process gens cache and this function's own caller can both be
+ * working from a snapshot that predates a concurrent terminal transition
+ * written by a different process/instance (e.g. the worker completing a
+ * render at the same time a user's cancel request lands). Reads Firestore
+ * directly, bypassing the cache, so a genuinely newer terminal status from
+ * elsewhere is never silently clobbered by an older in-flight transition.
+ */
+export async function persistTerminalGeneration(next: StoredGeneration) {
+  if (!localAuth) {
+    adminApp();
+    const snapshot = await getFirestore()
+      .collection("generations")
+      .doc(next.id)
+      .get();
+    const currentStatus = snapshot.exists
+      ? (snapshot.data() as StoredGeneration).status
+      : undefined;
+    if (
+      currentStatus &&
+      currentStatus !== next.status &&
+      (terminalGenerationStatuses as readonly string[]).includes(currentStatus)
+    ) {
+      log("generation_terminal_conflict", {
+        generationId: next.id,
+        attempted: next.status,
+        actual: currentStatus,
+      });
+      const latest = snapshot.data() as StoredGeneration;
+      gens.set(next.id, latest);
+      return latest;
+    }
+  } else {
+    const currentStatus = gens.get(next.id)?.status;
+    if (
+      currentStatus &&
+      currentStatus !== next.status &&
+      (terminalGenerationStatuses as readonly string[]).includes(currentStatus)
+    ) {
+      return gens.get(next.id)!;
+    }
+  }
+  gens.set(next.id, next);
+  await persistGeneration(next);
+  return next;
 }
 
 function publicGenerationEdit(edit: StoredGenerationEdit) {
@@ -2100,14 +2147,15 @@ async function completeGenerationFromRuntime(
     outputSha256,
     updatedAt: nowIso(),
   };
-  gens.set(generation.id, completed);
-  await persistGeneration(completed);
-  log("runtime_generation_completed", {
-    generationId: generation.id,
-    outputContentType: out.contentType,
-    outputSha256,
-  });
-  return completed;
+  const persisted = await persistTerminalGeneration(completed);
+  if (persisted.status === "completed") {
+    log("runtime_generation_completed", {
+      generationId: generation.id,
+      outputContentType: out.contentType,
+      outputSha256,
+    });
+  }
+  return persisted;
 }
 
 async function failGenerationFromRuntime(
@@ -2124,9 +2172,7 @@ async function failGenerationFromRuntime(
     safeErrorMessage,
     updatedAt: nowIso(),
   };
-  gens.set(generation.id, failed);
-  await persistGeneration(failed);
-  return failed;
+  return persistTerminalGeneration(failed);
 }
 
 async function requireRuntimeCancellation(
@@ -6273,9 +6319,6 @@ app.post("/v1/generations/:id/cancel", auth, async (req, res, next) => {
       await persistGeneration(cancelling);
       return res.status(202).json(publicGeneration(cancelling));
     }
-    const wallet = wallets.get(g.uid);
-    if (creditLimitsEnabled() && wallet && wallet.reserved >= g.creditCost)
-      wallets.set(g.uid, releaseCredits(wallet, g.creditCost));
     const ng: StoredGeneration = {
       ...g,
       status: "cancelled" as const,
@@ -6286,8 +6329,15 @@ app.post("/v1/generations/:id/cancel", auth, async (req, res, next) => {
       updatedAt: nowIso(),
       safeErrorMessage: "Cancelled by user",
     };
-    gens.set(g.id, ng);
-    await persistGeneration(ng);
+    const persisted = await persistTerminalGeneration(ng);
+    if (persisted.status !== "cancelled") {
+      // The runtime finished (or failed) concurrently with this cancel
+      // request; that outcome wins and must not be discarded.
+      return res.json(publicGeneration(persisted));
+    }
+    const wallet = wallets.get(g.uid);
+    if (creditLimitsEnabled() && wallet && wallet.reserved >= g.creditCost)
+      wallets.set(g.uid, releaseCredits(wallet, g.creditCost));
     const q = queue.find((i) => i.generationId === g.id) ?? {
       generationId: g.id,
       createdAt: g.createdAt,
@@ -6297,7 +6347,7 @@ app.post("/v1/generations/:id/cancel", auth, async (req, res, next) => {
     await finishQueueItem(q, g.uid);
     await refreshQueueDepth();
     log("generation_cancelled", { uid: g.uid, generationId: g.id });
-    res.json(publicGeneration(ng));
+    res.json(publicGeneration(persisted));
   } catch (e) {
     next(e);
   }
@@ -6620,8 +6670,7 @@ async function processQueueItem(workerId = "local-worker") {
         safeErrorMessage: "Cancelled by user",
         updatedAt: nowIso(),
       };
-      gens.set(g.id, cancelled);
-      await persistGeneration(cancelled);
+      await persistTerminalGeneration(cancelled);
     } else if (st.state === "completed") {
       await completeGenerationFromRuntime(gens.get(g.id)!, sub.runtimeJobId, st.qualityAssessment);
     } else {

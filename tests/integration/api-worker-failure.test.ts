@@ -368,6 +368,74 @@ describe('generation worker failure handling', () => {
     expect(terminal.body.status).toBe('cancelled');
   }, 15_000);
 
+  it('never lets a terminal transition overwrite a different terminal transition already persisted', async () => {
+    const { app, findGeneration, persistTerminalGeneration } = await import('../../apps/api/src/index.js');
+    const auth = { authorization: 'Bearer terminal-conflict-user' };
+    const submitted = await request(app)
+      .post('/v1/generations')
+      .set(auth)
+      .set('Idempotency-Key', 'terminal-conflict-key')
+      .send({
+        prompt: 'A render that completes just as a cancellation lands',
+        settings: { aspectRatio: '16:9', durationSeconds: 4, quality: 'draft' },
+      })
+      .expect(201);
+
+    const stored = await findGeneration(submitted.body.id);
+    expect(stored).toBeDefined();
+
+    // The worker's own completion path lands first, exactly like the real
+    // incident: the render finishes right as a cancel request is in flight.
+    const completed = await persistTerminalGeneration({
+      ...stored!,
+      status: 'completed',
+      updatedAt: new Date().toISOString(),
+    });
+    expect(completed.status).toBe('completed');
+
+    // A cancellation that reads stale (pre-completion) state and only
+    // resolves afterwards must not clobber the completed result.
+    const conflictingCancel = await persistTerminalGeneration({
+      ...stored!,
+      status: 'cancelled',
+      safeErrorMessage: 'Cancelled by user',
+      updatedAt: new Date().toISOString(),
+    });
+    expect(conflictingCancel.status).toBe('completed');
+
+    const after = await request(app)
+      .get(`/v1/generations/${submitted.body.id}`)
+      .set(auth)
+      .expect(200);
+    expect(after.body.status).toBe('completed');
+
+    // The reverse ordering must be protected the same way: once a
+    // cancellation has landed, a late completion must not resurrect it.
+    const otherSubmitted = await request(app)
+      .post('/v1/generations')
+      .set(auth)
+      .set('Idempotency-Key', 'terminal-conflict-key-2')
+      .send({
+        prompt: 'A render that is cancelled just before it would complete',
+        settings: { aspectRatio: '16:9', durationSeconds: 4, quality: 'draft' },
+      })
+      .expect(201);
+    const otherStored = await findGeneration(otherSubmitted.body.id);
+    const cancelledFirst = await persistTerminalGeneration({
+      ...otherStored!,
+      status: 'cancelled',
+      safeErrorMessage: 'Cancelled by user',
+      updatedAt: new Date().toISOString(),
+    });
+    expect(cancelledFirst.status).toBe('cancelled');
+    const lateCompletion = await persistTerminalGeneration({
+      ...otherStored!,
+      status: 'completed',
+      updatedAt: new Date().toISOString(),
+    });
+    expect(lateCompletion.status).toBe('cancelled');
+  });
+
   it('rejects browser-supplied hydrated reference payloads', async () => {
     const { app } = await import('../../apps/api/src/index.js');
     const auth = { authorization: 'Bearer forged-reference-payload-user' };
