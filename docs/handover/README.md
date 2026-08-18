@@ -5,18 +5,21 @@ creator workflow to John.
 
 ## Read in this order
 
-1. [`longform-creator-workflow-to-john.md`](longform-creator-workflow-to-john.md)
+1. [`john-claude-longform-mvp-continuation-2026-08-18.md`](john-claude-longform-mvp-continuation-2026-08-18.md)
+   is the current self-contained Claude handover for deploying the application
+   and finishing the narrow A16 acceptance boundary.
+2. [`longform-creator-workflow-to-john.md`](longform-creator-workflow-to-john.md)
    is the factual technical reference: architecture, contracts, tested
    revisions, persistence and ownership invariants, environment-variable names,
    accepted behaviour, remaining limits and John's responsibility boundary.
-2. [`john-production-platform-goal.md`](john-production-platform-goal.md) is the
+3. [`john-production-platform-goal.md`](john-production-platform-goal.md) is the
    implementation-ready `/goal` for John's Firebase, distributed rate limiting,
    entitlement, financial, storage, monitoring and rollout work.
-3. Deploy Studio's
+4. Deploy Studio's
    `docs/runtime-validation/longform-gate-cwa8r3-acceptance-2026-08-12.md`
    contains the detailed paid A10 evidence, media hashes, timings, cost and
    provider-cleanup record.
-4. The authoritative API contracts are
+5. The authoritative API contracts are
    `contracts/video-lab.openapi.yaml` and Deploy Studio's
    `docs/intelligensi-runtime-api.openapi.yaml`.
 
