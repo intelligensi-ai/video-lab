@@ -1700,6 +1700,17 @@ export default function LongFormStoryboardStudio({
                   runtime.data?.capabilities?.referenceConditioning === true &&
                   runtime.data?.capabilities?.featureStatus?.referenceConditioning === "supported"
                 }
+                onToggleSceneReference={(sceneId, referenceId, attached) => {
+                  const index = form.scenes.findIndex((scene) => scene.id === sceneId);
+                  if (index === -1) return;
+                  const scene = form.scenes[index];
+                  const current = scene.referenceIds ?? [];
+                  updateScene(index, {
+                    referenceIds: attached
+                      ? [...current, referenceId]
+                      : current.filter((id) => id !== referenceId),
+                  });
+                }}
               />}
               <section className="lf-scenes">
                 <div className="lf-section-head">
@@ -2551,6 +2562,7 @@ function ProjectReferencePanel({
   onSeedPolicyChange,
   onGlobalSeedChange,
   referenceConditioningSupported,
+  onToggleSceneReference,
 }: {
   references: StoryboardProjectReference[];
   sceneIds: string[];
@@ -2561,6 +2573,7 @@ function ProjectReferencePanel({
   onSeedPolicyChange: (seedPolicy: LongFormGenerationPayload["seedPolicy"]) => void;
   onGlobalSeedChange: (globalSeed: number) => void;
   referenceConditioningSupported: boolean;
+  onToggleSceneReference: (sceneId: string, referenceId: string, attached: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [type, setType] =
@@ -2836,15 +2849,20 @@ function ProjectReferencePanel({
                       <input
                         type="checkbox"
                         checked={reference.sceneIds.includes(sceneId)}
-                        onChange={(event) =>
+                        onChange={(event) => {
                           updateReference(reference.id, {
                             sceneIds: event.target.checked
                               ? [...reference.sceneIds, sceneId]
                               : reference.sceneIds.filter(
                                   (id) => id !== sceneId,
                                 ),
-                          })
-                        }
+                          });
+                          onToggleSceneReference(
+                            sceneId,
+                            reference.id,
+                            event.target.checked,
+                          );
+                        }}
                       />
                       <span /> Scene {sceneIndex + 1}
                     </label>

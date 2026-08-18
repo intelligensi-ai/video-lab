@@ -554,6 +554,17 @@ body:has(.vlx-shell) > #root > .site-nav {
   gap: 0.65rem;
   margin-top: 1rem;
 }
+.vlx-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--ink);
+  font-size: 0.6rem;
+  font-weight: 800;
+}
+.vlx-toggle input {
+  width: auto;
+}
 .vlx-call-to-action,
 .vlx-generation-bar {
   display: flex;

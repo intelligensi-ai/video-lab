@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
-import type {
-  DirectorProposal,
-  Generation,
-  LongFormVideoModel,
+import {
+  defaultGeneratedTextPolicy,
+  type DirectorProposal,
+  type Generation,
+  type LongFormVideoModel,
+  type StoryboardGeneratedTextPolicy,
 } from "@video-lab/contracts";
 import {
   fetchGenerationOutput,
@@ -469,7 +471,36 @@ export default function DirectorWorkspace() {
                 <label className="vlx-field"><span>Finishing</span><select value={workspace.form.postProcess} onChange={(event) => workspace.setForm((current) => ({ ...current, postProcess: event.target.value }))}><option value="none">Draft — no extra pass</option><option value="interpolate">Smoother motion</option><option value="upscale">Upscaled delivery</option><option value="both">Smooth and upscale</option></select></label>
                 <label className="vlx-field"><span>Sound</span><select value={workspace.form.audioPolicy.mode} onChange={(event) => workspace.setForm((current) => ({ ...current, audioPolicy: { ...current.audioPolicy, mode: event.target.value as StoryboardAudioPolicyMode } }))}><option value="silent">Silent</option><option value="intent_only">Only when requested</option><option value="directed">Directed sound</option></select></label>
                 <label className="vlx-field"><span>Delivery</span><select value={workspace.form.outputFormat} onChange={(event) => workspace.setForm((current) => ({ ...current, outputFormat: event.target.value }))}><option value="mp4">MP4</option><option value="webm">WebM</option></select></label>
+                <label className="vlx-field"><span>On-screen text</span><select value={workspace.form.generatedTextPolicy.mode} onChange={(event) => workspace.setForm((current) => ({ ...current, generatedTextPolicy: generatedTextPolicyForMode(current.generatedTextPolicy, event.target.value as StoryboardGeneratedTextPolicy["mode"]) }))}><option value="forbidden">Never generate visible text</option><option value="prompted_only">Only when explicitly requested</option><option value="allowed">Allowed where it fits the scene</option></select></label>
               </div>
+              {workspace.form.generatedTextPolicy.mode !== "forbidden" && (
+                <details className="vlx-frame-details">
+                  <summary>On-screen text details</summary>
+                  <div className="vlx-finish-options">
+                    {(
+                      [
+                        ["captions", "Captions"],
+                        ["subtitles", "Subtitles"],
+                        ["closedCaptions", "Closed captions"],
+                        ["titleCards", "Title cards"],
+                        ["textOverlays", "Text overlays"],
+                        ["logos", "Logos"],
+                        ["watermarks", "Watermarks"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label key={key} className="vlx-toggle">
+                        <input
+                          type="checkbox"
+                          checked={workspace.form.generatedTextPolicy[key]}
+                          onChange={(event) => workspace.setForm((current) => ({ ...current, generatedTextPolicy: { ...current.generatedTextPolicy, [key]: event.target.checked } }))}
+                        />
+                        <span /> {label}
+                      </label>
+                    ))}
+                    <label className="vlx-field"><span>Readable signage</span><select value={workspace.form.generatedTextPolicy.signage} onChange={(event) => workspace.setForm((current) => ({ ...current, generatedTextPolicy: { ...current.generatedTextPolicy, signage: event.target.value as StoryboardGeneratedTextPolicy["signage"] } }))}><option value="avoid_readable_text">Avoid readable text</option><option value="incidental">Incidental only</option><option value="allowed">Allowed</option></select></label>
+                  </div>
+                </details>
+              )}
               {!assemblySupported && <p className="vlx-capability-truth">Accepted-scene assembly is unavailable on the connected runtime and will not be simulated.</p>}
               <div className="vlx-generation-bar"><div><span>Assemble accepted scenes</span><small>{workspace.allAccepted ? "Ready for a confirmation proposal." : `${scenes.length - workspace.acceptedCount} scenes still need a current accepted draft.`}</small></div><button type="button" disabled={!workspace.allAccepted || !assemblySupported || workspace.directorBusy} onClick={() => void sendDirection("Assemble the accepted scenes into the complete film.")}>Review assembly request</button></div>
             </section>
@@ -505,6 +536,15 @@ export default function DirectorWorkspace() {
 }
 
 type StoryboardAudioPolicyMode = "silent" | "intent_only" | "directed";
+
+function generatedTextPolicyForMode(
+  current: StoryboardGeneratedTextPolicy,
+  mode: StoryboardGeneratedTextPolicy["mode"],
+): StoryboardGeneratedTextPolicy {
+  return mode === "forbidden"
+    ? defaultGeneratedTextPolicy()
+    : { ...current, mode };
+}
 
 function TemporalKeyframeEditor({
   scene,
