@@ -317,7 +317,7 @@ describe('generation worker failure handling', () => {
           status: 'completed',
           progress: 100,
           quality_report: {
-            version: 'generated-text-qc-v1', advisory: true, score: 100, recommendation: 'recommended',
+            version: 'generated-text-qc-v1', advisory: false, score: 100, recommendation: 'recommended',
             checks: [{ id: 'generated_text_policy', status: 'passed', confidence: 1 }],
           },
         });
@@ -530,7 +530,7 @@ describe('generation worker failure handling', () => {
         status: 'completed',
         progress: 1,
         quality_report: {
-          version: 'generated-text-qc-v1', advisory: true, score: 100, recommendation: 'recommended',
+          version: 'generated-text-qc-v1', advisory: false, score: 100, recommendation: 'recommended',
           checks: [{ id: 'generated_text_policy', status: 'passed', confidence: 1 }],
         },
       });
