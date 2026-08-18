@@ -807,8 +807,8 @@ export interface components {
         };
         QualityAssessment: {
             version: string;
-            /** @enum {boolean} */
-            advisory: true;
+            /** @description True when the assessment is informational; false when it is an enforced acceptance result. */
+            advisory: boolean;
             score: number;
             /** @enum {string} */
             recommendation: "review" | "recommended" | "repair";

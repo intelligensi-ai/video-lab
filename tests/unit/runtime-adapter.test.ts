@@ -226,6 +226,55 @@ describe("SulphurLtxRuntimeAdapter", () => {
     });
   });
 
+  it("preserves enforced non-advisory generated-text evidence", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({
+        id: "frame-with-enforced-text-check",
+        status: "completed",
+        progress: 100,
+        quality_report: {
+          version: "generated-text-qc-v1",
+          advisory: false,
+          score: 100,
+          recommendation: "recommended",
+          checks: [
+            {
+              id: "generated_text_policy",
+              status: "passed",
+              confidence: 0.85,
+              detail: "No forbidden visible text was detected.",
+            },
+          ],
+        },
+      })),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.test",
+      payloadMode: "intelligensi-api",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+
+    await expect(
+      adapter.getGenerationStatus("frame-with-enforced-text-check"),
+    ).resolves.toMatchObject({
+      state: "completed",
+      qualityAssessment: {
+        version: "generated-text-qc-v1",
+        advisory: false,
+        score: 100,
+        recommendation: "recommended",
+        checks: [
+          {
+            id: "generated_text_policy",
+            status: "passed",
+            confidence: 0.85,
+          },
+        ],
+      },
+    });
+  });
+
   it("never exposes upstream infrastructure details as creator progress", async () => {
     vi.stubGlobal(
       "fetch",

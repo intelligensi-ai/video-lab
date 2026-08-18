@@ -47,7 +47,7 @@ export interface Generation {
   };
   qualityAssessment?: {
     version: string;
-    advisory: true;
+    advisory: boolean;
     score: number;
     recommendation: "review" | "recommended" | "repair";
     checks: Array<{

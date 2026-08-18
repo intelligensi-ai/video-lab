@@ -1212,7 +1212,9 @@ components:
       required: [version, advisory, score, recommendation, checks]
       properties:
         version: { type: string }
-        advisory: { type: boolean, enum: [true] }
+        advisory:
+          type: boolean
+          description: True when the assessment is informational; false when it is an enforced acceptance result.
         score: { type: integer, minimum: 0, maximum: 100 }
         recommendation: { type: string, enum: [review, recommended, repair] }
         checks:

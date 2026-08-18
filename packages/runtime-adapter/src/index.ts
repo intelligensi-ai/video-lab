@@ -104,7 +104,7 @@ function optionalPositiveInteger<K extends string>(key: K, value: unknown) {
 function safeQualityAssessment(value: unknown): Generation["qualityAssessment"] | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const source = value as Record<string, unknown>;
-  if (source.advisory !== true || !Array.isArray(source.checks)) return undefined;
+  if (typeof source.advisory !== "boolean" || !Array.isArray(source.checks)) return undefined;
   const recommendation = ["review", "recommended", "repair"].includes(String(source.recommendation))
     ? String(source.recommendation) as "review" | "recommended" | "repair"
     : "review";
@@ -127,7 +127,7 @@ function safeQualityAssessment(value: unknown): Generation["qualityAssessment"] 
   const version = /^[a-z0-9][a-z0-9._-]{0,79}$/i.test(requestedVersion)
     ? requestedVersion
     : "media-qc-v2";
-  return { version, advisory: true, score, recommendation, checks };
+  return { version, advisory: source.advisory, score, recommendation, checks };
 }
 
 export interface RuntimeVideoSettings {
