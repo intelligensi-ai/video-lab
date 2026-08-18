@@ -14,6 +14,7 @@ import type {
   Generation,
   LongFormVideoModel,
   StoryboardEnhancementResponse,
+  StoryboardGeneratedTextPolicy,
   StoryboardProjectSummary,
 } from "@video-lab/contracts";
 import {
@@ -497,6 +498,15 @@ export function generationPayloadForStudioVariant(
   _isClassic: boolean,
 ): LongFormGenerationPayload {
   return form;
+}
+
+function generatedTextPolicyForMode(
+  current: StoryboardGeneratedTextPolicy,
+  mode: StoryboardGeneratedTextPolicy["mode"],
+): StoryboardGeneratedTextPolicy {
+  return mode === "forbidden"
+    ? defaultGeneratedTextPolicy()
+    : { ...current, mode };
 }
 
 function markAcceptedClipsStale(
@@ -1594,6 +1604,31 @@ export default function LongFormStoryboardStudio({
                       <option value="directed">Directed sound</option>
                     </select>
                   </Field>
+                  <Field label="On-screen text">
+                    <select
+                      aria-label="On-screen text"
+                      disabled={!sessionReady}
+                      value={form.generatedTextPolicy.mode}
+                      onChange={(event) =>
+                        setForm((current) =>
+                          markAcceptedClipsStale(
+                            {
+                              ...current,
+                              generatedTextPolicy: generatedTextPolicyForMode(
+                                current.generatedTextPolicy,
+                                event.target.value as StoryboardGeneratedTextPolicy["mode"],
+                              ),
+                            },
+                            "The on-screen text policy changed after this clip was accepted. Generate it again to use the new policy.",
+                          ),
+                        )
+                      }
+                    >
+                      <option value="forbidden">Never generate visible text</option>
+                      <option value="prompted_only">Only when explicitly requested</option>
+                      <option value="allowed">Allowed where it fits the scene</option>
+                    </select>
+                  </Field>
                 </div>
                 <div className="lf-format-row">
                   <div className="lf-format-presets">
@@ -1853,6 +1888,32 @@ export default function LongFormStoryboardStudio({
                     <option value="directed">Directed sound</option>
                   </select>
                 </Field>
+                <Field
+                  label="On-screen text"
+                  help="Forbidden keeps all visible text, captions and signage out of the frame. Allowed lets the runtime include readable text when the scene calls for it."
+                >
+                  <select
+                    value={form.generatedTextPolicy.mode}
+                    onChange={(event) =>
+                      setForm((current) =>
+                        markAcceptedClipsStale(
+                          {
+                            ...current,
+                            generatedTextPolicy: generatedTextPolicyForMode(
+                              current.generatedTextPolicy,
+                              event.target.value as StoryboardGeneratedTextPolicy["mode"],
+                            ),
+                          },
+                          "The on-screen text policy changed after this clip was accepted. Render it again before assembly.",
+                        ),
+                      )
+                    }
+                  >
+                    <option value="forbidden">Never generate visible text</option>
+                    <option value="prompted_only">Only when explicitly requested</option>
+                    <option value="allowed">Allowed where it fits the scene</option>
+                  </select>
+                </Field>
                 <NumberField
                   label="Drafts per scene"
                   help="Drafts run sequentially so one creator cannot monopolise the shared generation pool."
@@ -2019,6 +2080,60 @@ export default function LongFormStoryboardStudio({
                       />
                       <span /> Preserve supplied source audio
                     </label>
+                  </div>
+                </details>
+              )}
+              {form.generatedTextPolicy.mode !== "forbidden" && (
+                <details className="lf-continuity-details">
+                  <summary>On-screen text details</summary>
+                  <div className="lf-settings">
+                    {(
+                      [
+                        ["captions", "Captions"],
+                        ["subtitles", "Subtitles"],
+                        ["closedCaptions", "Closed captions"],
+                        ["titleCards", "Title cards"],
+                        ["textOverlays", "Text overlays"],
+                        ["logos", "Logos"],
+                        ["watermarks", "Watermarks"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label key={key} className="lf-toggle">
+                        <input
+                          type="checkbox"
+                          checked={form.generatedTextPolicy[key]}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              generatedTextPolicy: {
+                                ...current.generatedTextPolicy,
+                                [key]: event.target.checked,
+                              },
+                            }))
+                          }
+                        />
+                        <span /> {label}
+                      </label>
+                    ))}
+                    <Field label="Readable signage">
+                      <select
+                        value={form.generatedTextPolicy.signage}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            generatedTextPolicy: {
+                              ...current.generatedTextPolicy,
+                              signage: event.target
+                                .value as StoryboardGeneratedTextPolicy["signage"],
+                            },
+                          }))
+                        }
+                      >
+                        <option value="avoid_readable_text">Avoid readable text</option>
+                        <option value="incidental">Incidental only</option>
+                        <option value="allowed">Allowed</option>
+                      </select>
+                    </Field>
                   </div>
                 </details>
               )}
