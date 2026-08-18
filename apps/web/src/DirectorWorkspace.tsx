@@ -231,6 +231,9 @@ export default function DirectorWorkspace() {
 
   const runtimeReady = workspace.runtime?.status === "healthy" && workspace.runtime.acceptingSubmissions;
   const assemblySupported = workspace.runtime?.capabilities?.sceneAssembly === true;
+  const referenceConditioningSupported =
+    workspace.runtime?.capabilities?.referenceConditioning === true &&
+    workspace.runtime?.capabilities?.featureStatus?.referenceConditioning === "supported";
   const videoModels = longFormVideoModelsForRuntime(workspace.runtime);
 
   return (
@@ -290,7 +293,11 @@ export default function DirectorWorkspace() {
             <div><span className="vlx-eyebrow">Project library</span><h2>References</h2></div>
             <button type="button" aria-label="Add a private reference" onClick={() => referenceInput.current?.click()}>+</button>
           </div>
-          <p className="vlx-rail-copy">References guide Gemma’s continuity plan. Direct LTX conditioning remains capability-gated.</p>
+          <p className="vlx-rail-copy">
+            {referenceConditioningSupported
+              ? "References guide Gemma’s continuity plan and the connected runtime conditions generation on them directly."
+              : "References guide Gemma’s continuity plan. Direct LTX conditioning remains capability-gated."}
+          </p>
           <label className="vlx-reference-type">
             <span>New reference type</span>
             <select value={referenceType} onChange={(event) => setReferenceType(event.target.value as StoryboardProjectReference["type"])}>
@@ -385,7 +392,11 @@ export default function DirectorWorkspace() {
           {activeStage === 1 && (
             <section className="vlx-card">
               <div className="vlx-section-title"><div><span className="vlx-eyebrow">Continuity</span><h2>Cast, world and look</h2></div><button type="button" className="vlx-secondary" onClick={() => referenceInput.current?.click()}>Add reference</button></div>
-              <p className="vlx-capability-truth">These references are private and available to Gemma for planning. The active LongForm runtime currently proves direct conditioning only through each scene’s first and last frame.</p>
+              <p className="vlx-capability-truth">
+                {referenceConditioningSupported
+                  ? "These references are private, available to Gemma for planning, and the connected runtime conditions each scene's generation on them directly."
+                  : "These references are private and available to Gemma for planning. The active LongForm runtime currently proves direct conditioning only through each scene’s first and last frame."}
+              </p>
               <div className="vlx-reference-board">
                 {workspace.form.projectReferences.map((reference) => (
                   <article key={reference.id} className="vlx-reference-tile">

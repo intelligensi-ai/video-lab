@@ -1696,6 +1696,10 @@ export default function LongFormStoryboardStudio({
                     ),
                   )
                 }
+                referenceConditioningSupported={
+                  runtime.data?.capabilities?.referenceConditioning === true &&
+                  runtime.data?.capabilities?.featureStatus?.referenceConditioning === "supported"
+                }
               />}
               <section className="lf-scenes">
                 <div className="lf-section-head">
@@ -2546,6 +2550,7 @@ function ProjectReferencePanel({
   seedPolicy,
   onSeedPolicyChange,
   onGlobalSeedChange,
+  referenceConditioningSupported,
 }: {
   references: StoryboardProjectReference[];
   sceneIds: string[];
@@ -2555,6 +2560,7 @@ function ProjectReferencePanel({
   seedPolicy: LongFormGenerationPayload["seedPolicy"];
   onSeedPolicyChange: (seedPolicy: LongFormGenerationPayload["seedPolicy"]) => void;
   onGlobalSeedChange: (globalSeed: number) => void;
+  referenceConditioningSupported: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [type, setType] =
@@ -2658,10 +2664,9 @@ function ProjectReferencePanel({
       {open && (
         <div className="lf-project-references">
           <p className="lf-capability-note">
-            Gemma uses these private descriptions as continuity locks. The
-            current LTX workflow supports actual start/end frame conditioning;
-            other reference media remain planning-only until runtime capability
-            evidence is available.
+            {referenceConditioningSupported
+              ? "Gemma uses these private descriptions as continuity locks, and the connected runtime conditions generation on them directly, alongside start/end frame conditioning."
+              : "Gemma uses these private descriptions as continuity locks. The current LTX workflow supports actual start/end frame conditioning; other reference media remain planning-only until runtime capability evidence is available."}
           </p>
           <div className="lf-seed-controls">
             <Field
