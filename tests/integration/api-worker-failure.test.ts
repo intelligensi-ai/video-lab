@@ -43,6 +43,115 @@ describe('generation worker failure handling', () => {
     expect(JSON.stringify(generation.body)).not.toContain('runtime.test');
   }, 15_000);
 
+  it('recovers transient status failures without resubmitting the paid runtime job', async () => {
+    vi.stubEnv('VIDEO_RUNTIME_PROVIDER', 'sulphur-ltx');
+    vi.stubEnv('VIDEO_RUNTIME_BASE_URL', 'http://runtime.test');
+    vi.stubEnv('VIDEO_RUNTIME_PAYLOAD_MODE', 'deploy-studio');
+    vi.stubEnv('VIDEO_RUNTIME_STATUS_RECOVERY_WINDOW_MS', '1000');
+    vi.stubEnv('VIDEO_RUNTIME_STATUS_RETRY_DELAY_MS', '10');
+    let submissions = 0;
+    let statusChecks = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith('/jobs') && init?.method === 'POST') {
+        submissions += 1;
+        return Response.json({ id: 'recovering-runtime-job' }, { status: 202 });
+      }
+      if (requestUrl.endsWith('/jobs/recovering-runtime-job/output')) {
+        return new Response(new Uint8Array([
+          0x00, 0x00, 0x00, 0x18,
+          0x66, 0x74, 0x79, 0x70,
+          0x69, 0x73, 0x6f, 0x6d,
+        ]), {
+          status: 200,
+          headers: { 'content-type': 'video/mp4' },
+        });
+      }
+      if (requestUrl.endsWith('/jobs/recovering-runtime-job')) {
+        statusChecks += 1;
+        if (statusChecks === 1) {
+          return new Response('private upstream stack at http://10.0.0.8', { status: 500 });
+        }
+        if (statusChecks === 2) throw new Error('temporary network reset');
+        return Response.json({
+          id: 'recovering-runtime-job',
+          status: 'completed',
+          progress: 100,
+          quality_report: {
+            version: 'generated-text-qc-v1', advisory: false, score: 100, recommendation: 'recommended',
+            checks: [{ id: 'generated_text_policy', status: 'passed', confidence: 1 }],
+          },
+        });
+      }
+      throw new Error(`Unexpected test URL: ${requestUrl}`);
+    }));
+
+    const { app, processOne } = await import('../../apps/api/src/index.js');
+    const auth = { authorization: 'Bearer status-recovery-user' };
+    const submitted = await request(app)
+      .post('/v1/generations')
+      .set(auth)
+      .set('Idempotency-Key', 'status-recovery-key')
+      .send({
+        prompt: 'A start-frame-guided scene survives a transient status interruption',
+        settings: { aspectRatio: '16:9', durationSeconds: 2, quality: 'draft' },
+      })
+      .expect(201);
+
+    await expect(processOne('status-recovery-worker')).resolves.toBeUndefined();
+
+    const generation = await request(app)
+      .get(`/v1/generations/${submitted.body.id}`)
+      .set(auth)
+      .expect(200);
+    expect(generation.body.status).toBe('completed');
+    expect(submissions).toBe(1);
+    expect(statusChecks).toBeGreaterThanOrEqual(3);
+    expect(statusChecks).toBeLessThanOrEqual(4);
+    expect(JSON.stringify(generation.body)).not.toMatch(/10\.0\.0\.8|runtime\.test|private upstream/i);
+  }, 15_000);
+
+  it('does not retry a non-transient runtime status rejection', async () => {
+    vi.stubEnv('VIDEO_RUNTIME_PROVIDER', 'sulphur-ltx');
+    vi.stubEnv('VIDEO_RUNTIME_BASE_URL', 'http://runtime.test');
+    vi.stubEnv('VIDEO_RUNTIME_PAYLOAD_MODE', 'deploy-studio');
+    vi.stubEnv('VIDEO_RUNTIME_STATUS_RECOVERY_WINDOW_MS', '1000');
+    vi.stubEnv('VIDEO_RUNTIME_STATUS_RETRY_DELAY_MS', '10');
+    let statusChecks = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith('/jobs') && init?.method === 'POST') {
+        return Response.json({ id: 'rejected-status-runtime-job' }, { status: 202 });
+      }
+      if (requestUrl.endsWith('/jobs/rejected-status-runtime-job')) {
+        statusChecks += 1;
+        return new Response('private validation detail', { status: 400 });
+      }
+      throw new Error(`Unexpected test URL: ${requestUrl}`);
+    }));
+
+    const { app, processOne } = await import('../../apps/api/src/index.js');
+    const auth = { authorization: 'Bearer status-rejection-user' };
+    const submitted = await request(app)
+      .post('/v1/generations')
+      .set(auth)
+      .set('Idempotency-Key', 'status-rejection-key')
+      .send({
+        prompt: 'A malformed status contract must fail without retrying',
+        settings: { aspectRatio: '16:9', durationSeconds: 2, quality: 'draft' },
+      })
+      .expect(201);
+
+    await expect(processOne('status-rejection-worker')).resolves.toBeUndefined();
+    const generation = await request(app)
+      .get(`/v1/generations/${submitted.body.id}`)
+      .set(auth)
+      .expect(200);
+    expect(generation.body).toMatchObject({ status: 'failed', failureCode: 'runtime_failure' });
+    expect(statusChecks).toBe(1);
+    expect(JSON.stringify(generation.body)).not.toMatch(/runtime\.test|private validation/i);
+  }, 15_000);
+
   it('preserves safe generated-text validation failure classifications', async () => {
     vi.stubEnv('VIDEO_RUNTIME_PROVIDER', 'sulphur-ltx');
     vi.stubEnv('VIDEO_RUNTIME_BASE_URL', 'http://runtime.test');

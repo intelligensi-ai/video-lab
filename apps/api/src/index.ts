@@ -2343,6 +2343,100 @@ function runtimeJobTimeoutMs() {
   );
 }
 
+function runtimeStatusRecoveryWindowMs() {
+  return boundedInteger(
+    process.env.VIDEO_RUNTIME_STATUS_RECOVERY_WINDOW_MS,
+    45_000,
+    1_000,
+    2 * 60_000,
+  );
+}
+
+function runtimeStatusRetryDelayMs() {
+  return boundedInteger(
+    process.env.VIDEO_RUNTIME_STATUS_RETRY_DELAY_MS,
+    2_000,
+    10,
+    10_000,
+  );
+}
+
+function retryableRuntimeStatusError(
+  error: unknown,
+  recoverLeaseUnavailable: boolean,
+) {
+  if (error instanceof RuntimeLeaseUnavailableError)
+    return recoverLeaseUnavailable;
+  if (error && typeof error === "object" && "status" in error) {
+    const status = Number((error as { status?: unknown }).status);
+    if (
+      Number.isFinite(status) &&
+      ([408, 425, 429].includes(status) || status >= 500)
+    )
+      return true;
+    if (Number.isFinite(status) && status >= 400 && status < 500) return false;
+  }
+  return ["runtime_timeout", "runtime_network"].includes(
+    operationalErrorCode(error),
+  );
+}
+
+async function getRuntimeGenerationStatusWithRecovery(
+  generationId: string,
+  runtimeJobId: string,
+  jobDeadline: number,
+  recoverLeaseUnavailable: boolean,
+) {
+  let recoveryStartedAt: number | undefined;
+  let recoveryAttempt = 0;
+  for (;;) {
+    try {
+      const status = await runtime.getGenerationStatus(runtimeJobId);
+      if (recoveryAttempt > 0) {
+        log("generation_status_recovered", {
+          generationId,
+          recoveryAttempt,
+        });
+      }
+      return status;
+    } catch (error) {
+      if (!retryableRuntimeStatusError(error, recoverLeaseUnavailable))
+        throw error;
+      recoveryStartedAt ??= Date.now();
+      const recoveryDeadline = Math.min(
+        jobDeadline,
+        recoveryStartedAt + runtimeStatusRecoveryWindowMs(),
+      );
+      const remainingMs = recoveryDeadline - Date.now();
+      if (remainingMs <= 0) throw error;
+      recoveryAttempt += 1;
+      const current = gens.get(generationId);
+      if (current && !["completed", "failed", "cancelled"].includes(current.status)) {
+        const reconnecting: StoredGeneration = {
+          ...current,
+          runtimeMessage:
+            "Generation is continuing; reconnecting to runtime status",
+          runtimeJobId,
+          updatedAt: nowIso(),
+        };
+        gens.set(generationId, reconnecting);
+        await persistGeneration(reconnecting);
+      }
+      log("generation_status_retry", {
+        generationId,
+        errorCode: operationalErrorCode(error),
+        recoveryAttempt,
+      });
+      await new Promise((resolve) =>
+        setTimeout(
+          resolve,
+          Math.min(runtimeStatusRetryDelayMs(), remainingMs),
+        ),
+      );
+    }
+  }
+}
+
 function queueLeaseMs() {
   const timeout = runtimeJobTimeoutMs();
   return Math.min(2 * 60 * 60_000, timeout + 5 * 60_000);
@@ -6486,8 +6580,13 @@ async function processQueueItem(workerId = "local-worker") {
     };
     gens.set(g.id, submitted);
     await persistGeneration(submitted);
-    let st = await runtime.getGenerationStatus(sub.runtimeJobId);
     const deadline = Date.now() + runtimeJobTimeoutMs();
+    let st = await getRuntimeGenerationStatusWithRecovery(
+      g.id,
+      sub.runtimeJobId,
+      deadline,
+      g.settings.operationScope !== "assembly",
+    );
     while (!["completed", "failed", "cancelled"].includes(st.state)) {
       if (Date.now() >= deadline) throw new Error("runtime_job_timeout");
       if (gens.get(g.id)?.status === "cancelled") break;
@@ -6503,7 +6602,12 @@ async function processQueueItem(workerId = "local-worker") {
       gens.set(g.id, current);
       await persistGeneration(current);
       await new Promise((r) => setTimeout(r, 2_000));
-      st = await runtime.getGenerationStatus(sub.runtimeJobId);
+      st = await getRuntimeGenerationStatusWithRecovery(
+        g.id,
+        sub.runtimeJobId,
+        deadline,
+        g.settings.operationScope !== "assembly",
+      );
     }
     if (gens.get(g.id)?.status === "cancelled" || st.state === "cancelled") {
       const cancelled: StoredGeneration = {

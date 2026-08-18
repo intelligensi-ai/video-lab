@@ -1170,7 +1170,11 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     if (!res.ok) {
       const leaseError = await runtimeLeaseUnavailableResponse(res);
       if (leaseError) throw leaseError;
-      throw new Error(`Sulphur status failed: ${await res.text()}`);
+      const error = new Error("Runtime status request failed") as Error & {
+        status?: number;
+      };
+      error.status = res.status;
+      throw error;
     }
 
     const json = (await res.json()) as {
