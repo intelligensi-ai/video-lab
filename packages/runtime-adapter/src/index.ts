@@ -73,6 +73,8 @@ function publicRuntimeMessage(
         "The requested generation workflow is temporarily unavailable.",
       runtime_generated_text_policy_failed:
         "The result contained unwanted captions or visible text after a bounded repair attempt. Your previous successful version remains available; retry with a new seed.",
+      runtime_generated_text_validation_missing:
+        "The generator did not return the required visible-text validation evidence. Your previous successful version remains available; please retry.",
     };
     return (
       (failureCode ? knownMessages[failureCode] : undefined) ??

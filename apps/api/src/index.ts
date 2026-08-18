@@ -247,6 +247,10 @@ function operationalErrorCode(error: unknown) {
   if (error && typeof error === "object" && "code" in error) {
     const code = String((error as { code?: unknown }).code ?? "");
     if (/^runtime_[a-z0-9_]+$/.test(code)) return code;
+    if (code === "generated_text_validation_missing")
+      return "runtime_generated_text_validation_missing";
+    if (code === "generated_text_policy_failed")
+      return "runtime_generated_text_policy_failed";
   }
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (message.includes("timeout")) return "runtime_timeout";
@@ -6593,11 +6597,15 @@ async function processQueueItem(workerId = "local-worker") {
       safeErrorMessage: `${
         failureCode === "runtime_timeout"
           ? "Generation timed out. Please retry when the runtime is available."
-          : failureCode === "runtime_authentication"
-            ? "Generation access could not be verified. Please retry shortly."
-            : failureCode === "runtime_invalid_response"
-              ? "The generator returned an invalid response. Your successful work is unchanged."
-              : "Generation failed safely. Please retry when the runtime is available."
+          : failureCode === "runtime_generated_text_validation_missing"
+            ? "Visible-text validation evidence was unavailable. Your successful work is unchanged; please retry."
+            : failureCode === "runtime_generated_text_policy_failed"
+              ? "The result contained unwanted captions or visible text. Your successful work is unchanged; retry with a new seed."
+              : failureCode === "runtime_authentication"
+                ? "Generation access could not be verified. Please retry shortly."
+                : failureCode === "runtime_invalid_response"
+                  ? "The generator returned an invalid response. Your successful work is unchanged."
+                  : "Generation failed safely. Please retry when the runtime is available."
       }${creditsReturned ? " Credits were returned." : ""}`,
       updatedAt: nowIso(),
     };

@@ -43,6 +43,80 @@ describe('generation worker failure handling', () => {
     expect(JSON.stringify(generation.body)).not.toContain('runtime.test');
   }, 15_000);
 
+  it('preserves safe generated-text validation failure classifications', async () => {
+    vi.stubEnv('VIDEO_RUNTIME_PROVIDER', 'sulphur-ltx');
+    vi.stubEnv('VIDEO_RUNTIME_BASE_URL', 'http://runtime.test');
+    vi.stubEnv('VIDEO_RUNTIME_PAYLOAD_MODE', 'deploy-studio');
+    let submissions = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith('/jobs') && init?.method === 'POST') {
+        submissions += 1;
+        return Response.json({ id: `generated-text-runtime-job-${submissions}` }, { status: 202 });
+      }
+      if (requestUrl.endsWith('/jobs/generated-text-runtime-job-1')) {
+        return Response.json({
+          id: 'generated-text-runtime-job-1',
+          status: 'completed',
+          progress: 100,
+        });
+      }
+      if (requestUrl.endsWith('/jobs/generated-text-runtime-job-2')) {
+        return Response.json({
+          id: 'generated-text-runtime-job-2',
+          status: 'completed',
+          progress: 100,
+          quality_report: {
+            version: 'generated-text-qc-v1',
+            advisory: false,
+            score: 0,
+            recommendation: 'repair',
+            checks: [{ id: 'generated_text_policy', status: 'failed', confidence: 0.99 }],
+          },
+        });
+      }
+      throw new Error(`Unexpected test URL: ${requestUrl}`);
+    }));
+
+    const { app, processOne } = await import('../../apps/api/src/index.js');
+    const cases = [
+      {
+        auth: { authorization: 'Bearer missing-text-evidence-user' },
+        idempotencyKey: 'missing-text-evidence-key',
+        expectedCode: 'runtime_generated_text_validation_missing',
+        expectedMessage: /validation evidence was unavailable/i,
+      },
+      {
+        auth: { authorization: 'Bearer rejected-text-evidence-user' },
+        idempotencyKey: 'rejected-text-evidence-key',
+        expectedCode: 'runtime_generated_text_policy_failed',
+        expectedMessage: /unwanted captions or visible text/i,
+      },
+    ];
+
+    for (const [index, testCase] of cases.entries()) {
+      const submitted = await request(app)
+        .post('/v1/generations')
+        .set(testCase.auth)
+        .set('Idempotency-Key', testCase.idempotencyKey)
+        .send({
+          prompt: `Caption-policy boundary ${index + 1}`,
+          settings: { aspectRatio: '16:9', durationSeconds: 2, quality: 'draft' },
+        })
+        .expect(201);
+
+      await processOne(`generated-text-worker-${index + 1}`);
+      const generation = await request(app)
+        .get(`/v1/generations/${submitted.body.id}`)
+        .set(testCase.auth)
+        .expect(200);
+      expect(generation.body.status).toBe('failed');
+      expect(generation.body.failureCode).toBe(testCase.expectedCode);
+      expect(generation.body.safeErrorMessage).toMatch(testCase.expectedMessage);
+      expect(JSON.stringify(generation.body)).not.toContain('runtime.test');
+    }
+  }, 15_000);
+
   it('preserves an active job when runtime cancellation cannot be confirmed', async () => {
     vi.stubEnv('VIDEO_RUNTIME_PROVIDER', 'sulphur-ltx');
     vi.stubEnv('VIDEO_RUNTIME_BASE_URL', 'http://runtime.test');
