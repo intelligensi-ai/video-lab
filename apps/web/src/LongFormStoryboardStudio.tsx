@@ -836,28 +836,30 @@ export default function LongFormStoryboardStudio({
   useEffect(() => {
     const items = gallery.data?.items ?? [];
     setHistory(items.slice(0, 8));
-    if (autoSelectedRef.current) {
-      const acceptedVideoIds = new Set(
-        form.scenes
-          .map((scene) => scene.acceptedVideoGenerationId)
-          .filter((id): id is string => Boolean(id)),
-      );
-      const acceptedVideo = items.find(
-        (item) =>
-          acceptedVideoIds.has(item.id) &&
-          item.status === "completed" &&
-          item.output?.kind === "video",
-      );
-      const activeGeneration = items.find(
-        (item) => !["completed", "failed", "cancelled"].includes(item.status),
-      );
-      const latestCompletedVideo = items.find(
-        (item) =>
-          item.status === "completed" && item.output?.kind === "video",
-      );
-      setSelected(acceptedVideo ?? activeGeneration ?? latestCompletedVideo);
-    }
-  }, [form.scenes, gallery.data, selected]);
+    if (!autoSelectedRef.current) return;
+    const acceptedVideoIds = new Set(
+      form.scenes
+        .map((scene) => scene.acceptedVideoGenerationId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const acceptedVideo = items.find(
+      (item) =>
+        acceptedVideoIds.has(item.id) &&
+        item.status === "completed" &&
+        item.output?.kind === "video",
+    );
+    const activeGeneration = items.find(
+      (item) => !["completed", "failed", "cancelled"].includes(item.status),
+    );
+    const latestCompletedVideo = items.find(
+      (item) =>
+        item.status === "completed" && item.output?.kind === "video",
+    );
+    const candidate = acceptedVideo ?? activeGeneration ?? latestCompletedVideo;
+    setSelected((current) =>
+      current && current.id === candidate?.id ? current : candidate,
+    );
+  }, [form.scenes, gallery.data]);
   useEffect(() => {
     let active = true;
     const restore = async () => {
