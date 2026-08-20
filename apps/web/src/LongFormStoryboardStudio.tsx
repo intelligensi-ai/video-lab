@@ -1399,7 +1399,7 @@ export default function LongFormStoryboardStudio({
               {isClassic ? "Director" : "Creative brief"}
             </span>
             <div className="prompt-field-heading">
-              <h2>{isClassic ? "Describe your video" : "Overview"}</h2>
+              <h2>{isClassic ? "Creator Outline" : "Overview"}</h2>
               <button
                 type="button"
                 className="lf-outline lf-polish-brief"
@@ -1754,7 +1754,7 @@ export default function LongFormStoryboardStudio({
                 <div className="lf-section-head">
                   <div>
                     <span className="lf-label">Timeline</span>
-                    <h2>{isClassic ? "Storyboard" : "Storyboard scenes"}</h2>
+                    <h2>{isClassic ? "Scene" : "Storyboard scenes"}</h2>
                   </div>
                   {!isClassic && (
                     <button
@@ -4368,10 +4368,8 @@ function Preview({
     <section className="lf-preview lf-panel">
       <header data-help="This panel tracks the currently selected generation, including active render progress, playback and download once complete.">
         <div>
-          <span className="lf-label">
-            {minimal ? "Preview" : "Your creation"}
-          </span>
-          <h2>{minimal ? "Your video" : "Cinematic preview"}</h2>
+          {!minimal && <span className="lf-label">Your creation</span>}
+          <h2>{minimal ? "Preview" : "Cinematic preview"}</h2>
         </div>
         <div className="lf-preview-header-actions">
           {headerControls}

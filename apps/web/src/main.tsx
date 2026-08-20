@@ -365,7 +365,11 @@ function Shell() {
           </Link>
           {signedIn && pageTitle && (
             <span className="site-page-title" aria-current="page">
-              {pageTitle}<span>.</span>
+              {pageTitle}
+              <span>.</span>
+              {location.pathname === "/videolab" && (
+                <span className="site-page-title-suffix">creator</span>
+              )}
             </span>
           )}
           {!isLanding && !signedIn && (

@@ -423,6 +423,10 @@ body:has(.lf-page) {
 .site-page-title span {
   color: #11a99b;
 }
+.site-page-title .site-page-title-suffix {
+  color: #4b5259;
+  text-transform: lowercase;
+}
 .site-nav-links {
   display: flex;
   align-items: center;
@@ -6126,6 +6130,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
   width: 42px;
   height: 42px;
   border-radius: 50%;
+  background: #f4f6f5;
   object-fit: contain;
   animation: lf-render-mark 1.8s ease-in-out infinite;
 }
