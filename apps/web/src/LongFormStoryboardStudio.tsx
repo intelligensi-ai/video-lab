@@ -316,7 +316,7 @@ const formatPresets: Array<{
   },
   {
     key: "portrait",
-    label: "TikTok · Reels · Shorts",
+    label: "TikTok",
     sublabel: "Portrait 9:16",
     resolution: "720x1280",
     fps: 30,
@@ -636,6 +636,7 @@ export default function LongFormStoryboardStudio({
   const [sessionStatus, setSessionStatus] = useState<
     "loading" | "saving" | "saved" | "error"
   >("loading");
+  const [videoSettingsExpanded, setVideoSettingsExpanded] = useState(false);
   const runtime = useQuery({
     queryKey: ["runtime"],
     queryFn: getRuntimeStatus,
@@ -1284,8 +1285,11 @@ export default function LongFormStoryboardStudio({
     MAX_STORYBOARD_SCENES,
     runtime.data?.capabilities?.maxScenes ?? MAX_STORYBOARD_SCENES,
   );
-  const creatorMaxScenes = Math.min(MAX_CREATOR_SCENES, runtimeMaxScenes);
-  const creatorLengthLocked = form.scenes.some(sceneHasGeneratedMedia);
+  const creatorMaxScenes = Math.min(1, runtimeMaxScenes);
+  const creatorLengthLocked = Boolean(
+    currentGeneration &&
+      !["failed", "cancelled"].includes(currentGeneration.status),
+  );
   const creatorPreviewReady = form.scenes.every(
     (scene) =>
       Boolean(scene.acceptedVideoGenerationId || scene.candidateGenerationIds?.length) ||
@@ -1372,6 +1376,226 @@ export default function LongFormStoryboardStudio({
     </div>
   );
 
+  const videoSettingsPanel = isClassic ? (
+    <>
+    <div className="lf-video-settings">
+      <div className="lf-video-settings-row">
+        <IconField icon="▦" label="Resolution">
+          <select
+            aria-label="Resolution"
+            disabled={!sessionReady}
+            value={form.resolution}
+            onChange={(event) =>
+              setForm((current) =>
+                markAcceptedClipsStale(
+                  { ...current, resolution: event.target.value },
+                  "The resolution changed after this clip was accepted. Generate it again at the new size.",
+                ),
+              )
+            }
+          >
+            {minimalResolutionOptions[
+              minimalAspectRatio(form.resolution)
+            ].map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </IconField>
+        <IconField icon="▭" label="Aspect ratio">
+          <select
+            aria-label="Aspect ratio"
+            disabled={!sessionReady}
+            value={minimalAspectRatio(form.resolution)}
+            onChange={(event) =>
+              setForm((current) =>
+                markAcceptedClipsStale(
+                  {
+                    ...current,
+                    resolution: resolutionForAspectRatio(
+                      event.target.value as MinimalAspectRatio,
+                      current.resolution,
+                    ),
+                  },
+                  "The aspect ratio changed after this clip was accepted. Generate it again to use the new framing.",
+                ),
+              )
+            }
+          >
+            <option value="16:9">Landscape · 16:9</option>
+            <option value="9:16">Portrait · 9:16</option>
+            <option value="1:1">Square · 1:1</option>
+          </select>
+        </IconField>
+        <IconField icon="♪" label="Sound behaviour">
+          <select
+            aria-label="Sound behaviour"
+            disabled={!sessionReady}
+            value={form.audioPolicy.mode}
+            onChange={(event) => {
+              const mode = event.target.value as LongFormGenerationPayload["audioPolicy"]["mode"];
+              setForm((current) =>
+                markAcceptedClipsStale(
+                  {
+                    ...current,
+                    audioPolicy: {
+                      ...current.audioPolicy,
+                      mode,
+                      dialogue: mode === "silent" ? "off" : current.audioPolicy.dialogue,
+                      soundEffects: mode === "silent" ? "off" : current.audioPolicy.soundEffects,
+                      ambience: mode === "silent" ? "off" : current.audioPolicy.ambience,
+                      music: mode === "silent" ? "off" : current.audioPolicy.music,
+                      preserveSourceAudio: mode !== "silent" && current.audioPolicy.preserveSourceAudio,
+                    },
+                  },
+                  "The sound policy changed after this clip was accepted. Generate it again to use the new sound behaviour.",
+                ),
+              );
+            }}
+          >
+            <option value="silent">Silent</option>
+            <option value="intent_only">Only when requested</option>
+            <option value="directed">Directed sound</option>
+          </select>
+        </IconField>
+        <button
+          type="button"
+          className="lf-video-settings-toggle"
+          aria-expanded={videoSettingsExpanded}
+          aria-label={
+            videoSettingsExpanded
+              ? "Hide more video settings"
+              : "Show more video settings"
+          }
+          onClick={() => setVideoSettingsExpanded((current) => !current)}
+        >
+          <span className="lf-video-settings-toggle-arrow" aria-hidden="true" />
+        </button>
+      </div>
+      {videoSettingsExpanded && (
+        <div className="lf-video-settings-row">
+          <IconField icon="⚙" label="Video model">
+            <select
+              aria-label="Video model"
+              disabled={!sessionReady}
+              value={form.videoModel ?? "ltx-2.3"}
+              onChange={(event) =>
+                void changeVideoModel(event.target.value as LongFormVideoModel)
+              }
+            >
+              {videoModels.map((model) => (
+                <option key={model.id} value={model.id} disabled={!model.available}>
+                  {longFormVideoModelLabel(model)}
+                </option>
+              ))}
+            </select>
+          </IconField>
+          <IconField icon="T" label="On-screen text">
+            <select
+              aria-label="On-screen text"
+              disabled={!sessionReady}
+              value={form.generatedTextPolicy.mode}
+              onChange={(event) =>
+                setForm((current) =>
+                  markAcceptedClipsStale(
+                    {
+                      ...current,
+                      generatedTextPolicy: generatedTextPolicyForMode(
+                        current.generatedTextPolicy,
+                        event.target.value as StoryboardGeneratedTextPolicy["mode"],
+                      ),
+                    },
+                    "The on-screen text policy changed after this clip was accepted. Generate it again to use the new policy.",
+                  ),
+                )
+              }
+            >
+              <option value="forbidden">Never generate visible text</option>
+              <option value="prompted_only">Only when explicitly requested</option>
+              <option value="allowed">Allowed where it fits the scene</option>
+            </select>
+          </IconField>
+        </div>
+      )}
+    </div>
+    <div className="lf-preview-formats">
+      <div className="lf-preview-formats-row">
+      <div className="lf-format-presets">
+        {formatPresets.map((preset) => {
+          const active = form.resolution === preset.resolution;
+          return (
+            <button
+              key={preset.key}
+              type="button"
+              aria-pressed={active}
+              disabled={!sessionReady}
+              className={`lf-format-preset ${active ? "active" : ""}`}
+              onClick={() =>
+                setForm((current) =>
+                  markAcceptedClipsStale(
+                    {
+                      ...current,
+                      resolution: preset.resolution,
+                      fps: preset.fps,
+                    },
+                    "The output format changed after this clip was accepted. Render this scene again before assembly.",
+                  ),
+                )
+              }
+            >
+              <SocialIcon platform={preset.platform} />
+              <span>
+                <strong>{preset.label}</strong>
+                <small>{preset.sublabel}</small>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {form.scenes[0] && (
+        <div className="lf-minimal-duration">
+          <span className="lf-label lf-format-heading">
+            Length
+            <output className="lf-duration-value">
+              {totalSeconds}
+              <small>s</small>
+            </output>
+          </span>
+          <input
+            type="range"
+            className="lf-minimal-duration-slider"
+            aria-label="Video length"
+            disabled={!sessionReady || creatorLengthLocked}
+            min={1}
+            max={creatorMaxScenes * 8}
+            step={1}
+            value={Math.min(totalSeconds, creatorMaxScenes * 8)}
+            onChange={(event) => {
+              const value = Number(event.target.value);
+              setForm((current) => ({
+                ...current,
+                scenes: creatorScenesForTotalDuration(
+                  current.scenes,
+                  value,
+                  current.globalSeed,
+                  creatorMaxScenes,
+                ),
+              }));
+            }}
+          />
+          {creatorLengthLocked && (
+            <small>
+              Length is locked after previews or video are created. Start a new project to choose another length.
+            </small>
+          )}
+        </div>
+      )}
+      </div>
+    </div>
+    </>
+  ) : undefined;
+
   return (
     <main className={`lf-page ${helpMode ? "help-mode" : ""}`}>
       {!isClassic && (
@@ -1400,27 +1624,21 @@ export default function LongFormStoryboardStudio({
             </span>
             <div className="prompt-field-heading">
               <h2>{isClassic ? "Creator Outline" : "Overview"}</h2>
-              <button
-                type="button"
-                className="lf-outline lf-polish-brief"
-                disabled={
-                  !sessionReady ||
-                  !form.overallGoal.trim() ||
-                  enhancement.isPending ||
-                  classicBriefEnhancement.isPending
-                }
-                onClick={() =>
-                  isClassic
-                    ? classicBriefEnhancement.mutate()
-                    : enhancement.mutate({ apply: "master" })
-                }
-              >
-                {enhancement.isPending || classicBriefEnhancement.isPending
-                  ? "Director is working…"
-                  : isClassic
-                    ? "Improve with Director"
-                    : "Polish brief"}
-              </button>
+              {!isClassic && (
+                <button
+                  type="button"
+                  className="lf-outline lf-polish-brief"
+                  disabled={
+                    !sessionReady ||
+                    !form.overallGoal.trim() ||
+                    enhancement.isPending ||
+                    classicBriefEnhancement.isPending
+                  }
+                  onClick={() => enhancement.mutate({ apply: "master" })}
+                >
+                  {enhancement.isPending ? "Director is working…" : "Polish brief"}
+                </button>
+              )}
             </div>
             <div
               className="lf-help-target"
@@ -1506,205 +1724,21 @@ export default function LongFormStoryboardStudio({
               </p>
             )}
             {isClassic && (
-              <div
-                className="lf-minimal-output"
-                aria-label="Video output settings"
-              >
-                <span className="lf-label">Video settings</span>
-                <div className="lf-minimal-output-grid">
-                  <Field label="Video model">
-                    <select
-                      aria-label="Video model"
-                      disabled={!sessionReady}
-                      value={form.videoModel ?? "ltx-2.3"}
-                      onChange={(event) =>
-                        void changeVideoModel(event.target.value as LongFormVideoModel)
-                      }
-                    >
-                      {videoModels.map((model) => (
-                        <option key={model.id} value={model.id} disabled={!model.available}>
-                          {longFormVideoModelLabel(model)}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="Aspect ratio">
-                    <select
-                      aria-label="Aspect ratio"
-                      disabled={!sessionReady}
-                      value={minimalAspectRatio(form.resolution)}
-                      onChange={(event) =>
-                        setForm((current) =>
-                          markAcceptedClipsStale(
-                            {
-                              ...current,
-                              resolution: resolutionForAspectRatio(
-                                event.target.value as MinimalAspectRatio,
-                                current.resolution,
-                              ),
-                            },
-                            "The aspect ratio changed after this clip was accepted. Generate it again to use the new framing.",
-                          ),
-                        )
-                      }
-                    >
-                      <option value="16:9">Landscape · 16:9</option>
-                      <option value="9:16">Portrait · 9:16</option>
-                      <option value="1:1">Square · 1:1</option>
-                    </select>
-                  </Field>
-                  <Field label="Resolution">
-                    <select
-                      aria-label="Resolution"
-                      disabled={!sessionReady}
-                      value={form.resolution}
-                      onChange={(event) =>
-                        setForm((current) =>
-                          markAcceptedClipsStale(
-                            { ...current, resolution: event.target.value },
-                            "The resolution changed after this clip was accepted. Generate it again at the new size.",
-                          ),
-                        )
-                      }
-                    >
-                      {minimalResolutionOptions[
-                        minimalAspectRatio(form.resolution)
-                      ].map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="Sound behaviour">
-                    <select
-                      aria-label="Sound behaviour"
-                      disabled={!sessionReady}
-                      value={form.audioPolicy.mode}
-                      onChange={(event) => {
-                        const mode = event.target.value as LongFormGenerationPayload["audioPolicy"]["mode"];
-                        setForm((current) =>
-                          markAcceptedClipsStale(
-                            {
-                              ...current,
-                              audioPolicy: {
-                                ...current.audioPolicy,
-                                mode,
-                                dialogue: mode === "silent" ? "off" : current.audioPolicy.dialogue,
-                                soundEffects: mode === "silent" ? "off" : current.audioPolicy.soundEffects,
-                                ambience: mode === "silent" ? "off" : current.audioPolicy.ambience,
-                                music: mode === "silent" ? "off" : current.audioPolicy.music,
-                                preserveSourceAudio: mode !== "silent" && current.audioPolicy.preserveSourceAudio,
-                              },
-                            },
-                            "The sound policy changed after this clip was accepted. Generate it again to use the new sound behaviour.",
-                          ),
-                        );
-                      }}
-                    >
-                      <option value="silent">Silent</option>
-                      <option value="intent_only">Only when requested</option>
-                      <option value="directed">Directed sound</option>
-                    </select>
-                  </Field>
-                  <Field label="On-screen text">
-                    <select
-                      aria-label="On-screen text"
-                      disabled={!sessionReady}
-                      value={form.generatedTextPolicy.mode}
-                      onChange={(event) =>
-                        setForm((current) =>
-                          markAcceptedClipsStale(
-                            {
-                              ...current,
-                              generatedTextPolicy: generatedTextPolicyForMode(
-                                current.generatedTextPolicy,
-                                event.target.value as StoryboardGeneratedTextPolicy["mode"],
-                              ),
-                            },
-                            "The on-screen text policy changed after this clip was accepted. Generate it again to use the new policy.",
-                          ),
-                        )
-                      }
-                    >
-                      <option value="forbidden">Never generate visible text</option>
-                      <option value="prompted_only">Only when explicitly requested</option>
-                      <option value="allowed">Allowed where it fits the scene</option>
-                    </select>
-                  </Field>
-                </div>
-                <div className="lf-format-row">
-                  <div className="lf-format-presets">
-                    {formatPresets.map((preset) => {
-                      const active = form.resolution === preset.resolution;
-                      return (
-                        <button
-                          key={preset.key}
-                          type="button"
-                          aria-pressed={active}
-                          disabled={!sessionReady}
-                          className={`lf-format-preset ${active ? "active" : ""}`}
-                          onClick={() =>
-                            setForm((current) =>
-                              markAcceptedClipsStale(
-                                {
-                                  ...current,
-                                  resolution: preset.resolution,
-                                  fps: preset.fps,
-                                },
-                                "The output format changed after this clip was accepted. Render this scene again before assembly.",
-                              ),
-                            )
-                          }
-                        >
-                          <SocialIcon platform={preset.platform} />
-                          <span>
-                            <strong>{preset.label}</strong>
-                            <small>{preset.sublabel}</small>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {form.scenes[0] && (
-                    <div className="lf-minimal-duration">
-                      <span className="lf-label lf-format-heading">
-                        Length
-                        <output className="lf-duration-value">
-                          {totalSeconds}
-                          <small>s</small>
-                        </output>
-                      </span>
-                      <input
-                        type="range"
-                        className="lf-minimal-duration-slider"
-                        aria-label="Video length"
-                        disabled={!sessionReady || creatorLengthLocked}
-                        min={1}
-                        max={creatorMaxScenes * 8}
-                        step={1}
-                        value={Math.min(totalSeconds, creatorMaxScenes * 8)}
-                        onChange={(event) => {
-                          const value = Number(event.target.value);
-                          setForm((current) => ({
-                            ...current,
-                            scenes: creatorScenesForTotalDuration(
-                              current.scenes,
-                              value,
-                              current.globalSeed,
-                              creatorMaxScenes,
-                            ),
-                          }));
-                        }}
-                      />
-                      <small>
-                        {creatorLengthLocked
-                          ? "Length is locked after previews or video are created. Start a new project to choose another length."
-                          : `${form.scenes.length} planned ${form.scenes.length === 1 ? "scene" : "scenes"}; the Director will shape each one.`}
-                      </small>
-                    </div>
-                  )}
-                </div>
+              <div className="lf-polish-brief-footer">
+                <button
+                  type="button"
+                  className="lf-outline lf-polish-brief"
+                  disabled={
+                    !sessionReady ||
+                    !form.overallGoal.trim() ||
+                    classicBriefEnhancement.isPending
+                  }
+                  onClick={() => classicBriefEnhancement.mutate()}
+                >
+                  {classicBriefEnhancement.isPending
+                    ? "Director is working…"
+                    : "Improve with Director"}
+                </button>
               </div>
             )}
           </section>
@@ -1750,7 +1784,9 @@ export default function LongFormStoryboardStudio({
                   });
                 }}
               />}
-              <section className="lf-scenes">
+              <section
+                className={`lf-scenes ${isClassic ? "lf-panel lf-scenes-panel" : ""}`}
+              >
                 <div className="lf-section-head">
                   <div>
                     <span className="lf-label">Timeline</span>
@@ -1774,6 +1810,18 @@ export default function LongFormStoryboardStudio({
                     scene={scene}
                     index={index}
                     count={form.scenes.length}
+                    previewGate={
+                      isClassic && index === 0 && !creatorPreviewReady ? (
+                        <button
+                          type="button"
+                          className="lf-outline lf-generate-frames"
+                          disabled={!sessionReady || previewBatchBusy || enhancement.isPending || classicBriefEnhancement.isPending}
+                          onClick={() => void generateMissingCreatorPreviews()}
+                        >
+                          {previewBatchBusy ? "Generating…" : "Generate first/last"}
+                        </button>
+                      ) : undefined
+                    }
                     onChange={(patch) => updateScene(index, patch)}
                     onMove={(direction) => moveScene(index, direction)}
                     onRemove={() => removeScene(index)}
@@ -2478,21 +2526,6 @@ export default function LongFormStoryboardStudio({
               </div>
             </details>
           )}
-          {isClassic && !creatorPreviewReady && (
-            <div className="lf-minimal-preview-gate" role="status">
-              <p>
-                Generate and review the first and last frame for every scene before creating the video.
-              </p>
-              <button
-                type="button"
-                className="lf-primary"
-                disabled={!sessionReady || previewBatchBusy || enhancement.isPending || classicBriefEnhancement.isPending}
-                onClick={() => void generateMissingCreatorPreviews()}
-              >
-                {previewBatchBusy ? "Generating previews…" : "2 · Generate missing previews"}
-              </button>
-            </div>
-          )}
           <Preview
             generation={currentGeneration}
             loading={isRendering}
@@ -2510,7 +2543,7 @@ export default function LongFormStoryboardStudio({
               mutation.isPending
                 ? "◌ Generating video…"
                 : isClassic
-                  ? "3 · Generate video"
+                  ? "Generate video"
                   : "Generate complete film in one run"
             }
             onGenerate={() => mutation.mutate()}
@@ -2520,6 +2553,7 @@ export default function LongFormStoryboardStudio({
             minimal={isClassic}
             aspectRatio={minimalAspectRatio(form.resolution)}
             headerControls={isClassic ? sessionControls : undefined}
+            videoSettingsPanel={videoSettingsPanel}
           />
           {!isClassic && (
             <History generations={history} onSelect={pinSelected} />
@@ -2632,6 +2666,24 @@ function Field({
   return (
     <label className="lf-field" data-help={help}>
       <span className="lf-label">{label}</span>
+      {children}
+    </label>
+  );
+}
+function IconField({
+  icon,
+  label,
+  children,
+}: {
+  icon: string;
+  label: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <label className="lf-icon-field" title={label}>
+      <span className="lf-icon-field-glyph" aria-hidden="true">
+        {icon}
+      </span>
       {children}
     </label>
   );
@@ -3267,6 +3319,7 @@ function SceneCard({
   classic,
   negativePrompt,
   onNegativePromptChange,
+  previewGate,
 }: {
   scene: StoryboardScenePayload;
   index: number;
@@ -3286,6 +3339,7 @@ function SceneCard({
   classic?: boolean;
   negativePrompt?: string;
   onNegativePromptChange?: (value: string) => void;
+  previewGate?: React.ReactNode;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState(index === 0);
@@ -3362,14 +3416,16 @@ function SceneCard({
             }
           />
         )}
-        <button
-          type="button"
-          className="lf-regenerate-shot"
-          disabled={promptBusy}
-          onClick={onRegeneratePrompt}
-        >
-          Regenerate scene
-        </button>
+        {!classic && (
+          <button
+            type="button"
+            className="lf-regenerate-shot"
+            disabled={promptBusy}
+            onClick={onRegeneratePrompt}
+          >
+            Regenerate scene
+          </button>
+        )}
         {!classic && (
           <button
             className="lf-delete"
@@ -3452,6 +3508,18 @@ function SceneCard({
               </div>
             )}
           </div>
+          {classic && (
+            <div className="lf-polish-brief-footer">
+              <button
+                type="button"
+                className="lf-outline lf-regenerate-shot"
+                disabled={promptBusy}
+                onClick={onRegeneratePrompt}
+              >
+                Regenerate scene
+              </button>
+            </div>
+          )}
           {!classic && (
             <div className="lf-scene-fields">
               <NumberField
@@ -3604,6 +3672,7 @@ function SceneCard({
                 onGenerate={() => onGenerateFrame("end")}
               />
             </div>
+            {previewGate}
           </details>
           {classic && (
             <details className="lf-frame-details lf-negative-details">
@@ -4314,6 +4383,7 @@ function Preview({
   minimal = false,
   aspectRatio = "16:9",
   headerControls,
+  videoSettingsPanel,
 }: {
   generation?: Generation;
   loading: boolean;
@@ -4327,6 +4397,7 @@ function Preview({
   minimal?: boolean;
   aspectRatio?: MinimalAspectRatio;
   headerControls?: React.ReactNode;
+  videoSettingsPanel?: React.ReactNode;
 }) {
   const video = useAuthenticatedVideo(generation?.output?.downloadUrl);
   const [now, setNow] = useState(Date.now());
@@ -4490,30 +4561,33 @@ function Preview({
           ⇩ Download video
         </a>
       )}
-      <p
-        className="lf-ready"
-        data-help="Plain-language status for the selected generated film."
-      >
-        {generation
-          ? `Generated video ${generation.status}`
-          : minimal
-            ? "Your generated video will appear here"
+      {!minimal && (
+        <p
+          className="lf-ready"
+          data-help="Plain-language status for the selected generated film."
+        >
+          {generation
+            ? `Generated video ${generation.status}`
             : "Your generated film will appear here"}
-      </p>
-      <div className="lf-stats">
-        <span data-help="Shows whether the selected film is waiting, rendering or complete.">
-          <b>⌁ Status</b>
-          {generation ? statusLabel : "—"}
-        </span>
-        <span data-help="Real frame or scene progress reported by the runtime when available.">
-          <b>▥ Runtime</b>
-          {runtimeCounter ?? "—"}
-        </span>
-        <span data-help="Time since this generation was submitted.">
-          <b>◷ Elapsed</b>
-          {formatElapsed(generation?.createdAt, now)}
-        </span>
-      </div>
+        </p>
+      )}
+      {generation && (
+        <div className="lf-stats lf-stats-reveal">
+          <span data-help="Shows whether the selected film is waiting, rendering or complete.">
+            <b>⌁ Status</b>
+            {statusLabel}
+          </span>
+          <span data-help="Real frame or scene progress reported by the runtime when available.">
+            <b>▥ Runtime</b>
+            {runtimeCounter ?? "—"}
+          </span>
+          <span data-help="Time since this generation was submitted.">
+            <b>◷ Elapsed</b>
+            {formatElapsed(generation?.createdAt, now)}
+          </span>
+        </div>
+      )}
+      {videoSettingsPanel}
       {generation && (
         <div
           className="lf-progress"
