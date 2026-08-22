@@ -152,7 +152,7 @@ describe('generation worker failure handling', () => {
     expect(JSON.stringify(generation.body)).not.toMatch(/runtime\.test|private validation/i);
   }, 15_000);
 
-  it('preserves safe generated-text validation failure classifications', async () => {
+  it('keeps generated-text policy issues advisory after a completed render', async () => {
     vi.stubEnv('VIDEO_RUNTIME_PROVIDER', 'sulphur-ltx');
     vi.stubEnv('VIDEO_RUNTIME_BASE_URL', 'http://runtime.test');
     vi.stubEnv('VIDEO_RUNTIME_PAYLOAD_MODE', 'deploy-studio');
@@ -162,6 +162,16 @@ describe('generation worker failure handling', () => {
       if (requestUrl.endsWith('/jobs') && init?.method === 'POST') {
         submissions += 1;
         return Response.json({ id: `generated-text-runtime-job-${submissions}` }, { status: 202 });
+      }
+      if (requestUrl.match(/\/jobs\/generated-text-runtime-job-\d+\/output$/)) {
+        return new Response(new Uint8Array([
+          0x00, 0x00, 0x00, 0x18,
+          0x66, 0x74, 0x79, 0x70,
+          0x69, 0x73, 0x6f, 0x6d,
+        ]), {
+          status: 200,
+          headers: { 'content-type': 'video/mp4' },
+        });
       }
       if (requestUrl.endsWith('/jobs/generated-text-runtime-job-1')) {
         return Response.json({
@@ -192,14 +202,12 @@ describe('generation worker failure handling', () => {
       {
         auth: { authorization: 'Bearer missing-text-evidence-user' },
         idempotencyKey: 'missing-text-evidence-key',
-        expectedCode: 'runtime_generated_text_validation_missing',
-        expectedMessage: /validation evidence was unavailable/i,
+        expectedCheckStatus: undefined,
       },
       {
         auth: { authorization: 'Bearer rejected-text-evidence-user' },
         idempotencyKey: 'rejected-text-evidence-key',
-        expectedCode: 'runtime_generated_text_policy_failed',
-        expectedMessage: /unwanted captions or visible text/i,
+        expectedCheckStatus: 'failed',
       },
     ];
 
@@ -219,9 +227,14 @@ describe('generation worker failure handling', () => {
         .get(`/v1/generations/${submitted.body.id}`)
         .set(testCase.auth)
         .expect(200);
-      expect(generation.body.status).toBe('failed');
-      expect(generation.body.failureCode).toBe(testCase.expectedCode);
-      expect(generation.body.safeErrorMessage).toMatch(testCase.expectedMessage);
+      expect(generation.body.status).toBe('completed');
+      expect(generation.body.failureCode).toBeUndefined();
+      expect(generation.body.safeErrorMessage).toBeUndefined();
+      expect(generation.body.output?.kind).toBe('video');
+      const generatedTextCheck = generation.body.qualityAssessment?.checks?.find(
+        (check: { id: string }) => check.id === 'generated_text_policy',
+      );
+      expect(generatedTextCheck?.status).toBe(testCase.expectedCheckStatus);
       expect(JSON.stringify(generation.body)).not.toContain('runtime.test');
     }
   }, 15_000);

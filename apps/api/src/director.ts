@@ -138,13 +138,13 @@ export function classifyDirectorMessage(rawMessage: string): DirectorIntent {
   if (generate && /\b(scene|shot|video|clip)\b/.test(lower)) {
     return { action: "generate_scene_video", kind: "action_request", executionClass: "draft", confirmationRequired: true };
   }
-  if (/\b(silent|no audio|remove (?:all )?audio)\b/.test(lower)) {
+  if (/\b(silent|no audio|no sound|mute|muted|remove (?:all )?(?:audio|sound)|turn off (?:audio|sound))\b/.test(lower)) {
     return { action: "set_audio_policy", kind: "draft_change", executionClass: "text", confirmationRequired: false, audioMode: "silent" };
   }
-  if (/\b(directed sound|direct the sound|manual sound)\b/.test(lower)) {
+  if (/\b(directed sound|direct the sound|manual sound|sound design|design the sound|control the audio|directed audio)\b/.test(lower)) {
     return { action: "set_audio_policy", kind: "draft_change", executionClass: "text", confirmationRequired: false, audioMode: "directed" };
   }
-  if (/\b(only when requested|remove (?:the )?music|no music)\b/.test(lower)) {
+  if (/\b(only when requested|intent only|conservative audio|remove (?:the )?music|no music|avoid music|turn off music)\b/.test(lower)) {
     return { action: "set_audio_policy", kind: "draft_change", executionClass: "text", confirmationRequired: false, audioMode: "intent_only" };
   }
   if (/\brestore\b/.test(lower) && /\b(original|master|brief)\b/.test(lower)) {
@@ -174,7 +174,7 @@ export function classifyDirectorMessage(rawMessage: string): DirectorIntent {
   if (/\b(prompt|frame)\b/.test(lower) && (first || last)) {
     return { action: "propose_frame_prompt_change", kind: "draft_change", executionClass: "text", confirmationRequired: false, edge: last ? "end" : "start" };
   }
-  if (/\b(make|change|adjust|refine|strengthen|improve|rewrite|direct)\b/.test(lower)) {
+  if (/\b(make|change|adjust|refine|strengthen|improve|rewrite|direct|fix|repair|prevent|avoid)\b/.test(lower)) {
     return { action: "propose_scene_change", kind: "draft_change", executionClass: "text", confirmationRequired: false };
   }
   if (/^(what|how|which|where|when|can|is|are|show|tell)\b/.test(lower) || lower.endsWith("?")) {

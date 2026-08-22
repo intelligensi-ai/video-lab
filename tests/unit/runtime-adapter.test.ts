@@ -275,6 +275,49 @@ describe("SulphurLtxRuntimeAdapter", () => {
     });
   });
 
+  it("falls back to Intelligensi status output URLs when direct output fetch fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const requestUrl = String(url);
+        if (requestUrl.endsWith("/jobs/text-advisory-job/output")) {
+          return new Response("output endpoint unavailable", { status: 404 });
+        }
+        if (requestUrl.endsWith("/jobs/text-advisory-job")) {
+          return Response.json({
+            id: "text-advisory-job",
+            status: "failed",
+            progress: 100,
+            download_url:
+              "/v1/runtimes/longform-ltx-storyboard-studio/jobs/text-advisory-job/artifact",
+            duration_seconds: 8,
+          });
+        }
+        if (requestUrl.endsWith("/jobs/text-advisory-job/artifact")) {
+          return new Response(new Uint8Array([
+            0x00, 0x00, 0x00, 0x18,
+            0x66, 0x74, 0x79, 0x70,
+            0x69, 0x73, 0x6f, 0x6d,
+          ]), {
+            status: 200,
+            headers: { "content-type": "video/mp4" },
+          });
+        }
+        throw new Error(`Unexpected test URL: ${requestUrl}`);
+      }),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.test",
+      payloadMode: "intelligensi-api",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+
+    await expect(adapter.fetchOutput("text-advisory-job")).resolves.toMatchObject({
+      contentType: "video/mp4",
+      durationSeconds: 8,
+    });
+  });
+
   it("never exposes upstream infrastructure details as creator progress", async () => {
     vi.stubGlobal(
       "fetch",
@@ -547,11 +590,6 @@ describe("SulphurLtxRuntimeAdapter", () => {
       video_model: "ltx-2.5",
       overall_goal: "Keep the monolith visually consistent",
       negative_prompt: "flicker",
-      generated_text_policy: {
-        mode: "forbidden", captions: false, subtitles: false, closedCaptions: false,
-        titleCards: false, textOverlays: false, logos: false, watermarks: false,
-        signage: "avoid_readable_text",
-      },
       resolution: "1024x576",
       reference_conditioning: [{
         id: "reference-monolith",
@@ -584,6 +622,9 @@ describe("SulphurLtxRuntimeAdapter", () => {
         },
       ],
     });
+    expect(JSON.parse(String(calls[1].init?.body))).not.toHaveProperty(
+      "generated_text_policy",
+    );
     expect(health.capabilities).toMatchObject({
       defaultVideoModel: "ltx-2.5",
       videoModels: [

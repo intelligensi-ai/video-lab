@@ -11,19 +11,19 @@ import {
   MAX_STORYBOARD_SCENES,
 } from "@video-lab/contracts";
 import type {
+  DirectorProposalResult,
   Generation,
   LongFormVideoModel,
-  StoryboardEnhancementResponse,
-  StoryboardGeneratedTextPolicy,
   StoryboardProjectSummary,
 } from "@video-lab/contracts";
 import {
   assembleStoryboardFilm,
+  acceptDirectorProposal,
   cancelGeneration,
+  createDirectorProposal,
   createStoryboardProject,
   deleteStoryboardProject,
   emptyContinuityBible,
-  enhanceStoryboard,
   fetchGenerationOutput,
   generateStoryboardFrame,
   generateStoryboardScene,
@@ -315,20 +315,20 @@ const formatPresets: Array<{
     platform: "youtube",
   },
   {
-    key: "portrait",
-    label: "TikTok",
-    sublabel: "Portrait 9:16",
-    resolution: "720x1280",
-    fps: 30,
-    platform: "tiktok",
-  },
-  {
     key: "square",
     label: "Instagram",
     sublabel: "Square 1:1",
     resolution: "1080x1080",
     fps: 30,
     platform: "instagram",
+  },
+  {
+    key: "portrait",
+    label: "TikTok",
+    sublabel: "Portrait 9:16",
+    resolution: "720x1280",
+    fps: 30,
+    platform: "tiktok",
   },
 ];
 
@@ -447,9 +447,7 @@ function normalizePersistedForm(
     ...saved,
     videoModel: saved.videoModel === "ltx-2.5" ? "ltx-2.5" : "ltx-2.3",
     audioPolicy: saved.audioPolicy ?? freshInitialForm().audioPolicy,
-    generatedTextPolicy: saved.generatedTextPolicy?.mode === "forbidden"
-      ? defaultGeneratedTextPolicy()
-      : saved.generatedTextPolicy ?? defaultGeneratedTextPolicy(),
+    generatedTextPolicy: defaultGeneratedTextPolicy(),
     candidateCount: Math.min(4, Math.max(1, saved.candidateCount ?? 3)),
     projectReferences: (saved.projectReferences ?? []).map((reference) => {
       const assetVersionIds = reference.assetVersionIds?.length
@@ -497,16 +495,19 @@ export function generationPayloadForStudioVariant(
   form: LongFormGenerationPayload,
   _isClassic: boolean,
 ): LongFormGenerationPayload {
-  return form;
-}
-
-function generatedTextPolicyForMode(
-  current: StoryboardGeneratedTextPolicy,
-  mode: StoryboardGeneratedTextPolicy["mode"],
-): StoryboardGeneratedTextPolicy {
-  return mode === "forbidden"
-    ? defaultGeneratedTextPolicy()
-    : { ...current, mode };
+  return {
+    ...form,
+    generatedTextPolicy: defaultGeneratedTextPolicy(),
+    scenes: form.scenes.map((scene) => ({
+      ...scene,
+      generatedTextIntent: {
+        mode: "none",
+        visibleText: [],
+        reason:
+          "Visible generated text is disabled for the Creator launch workflow.",
+      },
+    })),
+  };
 }
 
 function markAcceptedClipsStale(
@@ -570,27 +571,39 @@ type EnhancementAction = {
   targetShotNumber?: number;
 };
 
-function referencePlanningEvidence(
-  result: StoryboardEnhancementResponse,
-  form: LongFormGenerationPayload,
+type DirectorRepairAction = {
+  message: string;
+  selectedSceneId?: string;
+};
+
+function mergeServerForm(
+  current: LongFormGenerationPayload,
+  remote: Record<string, unknown>,
 ) {
+  const normalized = normalizePersistedForm(
+    remote as unknown as LongFormGenerationPayload,
+  );
   return {
-    visualReferenceAnalyses: result.visualReferenceAnalyses,
-    vision: result.vision,
-    referenceStates: form.projectReferences.map((reference) => ({
-      referenceId: reference.id,
-      version: reference.version,
-      shotNumbers: reference.sceneIds
-        .map(
-          (sceneId) =>
-            form.scenes.findIndex((scene) => scene.id === sceneId) + 1,
-        )
-        .filter((shotNumber) => shotNumber > 0),
-    })),
-    instructionBundle: result.instructionBundle,
-    generatedAt: new Date().toISOString(),
+    ...normalized,
+    scenes: normalized.scenes.map((scene) => {
+      const local = current.scenes.find((candidate) => candidate.id === scene.id);
+      return local
+        ? {
+            ...scene,
+            startFrame: local.startFrame,
+            endFrame: local.endFrame,
+            keyframes: (scene.keyframes ?? []).map((keyframe) => ({
+              ...keyframe,
+              frame: local.keyframes?.find(
+                (candidate) => candidate.id === keyframe.id,
+              )?.frame,
+            })),
+          }
+        : scene;
+    }),
   };
 }
+
 type FrameState = {
   status: "idle" | "queued" | "generating" | "failed";
   error?: string;
@@ -665,172 +678,74 @@ export default function LongFormStoryboardStudio({
       setHistory((items) => [generation, ...items].slice(0, 8));
     },
   });
+  const runDirectorProposal = async (
+    message: string,
+    selectedSceneId?: string,
+  ): Promise<DirectorProposalResult> => {
+    if (!projectId || !sessionOwner) {
+      throw new Error("Open a saved project before asking the Director.");
+    }
+    await saveStoryboardSession(sessionOwner, projectId, projectTitle, form);
+    const proposal = await createDirectorProposal(
+      { projectId, message, selectedSceneId },
+      {
+        onProgress: (job) =>
+          setEnhancementProgress(storyboardAsyncProgressMessage(job)),
+      },
+    );
+    return acceptDirectorProposal(proposal.id);
+  };
   const enhancement = useMutation({
-    mutationFn: (action: EnhancementAction) =>
-      enhanceStoryboard(
-        form,
-        action.targetShotNumber,
-        projectId,
+    mutationFn: (action: EnhancementAction) => {
+      const selectedScene =
+        action.targetShotNumber !== undefined
+          ? form.scenes[action.targetShotNumber - 1]
+          : undefined;
+      const message =
         action.apply === "master"
-          ? "enhance_master_prompt"
-          : action.apply === "shot"
-            ? "revise_shot"
-            : "plan_storyboard",
-        {
-          onProgress: (job) =>
-            setEnhancementProgress(storyboardAsyncProgressMessage(job)),
-        },
-      ),
+          ? "Polish the master creative brief and continuity bible without changing the scene count."
+          : action.apply === "shot" && action.targetShotNumber
+            ? `Improve scene ${action.targetShotNumber} with the Director without changing continuity-critical details.`
+            : `Plan this creative brief into exactly ${form.scenes.length} scenes while preserving my intent.`;
+      return runDirectorProposal(message, selectedScene?.id);
+    },
     onSuccess: (result, action) => {
       setUndoForm(form);
-      setForm((current) => {
-        if (action.apply === "master") {
-          return markAcceptedClipsStale(
-            {
-              ...current,
-              originalOverallGoal:
-                current.originalOverallGoal ?? current.overallGoal,
-              overallGoal: result.polishedMasterPrompt,
-              negativePrompt: result.negativePrompt,
-              continuityBible: result.continuityBible,
-              directorAssumptions: result.assumptions,
-              instructionBundle: result.instructionBundle,
-              referencePlanningEvidence: referencePlanningEvidence(
-                result,
-                current,
-              ),
-            },
-            "The film brief or continuity bible changed after this clip was accepted. Render this scene again before assembly.",
-          );
-        }
-        if (action.apply === "shot" && action.targetShotNumber) {
-          const enhanced = result.shots[0];
-          return {
-            ...current,
-            referencePlanningEvidence: referencePlanningEvidence(
-              result,
-              current,
-            ),
-            scenes: current.scenes.map((scene, index) =>
-              index + 1 === action.targetShotNumber
-                ? {
-                    ...scene,
-                    title: enhanced.title,
-                    narrativePurpose: enhanced.narrativePurpose,
-                    prompt: enhanced.prompt,
-                    firstFramePrompt: enhanced.firstFramePrompt,
-                    lastFramePrompt: enhanced.lastFramePrompt,
-                    continuityNotes: enhanced.continuityNotes,
-                    referenceIds: enhanced.referenceIds,
-                    recommendedControls: enhanced.recommendedControls,
-                    audioIntent: enhanced.audioIntent,
-                    generatedTextIntent: enhanced.generatedTextIntent,
-                    candidateVariations: enhanced.candidateVariations,
-                    promptOrigin: "agent",
-                    staleReason:
-                      scene.startFrame ||
-                      scene.endFrame ||
-                      scene.acceptedVideoGenerationId
-                        ? "This shot prompt changed after its frame anchors were created. Review or regenerate them before rendering."
-                        : scene.staleReason,
-                  }
-                : scene,
-            ),
-          };
-        }
-        return {
-          ...current,
-          originalOverallGoal:
-            current.originalOverallGoal ?? current.overallGoal,
-          overallGoal: result.polishedMasterPrompt,
-          negativePrompt: result.negativePrompt,
-          continuityBible: result.continuityBible,
-          directorAssumptions: result.assumptions,
-          instructionBundle: result.instructionBundle,
-          referencePlanningEvidence: referencePlanningEvidence(result, current),
-          scenes: current.scenes.map((scene, index) => {
-            const enhanced = result.shots[index];
-            return {
-              ...scene,
-              title: enhanced.title,
-              narrativePurpose: enhanced.narrativePurpose,
-              prompt: enhanced.prompt,
-              firstFramePrompt: enhanced.firstFramePrompt,
-              lastFramePrompt: enhanced.lastFramePrompt,
-              continuityNotes: enhanced.continuityNotes,
-              referenceIds: enhanced.referenceIds,
-              recommendedControls: enhanced.recommendedControls,
-              audioIntent: enhanced.audioIntent,
-              generatedTextIntent: enhanced.generatedTextIntent,
-              candidateVariations: enhanced.candidateVariations,
-              promptOrigin: "agent" as const,
-              staleReason:
-                scene.startFrame ||
-                scene.endFrame ||
-                scene.acceptedVideoGenerationId
-                  ? "The enhanced direction changed after these frame anchors were created. Review or regenerate them before rendering."
-                  : scene.staleReason,
-            };
-          }),
-        };
-      });
+      if (result.project) {
+        setForm((current) => mergeServerForm(current, result.project!.form));
+      }
+      setEnhancementProgress(
+        action.apply === "shot"
+          ? "Director scene update applied."
+          : "Director update applied.",
+      );
     },
     onSettled: () => setEnhancementProgress(""),
   });
   const classicBriefEnhancement = useMutation({
     mutationFn: () =>
-      enhanceStoryboard(
-        form,
-        undefined,
-        projectId,
-        "plan_storyboard",
-        {
-          onProgress: (job) =>
-            setEnhancementProgress(storyboardAsyncProgressMessage(job)),
-        },
+      runDirectorProposal(
+        `Plan this creative brief into exactly ${form.scenes.length} scenes while preserving my intent.`,
+        form.scenes[0]?.id,
       ),
     onSuccess: (result) => {
       setUndoForm(form);
-      setForm((current) => ({
-        ...markAcceptedClipsStale(
-          {
-            ...current,
-            originalOverallGoal:
-              current.originalOverallGoal ?? current.overallGoal,
-            overallGoal: result.polishedMasterPrompt,
-            negativePrompt: result.negativePrompt,
-            continuityBible: result.continuityBible,
-            directorAssumptions: result.assumptions,
-            instructionBundle: result.instructionBundle,
-            referencePlanningEvidence: referencePlanningEvidence(result, current),
-          },
-          "The Director changed this scene after its clip was accepted. Render it again before assembly.",
-        ),
-        scenes: current.scenes.map((scene, index) => {
-          const enhanced = result.shots[index];
-          return {
-            ...scene,
-            title: enhanced.title,
-            narrativePurpose: enhanced.narrativePurpose,
-            prompt: enhanced.prompt,
-            firstFramePrompt: enhanced.firstFramePrompt,
-            lastFramePrompt: enhanced.lastFramePrompt,
-            continuityNotes: enhanced.continuityNotes,
-            referenceIds: enhanced.referenceIds,
-            recommendedControls: enhanced.recommendedControls,
-            audioIntent: enhanced.audioIntent,
-            generatedTextIntent: enhanced.generatedTextIntent,
-            candidateVariations: enhanced.candidateVariations,
-            promptOrigin: "agent" as const,
-            staleReason:
-              scene.startFrame ||
-              scene.endFrame ||
-              scene.acceptedVideoGenerationId
-                ? "The Director changed this scene after its anchors or video were created. Review or regenerate them before rendering."
-                : scene.staleReason,
-          };
-        }),
-      }));
+      if (result.project) {
+        setForm((current) => mergeServerForm(current, result.project!.form));
+      }
+      setEnhancementProgress("Director update applied.");
+    },
+    onSettled: () => setEnhancementProgress(""),
+  });
+  const directorRepair = useMutation({
+    mutationFn: (action: DirectorRepairAction) =>
+      runDirectorProposal(action.message, action.selectedSceneId),
+    onSuccess: (result) => {
+      setUndoForm(form);
+      if (result.project) {
+        setForm((current) => mergeServerForm(current, result.project!.form));
+      }
+      setEnhancementProgress("Director repair applied. Review the updated direction, then retry.");
     },
     onSettled: () => setEnhancementProgress(""),
   });
@@ -942,6 +857,8 @@ export default function LongFormStoryboardStudio({
     queryKey: ["generation", selected?.id],
     queryFn: () => getGeneration(selected!.id),
     enabled: Boolean(selected?.id),
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
     refetchInterval: (query) => {
       const current = query.state.data as Generation | undefined;
       return current &&
@@ -950,6 +867,12 @@ export default function LongFormStoryboardStudio({
         : 2000;
     },
   });
+  useEffect(() => {
+    if (!generation.data) return;
+    setSelected((current) =>
+      current?.id === generation.data?.id ? generation.data : current,
+    );
+  }, [generation.data]);
   const currentGeneration = generation.data ?? selected;
   const isRendering =
     mutation.isPending ||
@@ -1429,35 +1352,49 @@ export default function LongFormStoryboardStudio({
           </select>
         </IconField>
         <IconField icon="♪" label="Sound behaviour">
-          <select
-            aria-label="Sound behaviour"
-            disabled={!sessionReady}
-            value={form.audioPolicy.mode}
-            onChange={(event) => {
-              const mode = event.target.value as LongFormGenerationPayload["audioPolicy"]["mode"];
-              setForm((current) =>
-                markAcceptedClipsStale(
-                  {
-                    ...current,
-                    audioPolicy: {
-                      ...current.audioPolicy,
-                      mode,
-                      dialogue: mode === "silent" ? "off" : current.audioPolicy.dialogue,
-                      soundEffects: mode === "silent" ? "off" : current.audioPolicy.soundEffects,
-                      ambience: mode === "silent" ? "off" : current.audioPolicy.ambience,
-                      music: mode === "silent" ? "off" : current.audioPolicy.music,
-                      preserveSourceAudio: mode !== "silent" && current.audioPolicy.preserveSourceAudio,
+          <div className="lf-inline-director-control">
+            <select
+              aria-label="Sound behaviour"
+              disabled={!sessionReady}
+              value={form.audioPolicy.mode}
+              onChange={(event) => {
+                const mode = event.target.value as LongFormGenerationPayload["audioPolicy"]["mode"];
+                setForm((current) =>
+                  markAcceptedClipsStale(
+                    {
+                      ...current,
+                      audioPolicy: {
+                        ...current.audioPolicy,
+                        mode,
+                        dialogue: mode === "silent" ? "off" : current.audioPolicy.dialogue,
+                        soundEffects: mode === "silent" ? "off" : current.audioPolicy.soundEffects,
+                        ambience: mode === "silent" ? "off" : current.audioPolicy.ambience,
+                        music: mode === "silent" ? "off" : current.audioPolicy.music,
+                        preserveSourceAudio: mode !== "silent" && current.audioPolicy.preserveSourceAudio,
+                      },
                     },
-                  },
-                  "The sound policy changed after this clip was accepted. Generate it again to use the new sound behaviour.",
-                ),
-              );
-            }}
-          >
-            <option value="silent">Silent</option>
-            <option value="intent_only">Only when requested</option>
-            <option value="directed">Directed sound</option>
-          </select>
+                    "The sound policy changed after this clip was accepted. Generate it again to use the new sound behaviour.",
+                  ),
+                );
+              }}
+            >
+              <option value="silent">Silent</option>
+              <option value="intent_only">Only when requested</option>
+              <option value="directed">Directed sound</option>
+            </select>
+            <button
+              type="button"
+              className="lf-icon-director"
+              disabled={!sessionReady || directorRepair.isPending}
+              onClick={() =>
+                directorRepair.mutate({
+                  message: directorProjectSoundMessage(form.audioPolicy.mode),
+                })
+              }
+            >
+              Director
+            </button>
+          </div>
         </IconField>
         <button
           type="button"
@@ -1492,29 +1429,7 @@ export default function LongFormStoryboardStudio({
             </select>
           </IconField>
           <IconField icon="T" label="On-screen text">
-            <select
-              aria-label="On-screen text"
-              disabled={!sessionReady}
-              value={form.generatedTextPolicy.mode}
-              onChange={(event) =>
-                setForm((current) =>
-                  markAcceptedClipsStale(
-                    {
-                      ...current,
-                      generatedTextPolicy: generatedTextPolicyForMode(
-                        current.generatedTextPolicy,
-                        event.target.value as StoryboardGeneratedTextPolicy["mode"],
-                      ),
-                    },
-                    "The on-screen text policy changed after this clip was accepted. Generate it again to use the new policy.",
-                  ),
-                )
-              }
-            >
-              <option value="forbidden">Never generate visible text</option>
-              <option value="prompted_only">Only when explicitly requested</option>
-              <option value="allowed">Allowed where it fits the scene</option>
-            </select>
+            <span className="lf-static-setting">Disabled</span>
           </IconField>
         </div>
       )}
@@ -1678,41 +1593,43 @@ export default function LongFormStoryboardStudio({
                 {enhancementProgress}
               </p>
             )}
-            <div
-              className="lf-enhancer-actions"
-              aria-label="Local Gemma prompt assistance"
-            >
-              {form.originalOverallGoal && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setForm((current) =>
-                      markAcceptedClipsStale(
-                        {
-                          ...current,
-                          overallGoal:
-                            current.originalOverallGoal ?? current.overallGoal,
-                        },
-                        "The film brief changed after this clip was accepted. Render this scene again before assembly.",
-                      ),
-                    )
-                  }
-                >
-                  Restore original brief
-                </button>
-              )}
-              {undoForm && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setForm(undoForm);
-                    setUndoForm(undefined);
-                  }}
-                >
-                  Undo enhancement
-                </button>
-              )}
-            </div>
+            {(form.originalOverallGoal || undoForm) && (
+              <div
+                className="lf-enhancer-actions"
+                aria-label="Local Gemma prompt assistance"
+              >
+                {form.originalOverallGoal && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setForm((current) =>
+                        markAcceptedClipsStale(
+                          {
+                            ...current,
+                            overallGoal:
+                              current.originalOverallGoal ?? current.overallGoal,
+                          },
+                          "The film brief changed after this clip was accepted. Render this scene again before assembly.",
+                        ),
+                      )
+                    }
+                  >
+                    Restore original brief
+                  </button>
+                )}
+                {undoForm && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm(undoForm);
+                      setUndoForm(undefined);
+                    }}
+                  >
+                    Undo enhancement
+                  </button>
+                )}
+              </div>
+            )}
             {enhancement.error && (
               <p className="lf-error" role="alert">
                 {enhancement.error.message}
@@ -1721,6 +1638,11 @@ export default function LongFormStoryboardStudio({
             {classicBriefEnhancement.error && (
               <p className="lf-error" role="alert">
                 {classicBriefEnhancement.error.message}
+              </p>
+            )}
+            {directorRepair.error && (
+              <p className="lf-error" role="alert">
+                {directorRepair.error.message}
               </p>
             )}
             {isClassic && (
@@ -1815,7 +1737,7 @@ export default function LongFormStoryboardStudio({
                         <button
                           type="button"
                           className="lf-outline lf-generate-frames"
-                          disabled={!sessionReady || previewBatchBusy || enhancement.isPending || classicBriefEnhancement.isPending}
+                          disabled={!sessionReady || previewBatchBusy || enhancement.isPending || classicBriefEnhancement.isPending || directorRepair.isPending}
                           onClick={() => void generateMissingCreatorPreviews()}
                         >
                           {previewBatchBusy ? "Generating…" : "Generate first/last"}
@@ -1840,11 +1762,23 @@ export default function LongFormStoryboardStudio({
                         targetShotNumber: index + 1,
                       })
                     }
-                    promptBusy={enhancement.isPending}
+                    promptBusy={enhancement.isPending || directorRepair.isPending}
                     renderState={
                       sceneRenderStates[scene.id] ?? { status: "idle" }
                     }
                     onRender={() => void renderScene(index)}
+                    onAskDirectorRepair={(error) =>
+                      directorRepair.mutate({
+                        selectedSceneId: scene.id,
+                        message: directorRepairMessage(error, "scene"),
+                      })
+                    }
+                    onAskDirectorSound={() =>
+                      directorRepair.mutate({
+                        selectedSceneId: scene.id,
+                        message: directorSceneSoundMessage(index + 1, scene),
+                      })
+                    }
                     onAcceptCandidate={(generationId) =>
                       acceptSceneCandidate(index, generationId)
                     }
@@ -1896,74 +1830,68 @@ export default function LongFormStoryboardStudio({
                   label="Sound behaviour"
                   help="Only when requested is conservative: mood words never add music, while quoted dialogue and explicit sound markers can enable sound."
                 >
-                  <select
-                    value={form.audioPolicy.mode}
-                    onChange={(event) => {
-                      const mode = event.target
-                        .value as LongFormGenerationPayload["audioPolicy"]["mode"];
-                      setForm((current) =>
-                        markAcceptedClipsStale(
-                          {
-                            ...current,
-                            audioPolicy: {
-                              ...current.audioPolicy,
-                              mode,
-                              dialogue:
-                                mode === "silent"
-                                  ? "off"
-                                  : current.audioPolicy.dialogue,
-                              soundEffects:
-                                mode === "silent"
-                                  ? "off"
-                                  : current.audioPolicy.soundEffects,
-                              ambience:
-                                mode === "silent"
-                                  ? "off"
-                                  : current.audioPolicy.ambience,
-                              music:
-                                mode === "silent"
-                                  ? "off"
-                                  : current.audioPolicy.music,
-                              preserveSourceAudio:
-                                mode !== "silent" &&
-                                current.audioPolicy.preserveSourceAudio,
+                  <div className="lf-inline-director-control">
+                    <select
+                      value={form.audioPolicy.mode}
+                      onChange={(event) => {
+                        const mode = event.target
+                          .value as LongFormGenerationPayload["audioPolicy"]["mode"];
+                        setForm((current) =>
+                          markAcceptedClipsStale(
+                            {
+                              ...current,
+                              audioPolicy: {
+                                ...current.audioPolicy,
+                                mode,
+                                dialogue:
+                                  mode === "silent"
+                                    ? "off"
+                                    : current.audioPolicy.dialogue,
+                                soundEffects:
+                                  mode === "silent"
+                                    ? "off"
+                                    : current.audioPolicy.soundEffects,
+                                ambience:
+                                  mode === "silent"
+                                    ? "off"
+                                    : current.audioPolicy.ambience,
+                                music:
+                                  mode === "silent"
+                                    ? "off"
+                                    : current.audioPolicy.music,
+                                preserveSourceAudio:
+                                  mode !== "silent" &&
+                                  current.audioPolicy.preserveSourceAudio,
+                              },
                             },
-                          },
-                          "The sound policy changed after this clip was accepted. Render it again before assembly.",
-                        ),
-                      );
-                    }}
-                  >
-                    <option value="silent">Silent</option>
-                    <option value="intent_only">Only when requested</option>
-                    <option value="directed">Directed sound</option>
-                  </select>
+                            "The sound policy changed after this clip was accepted. Render it again before assembly.",
+                          ),
+                        );
+                      }}
+                    >
+                      <option value="silent">Silent</option>
+                      <option value="intent_only">Only when requested</option>
+                      <option value="directed">Directed sound</option>
+                    </select>
+                    <button
+                      type="button"
+                      className="lf-icon-director"
+                      disabled={!sessionReady || directorRepair.isPending}
+                      onClick={() =>
+                        directorRepair.mutate({
+                          message: directorProjectSoundMessage(form.audioPolicy.mode),
+                        })
+                      }
+                    >
+                      Director
+                    </button>
+                  </div>
                 </Field>
                 <Field
                   label="On-screen text"
-                  help="Forbidden keeps all visible text, captions and signage out of the frame. Allowed lets the runtime include readable text when the scene calls for it."
+                  help="Visible generated text is disabled for the Creator launch workflow."
                 >
-                  <select
-                    value={form.generatedTextPolicy.mode}
-                    onChange={(event) =>
-                      setForm((current) =>
-                        markAcceptedClipsStale(
-                          {
-                            ...current,
-                            generatedTextPolicy: generatedTextPolicyForMode(
-                              current.generatedTextPolicy,
-                              event.target.value as StoryboardGeneratedTextPolicy["mode"],
-                            ),
-                          },
-                          "The on-screen text policy changed after this clip was accepted. Render it again before assembly.",
-                        ),
-                      )
-                    }
-                  >
-                    <option value="forbidden">Never generate visible text</option>
-                    <option value="prompted_only">Only when explicitly requested</option>
-                    <option value="allowed">Allowed where it fits the scene</option>
-                  </select>
+                  <span className="lf-static-setting">Disabled</span>
                 </Field>
                 <NumberField
                   label="Drafts per scene"
@@ -2131,60 +2059,6 @@ export default function LongFormStoryboardStudio({
                       />
                       <span /> Preserve supplied source audio
                     </label>
-                  </div>
-                </details>
-              )}
-              {form.generatedTextPolicy.mode !== "forbidden" && (
-                <details className="lf-continuity-details">
-                  <summary>On-screen text details</summary>
-                  <div className="lf-settings">
-                    {(
-                      [
-                        ["captions", "Captions"],
-                        ["subtitles", "Subtitles"],
-                        ["closedCaptions", "Closed captions"],
-                        ["titleCards", "Title cards"],
-                        ["textOverlays", "Text overlays"],
-                        ["logos", "Logos"],
-                        ["watermarks", "Watermarks"],
-                      ] as const
-                    ).map(([key, label]) => (
-                      <label key={key} className="lf-toggle">
-                        <input
-                          type="checkbox"
-                          checked={form.generatedTextPolicy[key]}
-                          onChange={(event) =>
-                            setForm((current) => ({
-                              ...current,
-                              generatedTextPolicy: {
-                                ...current.generatedTextPolicy,
-                                [key]: event.target.checked,
-                              },
-                            }))
-                          }
-                        />
-                        <span /> {label}
-                      </label>
-                    ))}
-                    <Field label="Readable signage">
-                      <select
-                        value={form.generatedTextPolicy.signage}
-                        onChange={(event) =>
-                          setForm((current) => ({
-                            ...current,
-                            generatedTextPolicy: {
-                              ...current.generatedTextPolicy,
-                              signage: event.target
-                                .value as StoryboardGeneratedTextPolicy["signage"],
-                            },
-                          }))
-                        }
-                      >
-                        <option value="avoid_readable_text">Avoid readable text</option>
-                        <option value="incidental">Incidental only</option>
-                        <option value="allowed">Allowed</option>
-                      </select>
-                    </Field>
                   </div>
                 </details>
               )}
@@ -2537,19 +2411,30 @@ export default function LongFormStoryboardStudio({
               (!isClassic || creatorPreviewReady) &&
               !mutation.isPending &&
               !enhancement.isPending &&
-              !classicBriefEnhancement.isPending
+              !classicBriefEnhancement.isPending &&
+              !directorRepair.isPending
             }
             generateLabel={
               mutation.isPending
                 ? "◌ Generating video…"
                 : isClassic
-                  ? "Generate video"
+                  ? "Generator"
                   : "Generate complete film in one run"
             }
             onGenerate={() => mutation.mutate()}
             cancelling={cancellation.isPending}
             onCancel={() => cancellation.mutate()}
             cancelError={cancellation.error?.message}
+            directorBusy={directorRepair.isPending}
+            onAskDirectorRepair={(error) =>
+              directorRepair.mutate({
+                selectedSceneId: generationSceneId(currentGeneration),
+                message: directorRepairMessage(
+                  error,
+                  generationSceneId(currentGeneration) ? "scene" : "project",
+                ),
+              })
+            }
             minimal={isClassic}
             aspectRatio={minimalAspectRatio(form.resolution)}
             headerControls={isClassic ? sessionControls : undefined}
@@ -3313,6 +3198,8 @@ function SceneCard({
   promptBusy,
   renderState,
   onRender,
+  onAskDirectorRepair,
+  onAskDirectorSound,
   onAcceptCandidate,
   globalSeed,
   seedPolicy,
@@ -3333,6 +3220,8 @@ function SceneCard({
   promptBusy: boolean;
   renderState: SceneRenderState;
   onRender: () => void;
+  onAskDirectorRepair: (error: string) => void;
+  onAskDirectorSound: () => void;
   onAcceptCandidate: (generationId: string) => void;
   globalSeed: number;
   seedPolicy: LongFormGenerationPayload["seedPolicy"];
@@ -3359,27 +3248,7 @@ function SceneCard({
           aria-expanded={expanded}
           aria-label={`${expanded ? "Collapse" : "Expand"} scene ${index + 1}`}
           onClick={() => setExpanded((value) => !value)}
-        >
-          <span className="lf-scene-number">{index + 1}</span>
-        </button>
-        <span
-          className="lf-help-target lf-scene-title-help"
-          data-help="A short editorial name used to identify this scene in the timeline."
-        >
-          <input
-            aria-label={`Scene ${index + 1} title`}
-            placeholder="Scene title"
-            value={scene.title}
-            onChange={(event) =>
-              onChange({
-                title: event.target.value,
-                staleReason: scene.acceptedVideoGenerationId
-                  ? "The scene title changed after its accepted clip was rendered. Render this scene again before assembly."
-                  : scene.staleReason,
-              })
-            }
-          />
-        </span>
+        />
         {!classic && (
           <>
             <button
@@ -3652,6 +3521,7 @@ function SceneCard({
                   })
                 }
                 onGenerate={() => onGenerateFrame("start")}
+                onAskDirectorRepair={(error) => onAskDirectorRepair(error)}
               />
               <FrameControl
                 edge="end"
@@ -3670,6 +3540,7 @@ function SceneCard({
                   })
                 }
                 onGenerate={() => onGenerateFrame("end")}
+                onAskDirectorRepair={(error) => onAskDirectorRepair(error)}
               />
             </div>
             {previewGate}
@@ -3750,6 +3621,14 @@ function SceneCard({
                     }
                   />
                 </label>
+                <button
+                  type="button"
+                  className="lf-outline lf-scene-sound-director"
+                  disabled={promptBusy}
+                  onClick={onAskDirectorSound}
+                >
+                  Ask Director for sound
+                </button>
               </div>
             </details>
           )}
@@ -3800,16 +3679,30 @@ function SceneCard({
                   {renderState.status === "queued"
                     ? "Queued…"
                     : renderState.status === "generating"
-                      ? "Rendering scene…"
+                      ? "Rendering video title…"
                       : scene.candidateGenerationIds?.length
                         ? "Generate more drafts"
                         : "Generate draft candidates"}
                 </button>
               </div>
               {renderState.status === "failed" && (
-                <p className="lf-error" role="alert">
-                  {renderState.error} The previous accepted clip is unchanged.
-                </p>
+                <div className="lf-error lf-repair-callout" role="alert">
+                  <p>
+                    {renderState.error} The previous accepted clip is unchanged.
+                  </p>
+                  <button
+                    type="button"
+                    className="lf-outline"
+                    disabled={promptBusy}
+                    onClick={() =>
+                      onAskDirectorRepair(
+                        renderState.error ?? "The scene render failed.",
+                      )
+                    }
+                  >
+                    Ask Director to fix
+                  </button>
+                </div>
               )}
               {scene.acceptedVideoGenerationId && (
                 <SceneAcceptedVideo
@@ -3858,6 +3751,7 @@ function FrameControl({
   onPrompt,
   onFile,
   onGenerate,
+  onAskDirectorRepair,
 }: {
   edge: "start" | "end";
   file?: File;
@@ -3866,6 +3760,7 @@ function FrameControl({
   onPrompt: (value: string) => void;
   onFile: (file?: File) => void;
   onGenerate: () => void;
+  onAskDirectorRepair: (error: string) => void;
 }) {
   const label = edge === "start" ? "First frame" : "Last frame";
   const busy = state.status === "queued" || state.status === "generating";
@@ -3904,9 +3799,19 @@ function FrameControl({
             : `Generate ${label.toLowerCase()}`}
       </button>
       {state.status === "failed" && (
-        <p className="lf-error" role="alert">
-          {state.error} Your previous frame is unchanged. Retry when ready.
-        </p>
+        <div className="lf-error lf-repair-callout" role="alert">
+          <p>{state.error} Your previous frame is unchanged.</p>
+          <button
+            type="button"
+            className="lf-outline"
+            disabled={busy}
+            onClick={() =>
+              onAskDirectorRepair(state.error ?? `${label} generation failed.`)
+            }
+          >
+            Ask Director to fix prompt
+          </button>
+        </div>
       )}
     </section>
   );
@@ -4359,6 +4264,55 @@ function clampProgress(value: unknown, status?: Generation["status"]) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
+function humaniseRuntimeStage(value?: string) {
+  if (!value) return undefined;
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function generationFailureMessage(generation?: Generation) {
+  if (!generation || generation.status !== "failed") return undefined;
+  return (
+    generation.safeErrorMessage ||
+    generation.runtimeMessage ||
+    "The render failed before a downloadable video was created."
+  );
+}
+
+function generationSceneId(generation?: Generation) {
+  const sceneId = generation?.settings.operationSceneId;
+  return typeof sceneId === "string" && sceneId.trim() ? sceneId : undefined;
+}
+
+function directorRepairMessage(error: string, scope: "scene" | "project") {
+  const captionFailure = /\b(caption|captions|subtitle|subtitles|visible text|generated text|readable text)\b/i.test(error);
+  if (captionFailure) {
+    return scope === "scene"
+      ? `Fix this scene direction to prevent unwanted captions, subtitles, visible generated text, signage, logos and watermarks. Keep the creative intent, but rewrite the prompt so the next render avoids readable text. Runtime error: ${error}`
+      : `Fix the storyboard to prevent unwanted captions, subtitles, visible generated text, signage, logos and watermarks across every scene. Keep the creative intent, but strengthen the direction and negative prompt so the next render avoids readable text. Runtime error: ${error}`;
+  }
+  return scope === "scene"
+    ? `Review this failed scene render and fix the scene direction so it can be retried safely. Keep existing successful work unchanged. Runtime error: ${error}`
+    : `Review this failed render and fix the storyboard so it can be retried safely. Keep existing successful work unchanged. Runtime error: ${error}`;
+}
+
+function directorProjectSoundMessage(mode: LongFormGenerationPayload["audioPolicy"]["mode"]) {
+  if (mode === "silent") {
+    return "Set the project sound policy to silent. Remove dialogue, music, ambience and sound effects unless the user later explicitly changes this.";
+  }
+  if (mode === "directed") {
+    return "Review and direct the project sound design. Keep the current creative intent, but make the audio policy and scene sound notes explicit enough for generation and assembly.";
+  }
+  return "Make the project audio conservative: only include dialogue, ambience, sound effects or music when the scene explicitly asks for it. Avoid accidental music or mood-based sound.";
+}
+
+function directorSceneSoundMessage(sceneNumber: number, scene: StoryboardScenePayload) {
+  return `Improve scene ${sceneNumber}'s sound direction. Current sound mode is ${scene.audioIntent?.mode ?? "silent"}. Current sound note: ${scene.audioIntent?.reason || "none"}. Keep the visual direction and continuity, but rewrite only the scene sound intent so the runtime knows whether to use dialogue, ambience, effects, music, mixed sound or silence.`;
+}
+
 function formatElapsed(createdAt?: string, now = Date.now()) {
   if (!createdAt) return "Session";
   const elapsedSeconds = Math.max(
@@ -4380,6 +4334,8 @@ function Preview({
   cancelling,
   onCancel,
   cancelError,
+  directorBusy,
+  onAskDirectorRepair,
   minimal = false,
   aspectRatio = "16:9",
   headerControls,
@@ -4394,6 +4350,8 @@ function Preview({
   cancelling: boolean;
   onCancel: () => void;
   cancelError?: string;
+  directorBusy?: boolean;
+  onAskDirectorRepair?: (error: string) => void;
   minimal?: boolean;
   aspectRatio?: MinimalAspectRatio;
   headerControls?: React.ReactNode;
@@ -4407,54 +4365,58 @@ function Preview({
     return () => window.clearInterval(timer);
   }, [loading]);
   const progress = clampProgress(generation?.progress, generation?.status);
+  const rawProgress =
+    typeof generation?.progress === "number" && Number.isFinite(generation.progress)
+      ? generation.progress
+      : 0;
+  const hasRuntimeActivity =
+    Boolean(generation?.runtimeMessage) ||
+    Boolean(generation?.runtimeProgress) ||
+    Boolean(rawProgress > 0 && generation?.status !== "completed");
   const statusLabel = generation?.status
     ? generation.status.replace("_", " ")
     : "Ready";
   const progressLabel =
     generation?.status === "completed"
       ? "Render complete"
+      : generation?.status === "generating" || hasRuntimeActivity
+        ? "Rendering video title"
       : generation?.status === "queued"
-        ? "Assembling movie"
+        ? "Preparing runtime"
         : generation?.status === "preparing"
           ? "Preparing render"
-          : generation?.status === "generating"
-            ? "Rendering with runtime"
-            : generation?.status === "uploading"
+          : generation?.status === "uploading"
               ? "Finalising output"
               : loading
-                ? "Rendering with runtime"
+                ? "Rendering video title"
                 : "Ready";
   const queueLabel =
     generation?.queuePosition && generation.queuePosition > 1
       ? `Queue position ${generation.queuePosition}`
-      : "Setting up the render pipeline";
+      : "Waiting for the render worker";
   const activityLabel =
     generation?.runtimeMessage ||
-    (generation?.status === "queued"
+    (hasRuntimeActivity
+      ? "Runtime is processing the render"
+      : generation?.status === "queued"
       ? queueLabel
       : `${statusLabel} with runtime`);
   const runtimeCounter = runtimeProgressCounter(generation);
+  const runtimeStage = humaniseRuntimeStage(generation?.runtimeProgress?.stage);
+  const failureMessage = generationFailureMessage(generation);
+  const failureCode = generation?.failureCode
+    ? humaniseRuntimeStage(generation.failureCode)
+    : undefined;
+  const visibleProgress =
+    generation && generation.status !== "completed" && progress > 0
+      ? `${progress}%`
+      : undefined;
 
   return (
     <section className="lf-preview lf-panel">
       <header data-help="This panel tracks the currently selected generation, including active render progress, playback and download once complete.">
-        <div>
-          {!minimal && <span className="lf-label">Your creation</span>}
-          <h2>{minimal ? "Preview" : "Cinematic preview"}</h2>
-        </div>
-        <div className="lf-preview-header-actions">
-          {headerControls}
-          <span
-            className="lf-complete"
-            data-help="The current state of the selected generation: ready, queued, rendering, completed, failed or cancelled."
-          >
-            {loading
-              ? "Rendering"
-              : submissionError
-                ? "Action needed"
-                : statusLabel}
-          </span>
-        </div>
+        <div>{!minimal && <span className="lf-label">Your creation</span>}</div>
+        <div className="lf-preview-header-actions">{headerControls}</div>
       </header>
       {!minimal && (
         <div className="lf-preview-tabs">
@@ -4481,27 +4443,46 @@ function Preview({
         data-help="The selected generated film appears here. While empty, this shows the Storyboard preview artwork."
       >
         {video.objectUrl ? (
-          <video src={video.objectUrl} controls />
+          <video key={aspectRatio} src={video.objectUrl} controls />
         ) : generation?.output?.downloadUrl ? (
           <VideoRetrievalMark />
         ) : (
           <img
+            key={aspectRatio}
             src="/images/longform-ltx-storyboard-studio-film-roll.webp"
             alt="Film roll containing a sequence of cinematic storyboard frames"
           />
         )}
-        {loading && (
+        {(loading || failureMessage) && (
           <div
-            className="lf-rendering"
-            data-help="Live render feedback from the runtime."
+            className={`lf-rendering ${failureMessage ? "lf-render-error" : ""}`}
+            data-help={
+              failureMessage
+                ? "The selected generation failed. The error shown here is the safe runtime failure message."
+                : "Live render feedback from the runtime."
+            }
           >
             <div>
-              <span className="lf-render-spinner" aria-hidden="true">
-                <img src="/fav-icon.png" alt="" />
-              </span>
-              <strong>{progressLabel}</strong>
-              <small>{activityLabel}</small>
-              {runtimeCounter && <b>{runtimeCounter}</b>}
+              {!failureMessage && (
+                <span className="lf-render-spinner" aria-hidden="true">
+                  <img src="/fav-icon.png" alt="" />
+                </span>
+              )}
+              <strong>{failureMessage ? "Render failed" : progressLabel}</strong>
+              <small>{failureMessage ?? activityLabel}</small>
+              {(runtimeCounter || runtimeStage || failureCode) && (
+                <b>{runtimeCounter ?? runtimeStage ?? failureCode}</b>
+              )}
+              {failureMessage && onAskDirectorRepair && (
+                <button
+                  type="button"
+                  className="lf-render-repair"
+                  disabled={directorBusy}
+                  onClick={() => onAskDirectorRepair(failureMessage)}
+                >
+                  {directorBusy ? "Director is working…" : "Ask Director to fix"}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -4546,20 +4527,22 @@ function Preview({
             {cancelling ? "Cancelling…" : "Cancel active render"}
           </button>
         )}
+        {video.objectUrl && (
+          <a
+            className="lf-download"
+            aria-label="Download video"
+            title="Download video"
+            data-help="Save the completed film file to your device."
+            href={video.objectUrl}
+            download={`${generation?.id ?? "video"}.mp4`}
+          >
+            ⇩
+          </a>
+        )}
       </div>
       {cancelError && <p className="lf-error">{cancelError}</p>}
       {video.error && (
         <p className="error">Video retrieval failed: {video.error}</p>
-      )}
-      {video.objectUrl && (
-        <a
-          className="lf-download"
-          data-help="Save the completed film file to your device."
-          href={video.objectUrl}
-          download={`${generation?.id ?? "video"}.mp4`}
-        >
-          ⇩ Download video
-        </a>
       )}
       {!minimal && (
         <p
@@ -4577,12 +4560,12 @@ function Preview({
             <b>⌁ Status</b>
             {statusLabel}
           </span>
-          <span data-help="Real frame or scene progress reported by the runtime when available.">
-            <b>▥ Runtime</b>
-            {runtimeCounter ?? "—"}
+          <span data-help="Reported frame, scene or percentage progress from the runtime.">
+            <b>◐ Progress</b>
+            {runtimeCounter ?? visibleProgress ?? "Waiting"}
           </span>
           <span data-help="Time since this generation was submitted.">
-            <b>◷ Elapsed</b>
+            <b>⏱ Elapsed</b>
             {formatElapsed(generation?.createdAt, now)}
           </span>
         </div>

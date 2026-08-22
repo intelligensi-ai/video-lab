@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { defaultGeneratedTextPolicy } from "@video-lab/contracts";
 import {
   creatorScenesForTotalDuration,
   formForStudioVariant,
@@ -100,12 +101,26 @@ describe("minimal VideoLab project safety", () => {
       "scene-2",
     ]);
     expect(original.scenes).toHaveLength(2);
-    expect(submitted).toBe(restored);
+    expect(submitted).toEqual(restored);
   });
 
-  it("leaves the advanced generation payload intact", () => {
+  it("normalises the generated-text policy for the advanced payload while leaving everything else intact", () => {
     const original = projectForm();
-    expect(generationPayloadForStudioVariant(original, false)).toBe(original);
+    const submitted = generationPayloadForStudioVariant(original, false);
+
+    expect(submitted).toEqual({
+      ...original,
+      generatedTextPolicy: defaultGeneratedTextPolicy(),
+      scenes: original.scenes.map((scene) => ({
+        ...scene,
+        generatedTextIntent: {
+          mode: "none",
+          visibleText: [],
+          reason:
+            "Visible generated text is disabled for the Creator launch workflow.",
+        },
+      })),
+    });
   });
 
   it("turns an exact Creator length into the smallest balanced valid storyboard", () => {

@@ -100,7 +100,7 @@ type CreatorOperation =
   | "frame_generation"
   | "video_generation";
 type CreatorEntitlementDecision = {
-  source: "local" | "staging_allowlist" | "firestore";
+  source: "local" | "admin" | "staging_allowlist" | "firestore";
   policyVersion: string;
   operation: CreatorOperation;
 };
@@ -246,11 +246,15 @@ let runtimeControlCheckedAt = 0;
 function operationalErrorCode(error: unknown) {
   if (error && typeof error === "object" && "code" in error) {
     const code = String((error as { code?: unknown }).code ?? "");
+    if (
+      code === "generated_text_validation_missing" ||
+      code === "generated_text_policy_failed" ||
+      code === "runtime_generated_text_validation_missing" ||
+      code === "runtime_generated_text_policy_failed"
+    ) {
+      return "runtime_failure";
+    }
     if (/^runtime_[a-z0-9_]+$/.test(code)) return code;
-    if (code === "generated_text_validation_missing")
-      return "runtime_generated_text_validation_missing";
-    if (code === "generated_text_policy_failed")
-      return "runtime_generated_text_policy_failed";
   }
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (message.includes("timeout")) return "runtime_timeout";
@@ -1079,12 +1083,23 @@ function stagingEntitlementUids(env: NodeJS.ProcessEnv = process.env) {
 }
 
 async function requireCreatorEntitlement(
-  uid: string,
+  principalOrUid: Principal | string,
   operation: CreatorOperation,
 ): Promise<CreatorEntitlementDecision> {
+  const uid =
+    typeof principalOrUid === "string" ? principalOrUid : principalOrUid.uid;
   const mode = creatorEntitlementMode();
   if (mode === "local") {
     return { source: "local", policyVersion: "local-development", operation };
+  }
+  if (typeof principalOrUid !== "string" && principalOrUid.admin) {
+    return {
+      source: "admin",
+      policyVersion:
+        process.env.VIDEO_LAB_ENTITLEMENT_POLICY_VERSION?.trim() ||
+        "admin",
+      operation,
+    };
   }
   if (mode === "invalid") {
     throw problem(
@@ -1656,6 +1671,92 @@ function publicRuntimeStatus(): RuntimeStatus {
     discovery: publicDiscovery,
   };
 }
+function generationLogMessage(g: StoredGeneration, item?: QueueItem) {
+  if (g.status === "queued")
+    return item?.capacityRetryAt
+      ? "Waiting for runtime capacity"
+      : "Waiting for worker claim";
+  if (g.status === "preparing") return "Worker is preparing runtime payload";
+  if (g.status === "generating")
+    return g.runtimeMessage ?? "Runtime is rendering";
+  if (g.status === "uploading") return "Uploading generated media";
+  if (g.status === "completed") return "Output is ready";
+  if (g.status === "failed")
+    return g.safeErrorMessage ?? "Generation failed";
+  if (g.status === "cancelled") return "Generation was cancelled";
+  return item?.status ? `Queue item is ${item.status}` : "Generation updated";
+}
+async function publicAdminRuntimeLogs(limit = 30) {
+  const boundedLimit = boundedInteger(limit, 30, 1, 100);
+  if (localAuth) {
+    const items = [...gens.values()]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, boundedLimit)
+      .map((g) => {
+        const item = queue.find((candidate) => candidate.generationId === g.id);
+        return {
+          id: g.id,
+          uid: g.uid,
+          status: g.status,
+          queueStatus: item?.status,
+          attempt: item?.attempt,
+          claimedBy: item?.claimedBy,
+          leaseExpiresAt: item?.leaseExpiresAt,
+          capacityRetryAt: item?.capacityRetryAt,
+          runtimeJobId: g.runtimeJobId,
+          progress: g.progress,
+          runtimeMessage: g.runtimeMessage,
+          runtimeProgress: g.runtimeProgress,
+          safeErrorMessage: g.safeErrorMessage,
+          outputKind: g.output?.kind,
+          createdAt: g.createdAt,
+          updatedAt: g.updatedAt,
+          completedAt: item?.status === "done" ? g.updatedAt : undefined,
+          message: generationLogMessage(g, item),
+        };
+      });
+    return { updatedAt: nowIso(), items };
+  }
+  adminApp();
+  const firestore = getFirestore();
+  const snapshot = await firestore
+    .collection("generations")
+    .orderBy("createdAt", "desc")
+    .limit(boundedLimit)
+    .get();
+  const queueSnapshots = await Promise.all(
+    snapshot.docs.map((doc) =>
+      firestore.collection(generationQueueCollection).doc(doc.id).get(),
+    ),
+  );
+  const items = snapshot.docs.map((doc, index) => {
+    const g = doc.data() as StoredGeneration;
+    const item = queueSnapshots[index]?.exists
+      ? queueSnapshots[index].data() as QueueItem & { uid?: string; completedAt?: string }
+      : undefined;
+    return {
+      id: doc.id,
+      uid: g.uid,
+      status: g.status,
+      queueStatus: item?.status,
+      attempt: item?.attempt,
+      claimedBy: item?.claimedBy,
+      leaseExpiresAt: item?.leaseExpiresAt,
+      capacityRetryAt: item?.capacityRetryAt,
+      runtimeJobId: g.runtimeJobId,
+      progress: g.progress,
+      runtimeMessage: g.runtimeMessage,
+      runtimeProgress: g.runtimeProgress,
+      safeErrorMessage: g.safeErrorMessage,
+      outputKind: g.output?.kind,
+      createdAt: g.createdAt,
+      updatedAt: g.updatedAt,
+      completedAt: item?.completedAt,
+      message: generationLogMessage(g, item),
+    };
+  });
+  return { updatedAt: nowIso(), items };
+}
 function publicRuntimeProgress(st: Awaited<ReturnType<typeof runtime.getGenerationStatus>>) {
   const runtimeProgress = {
     ...(typeof st.framesRendered === "number"
@@ -1679,10 +1780,10 @@ async function persistGeneration(g: StoredGeneration) {
 }
 export async function findGeneration(id: string) {
   const memory = gens.get(id);
-  if (memory || localAuth) return memory;
+  if (localAuth) return memory;
   adminApp();
   const snapshot = await getFirestore().collection("generations").doc(id).get();
-  if (!snapshot.exists) return undefined;
+  if (!snapshot.exists) return memory;
   const generation = snapshot.data() as StoredGeneration;
   gens.set(id, generation);
   return generation;
@@ -2081,19 +2182,34 @@ export function requireGeneratedTextAcceptance(
   if (!policy || policy.mode !== "forbidden") return;
   const check = qualityAssessment?.checks.find((candidate) => candidate.id === "generated_text_policy");
   if (!check) {
-    throw problem(
-      502,
-      "generated_text_validation_missing",
-      "The generated media was not accepted because visible-text validation did not run. Please retry.",
-    );
+    log("generation_generated_text_policy_advisory", {
+      generationId: generation.id,
+      reason: "validation_missing",
+    });
+    return;
   }
   if (check.status !== "passed") {
-    throw problem(
-      422,
-      "generated_text_policy_failed",
-      "The generated media may contain unwanted captions or visible text. Your previous successful work is unchanged; retry with a new seed.",
-    );
+    log("generation_generated_text_policy_advisory", {
+      generationId: generation.id,
+      reason: "policy_not_passed",
+      status: check.status,
+    });
   }
+}
+
+function isGeneratedTextAdvisoryFailure(failureCode: string) {
+  return (
+    failureCode === "runtime_generated_text_policy_failed" ||
+    failureCode === "runtime_generated_text_validation_missing" ||
+    failureCode === "generated_text_policy_failed" ||
+    failureCode === "generated_text_validation_missing"
+  );
+}
+
+function generatedTextFailureCode(error: unknown) {
+  if (!error || typeof error !== "object" || !("code" in error)) return undefined;
+  const code = String((error as { code?: unknown }).code ?? "");
+  return isGeneratedTextAdvisoryFailure(code) ? code : undefined;
 }
 
 async function completeGenerationFromRuntime(
@@ -2228,7 +2344,12 @@ async function reconcileActiveGeneration(uid: string) {
       return active;
     const terminal =
       runtimeStatus.state === "completed"
-        ? await completeGenerationFromRuntime(active, active.runtimeJobId, runtimeStatus.qualityAssessment)
+        ? await completeGenerationFromRuntimeWithRecovery(
+            active,
+            active.runtimeJobId,
+            runtimeStatus.qualityAssessment,
+            Date.now() + runtimeOutputRecoveryWindowMs(),
+          )
         : await failGenerationFromRuntime(
             active,
             runtimeStatus.state === "cancelled"
@@ -2407,12 +2528,45 @@ function runtimeStatusRetryDelayMs() {
   );
 }
 
+function runtimeOutputRecoveryWindowMs() {
+  return boundedInteger(
+    process.env.VIDEO_RUNTIME_OUTPUT_RECOVERY_WINDOW_MS,
+    60_000,
+    1_000,
+    5 * 60_000,
+  );
+}
+
+function runtimeOutputRetryDelayMs() {
+  return boundedInteger(
+    process.env.VIDEO_RUNTIME_OUTPUT_RETRY_DELAY_MS,
+    3_000,
+    100,
+    30_000,
+  );
+}
+
 function retryableRuntimeStatusError(
   error: unknown,
   recoverLeaseUnavailable: boolean,
 ) {
   if (error instanceof RuntimeLeaseUnavailableError)
     return recoverLeaseUnavailable;
+  if (error && typeof error === "object" && "status" in error) {
+    const status = Number((error as { status?: unknown }).status);
+    if (
+      Number.isFinite(status) &&
+      ([408, 425, 429].includes(status) || status >= 500)
+    )
+      return true;
+    if (Number.isFinite(status) && status >= 400 && status < 500) return false;
+  }
+  return ["runtime_timeout", "runtime_network"].includes(
+    operationalErrorCode(error),
+  );
+}
+
+function retryableRuntimeOutputError(error: unknown) {
   if (error && typeof error === "object" && "status" in error) {
     const status = Number((error as { status?: unknown }).status);
     if (
@@ -2477,6 +2631,65 @@ async function getRuntimeGenerationStatusWithRecovery(
         setTimeout(
           resolve,
           Math.min(runtimeStatusRetryDelayMs(), remainingMs),
+        ),
+      );
+    }
+  }
+}
+
+async function completeGenerationFromRuntimeWithRecovery(
+  generation: StoredGeneration,
+  runtimeJobId: string,
+  qualityAssessment: Generation["qualityAssessment"] | undefined,
+  jobDeadline: number,
+) {
+  let recoveryStartedAt: number | undefined;
+  let recoveryAttempt = 0;
+  for (;;) {
+    try {
+      const completed = await completeGenerationFromRuntime(
+        generation,
+        runtimeJobId,
+        qualityAssessment,
+      );
+      if (recoveryAttempt > 0) {
+        log("generation_output_recovered", {
+          generationId: generation.id,
+          recoveryAttempt,
+        });
+      }
+      return completed;
+    } catch (error) {
+      if (!retryableRuntimeOutputError(error)) throw error;
+      recoveryStartedAt ??= Date.now();
+      const recoveryDeadline = Math.min(
+        jobDeadline,
+        recoveryStartedAt + runtimeOutputRecoveryWindowMs(),
+      );
+      const remainingMs = recoveryDeadline - Date.now();
+      if (remainingMs <= 0) throw error;
+      recoveryAttempt += 1;
+      const current = gens.get(generation.id);
+      if (current && !["completed", "failed", "cancelled"].includes(current.status)) {
+        const recovering: StoredGeneration = {
+          ...current,
+          status: "uploading",
+          runtimeMessage: "Runtime output is ready; fetching media",
+          runtimeJobId,
+          updatedAt: nowIso(),
+        };
+        gens.set(generation.id, recovering);
+        await persistGeneration(recovering);
+      }
+      log("generation_output_retry", {
+        generationId: generation.id,
+        errorCode: operationalErrorCode(error),
+        recoveryAttempt,
+      });
+      await new Promise((resolve) =>
+        setTimeout(
+          resolve,
+          Math.min(runtimeOutputRetryDelayMs(), remainingMs),
         ),
       );
     }
@@ -5003,7 +5216,7 @@ app.post(
   distributedRateLimit({ name: "prompt-complete", limit: 12 }),
   async (req, res, next) => {
   try {
-    await requireCreatorEntitlement(res.locals.principal.uid, "director");
+    await requireCreatorEntitlement(res.locals.principal, "director");
     await ensureRuntimeConfiguration();
     const prompt = String(req.body?.prompt ?? "").trim();
     const mode = String(req.body?.mode ?? "expand");
@@ -5045,7 +5258,10 @@ app.post(
       }
       const request = enhancementRequest(req.body);
       const uid = res.locals.principal.uid as string;
-      const entitlement = await requireCreatorEntitlement(uid, "director");
+      const entitlement = await requireCreatorEntitlement(
+        res.locals.principal,
+        "director",
+      );
       let project: StoredStoryboardProject | undefined;
       if (request.projectId) {
         project = await findStoryboardProject(uid, String(request.projectId));
@@ -5134,7 +5350,7 @@ app.post(
   distributedRateLimit({ name: "storyboard-enhance", limit: 12 }),
   async (req, res, next) => {
     try {
-      await requireCreatorEntitlement(res.locals.principal.uid, "director");
+      await requireCreatorEntitlement(res.locals.principal, "director");
       if (Buffer.byteLength(JSON.stringify(req.body ?? {}), "utf8") > 512 * 1024) {
         throw problem(413, "storyboard_enhancement_request_too_large", "Storyboard enhancement input exceeds the 512 KiB text-only limit");
       }
@@ -5238,7 +5454,10 @@ app.post(
     try {
       const input = directorProposalInput(req.body);
       const uid = res.locals.principal.uid as string;
-      const entitlement = await requireCreatorEntitlement(uid, "director");
+      const entitlement = await requireCreatorEntitlement(
+        res.locals.principal,
+        "director",
+      );
       const project = await findStoryboardProject(uid, input.projectId);
       if (!project) throw problem(404, "project_not_found", "Project not found");
       const request: DirectorProposalRequest = input;
@@ -5327,7 +5546,7 @@ app.post(
   distributedRateLimit({ name: "storyboard-director", limit: 30 }),
   async (req, res, next) => {
     try {
-      await requireCreatorEntitlement(res.locals.principal.uid, "director");
+      await requireCreatorEntitlement(res.locals.principal, "director");
       const input = directorProposalInput(req.body);
       const project = await findStoryboardProject(
         res.locals.principal.uid,
@@ -5759,7 +5978,7 @@ app.post(
           "project",
       );
       const entitlement = await requireCreatorEntitlement(
-        p.uid,
+        p,
         ["start_frame", "end_frame"].includes(requestedOperationScope)
           ? "frame_generation"
           : "video_generation",
@@ -6441,6 +6660,13 @@ app.get("/v1/runtime/status", auth, async (_req, res, next) => {
     next(e);
   }
 });
+app.get("/v1/admin/runtime/logs", admin, async (req, res, next) => {
+  try {
+    res.json(await publicAdminRuntimeLogs(Number(req.query.limit ?? 30)));
+  } catch (error) {
+    next(error);
+  }
+});
 app.post("/v1/admin/runtime/discover", admin, async (_req, res, next) => {
   try {
     runtimeDiscoveryCheckedAt = 0;
@@ -6580,7 +6806,54 @@ async function processQueueItem(workerId = "local-worker") {
     return true;
   }
   let finishClaim = true;
+  let jobDeadline = Date.now() + runtimeJobTimeoutMs();
   try {
+    if (g.runtimeJobId) {
+      jobDeadline = Date.now() + runtimeOutputRecoveryWindowMs();
+      try {
+        const recovering: StoredGeneration = {
+          ...g,
+          status: "uploading",
+          queuePosition: 0,
+          runtimeMessage: "Output is ready; fetching generated media",
+          safeErrorMessage: undefined,
+          updatedAt: nowIso(),
+        };
+        gens.set(g.id, recovering);
+        await persistGeneration(recovering);
+        await completeGenerationFromRuntimeWithRecovery(
+          recovering,
+          g.runtimeJobId,
+          g.qualityAssessment,
+          jobDeadline,
+        );
+        return true;
+      } catch (resumeError) {
+        if (retryableRuntimeOutputError(resumeError) && item.attempt < 6) {
+          finishClaim = false;
+          const queuedForOutput: StoredGeneration = {
+            ...(gens.get(g.id) ?? g),
+            status: "queued",
+            queuePosition: Math.max(1, g.queuePosition ?? 1),
+            runtimeMessage:
+              "Output is ready; reconnecting to fetch generated media",
+            runtimeJobId: g.runtimeJobId,
+            safeErrorMessage: undefined,
+            updatedAt: nowIso(),
+          };
+          gens.set(g.id, queuedForOutput);
+          await persistGeneration(queuedForOutput);
+          await requeueQueueItem(item, 30);
+          log("generation_output_resume_requeued", {
+            generationId: g.id,
+            errorCode: operationalErrorCode(resumeError),
+            queueAttempt: item.attempt,
+          });
+          return true;
+        }
+        throw resumeError;
+      }
+    }
     const assemblyRuntimeAttempt =
       g.settings.operationScope === "assembly"
         ? Math.max(1, g.assemblyRuntimeAttempt ?? 1)
@@ -6630,15 +6903,15 @@ async function processQueueItem(workerId = "local-worker") {
     };
     gens.set(g.id, submitted);
     await persistGeneration(submitted);
-    const deadline = Date.now() + runtimeJobTimeoutMs();
+    jobDeadline = Date.now() + runtimeJobTimeoutMs();
     let st = await getRuntimeGenerationStatusWithRecovery(
       g.id,
       sub.runtimeJobId,
-      deadline,
+      jobDeadline,
       g.settings.operationScope !== "assembly",
     );
     while (!["completed", "failed", "cancelled"].includes(st.state)) {
-      if (Date.now() >= deadline) throw new Error("runtime_job_timeout");
+      if (Date.now() >= jobDeadline) throw new Error("runtime_job_timeout");
       if (gens.get(g.id)?.status === "cancelled") break;
       const current = {
         ...gens.get(g.id)!,
@@ -6655,7 +6928,7 @@ async function processQueueItem(workerId = "local-worker") {
       st = await getRuntimeGenerationStatusWithRecovery(
         g.id,
         sub.runtimeJobId,
-        deadline,
+        jobDeadline,
         g.settings.operationScope !== "assembly",
       );
     }
@@ -6672,7 +6945,12 @@ async function processQueueItem(workerId = "local-worker") {
       };
       await persistTerminalGeneration(cancelled);
     } else if (st.state === "completed") {
-      await completeGenerationFromRuntime(gens.get(g.id)!, sub.runtimeJobId, st.qualityAssessment);
+      await completeGenerationFromRuntimeWithRecovery(
+        gens.get(g.id)!,
+        sub.runtimeJobId,
+        st.qualityAssessment,
+        jobDeadline,
+      );
     } else {
       const runtimeFailure = new Error(st.message ?? "The runtime could not complete this generation.") as Error & { code?: string };
       runtimeFailure.name = "RuntimeGenerationFailure";
@@ -6750,11 +7028,7 @@ async function processQueueItem(workerId = "local-worker") {
       safeErrorMessage: `${
         failureCode === "runtime_timeout"
           ? "Generation timed out. Please retry when the runtime is available."
-          : failureCode === "runtime_generated_text_validation_missing"
-            ? "Visible-text validation evidence was unavailable. Your successful work is unchanged; please retry."
-            : failureCode === "runtime_generated_text_policy_failed"
-              ? "The result contained unwanted captions or visible text. Your successful work is unchanged; retry with a new seed."
-              : failureCode === "runtime_authentication"
+          : failureCode === "runtime_authentication"
                 ? "Generation access could not be verified. Please retry shortly."
                 : failureCode === "runtime_invalid_response"
                   ? "The generator returned an invalid response. Your successful work is unchanged."
@@ -6914,6 +7188,18 @@ const runtimeApiKeySecret =
     : (await import("firebase-functions/params")).defineSecret(
         "VIDEO_LAB_RUNTIME_API_KEY",
       );
+const deployStudioApiTokenSecret =
+  process.env.NODE_ENV === "test"
+    ? undefined
+    : (await import("firebase-functions/params")).defineSecret(
+        "VIDEO_DEPLOY_STUDIO_API_TOKEN",
+      );
+const directorMemoryApiTokenSecret =
+  process.env.NODE_ENV === "test"
+    ? undefined
+    : (await import("firebase-functions/params")).defineSecret(
+        "DIRECTOR_MEMORY_API_TOKEN",
+      );
 
 export const api =
   process.env.NODE_ENV === "test"
@@ -6926,12 +7212,8 @@ export const api =
           concurrency: 40,
           secrets: [
             ...(runtimeApiKeySecret ? [runtimeApiKeySecret] : []),
-            (await import("firebase-functions/params")).defineSecret(
-              "VIDEO_DEPLOY_STUDIO_API_TOKEN",
-            ),
-            (await import("firebase-functions/params")).defineSecret(
-              "DIRECTOR_MEMORY_API_TOKEN",
-            ),
+            ...(deployStudioApiTokenSecret ? [deployStudioApiTokenSecret] : []),
+            ...(directorMemoryApiTokenSecret ? [directorMemoryApiTokenSecret] : []),
           ],
         },
         app,
@@ -6957,7 +7239,11 @@ export const processVideoLabJobs =
             maxConcurrentDispatches: workerConcurrencyLimit(),
             maxDispatchesPerSecond: 2,
           },
-          secrets: runtimeApiKeySecret ? [runtimeApiKeySecret] : [],
+          secrets: [
+            ...(runtimeApiKeySecret ? [runtimeApiKeySecret] : []),
+            ...(deployStudioApiTokenSecret ? [deployStudioApiTokenSecret] : []),
+            ...(directorMemoryApiTokenSecret ? [directorMemoryApiTokenSecret] : []),
+          ],
         },
         async (request) => {
           await processAvailableWork(`cloud-task-${request.id || nanoid(8)}`);

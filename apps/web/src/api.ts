@@ -31,10 +31,13 @@ const API = import.meta.env.VITE_API_BASE_URL ?? "/api";
 export async function api<T>(path: string, init: RequestInit = {}) {
   const token = await getApiToken();
   const r = await fetch(`${API}${path}`, {
+    cache: "no-store",
     ...init,
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${token}`,
+      "cache-control": "no-cache",
+      pragma: "no-cache",
       ...init.headers,
     },
   });

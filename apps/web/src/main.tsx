@@ -177,6 +177,44 @@ async function demoApi<T>(path: string, init: RequestInit = {}) {
     } as T;
   }
 
+  if (path.startsWith("/v1/admin/runtime/logs")) {
+    return {
+      updatedAt: nowIso(),
+      items: generations
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 30)
+        .map((generation) => ({
+          id: generation.id,
+          uid: token(),
+          status: generation.status,
+          queueStatus: ["queued", "preparing", "generating", "uploading"].includes(
+            generation.status,
+          )
+            ? "claimed"
+            : "done",
+          attempt: 1,
+          runtimeJobId: generation.status === "queued" ? undefined : "demo-runtime-job",
+          progress: generation.progress,
+          runtimeMessage: generation.runtimeMessage,
+          runtimeProgress: generation.runtimeProgress,
+          safeErrorMessage: generation.safeErrorMessage,
+          outputKind: generation.output?.kind,
+          createdAt: generation.createdAt,
+          updatedAt: generation.updatedAt,
+          completedAt: ["completed", "failed", "cancelled"].includes(generation.status)
+            ? generation.updatedAt
+            : undefined,
+          message:
+            generation.runtimeMessage ??
+            (generation.status === "completed"
+              ? "Output is ready"
+              : generation.status === "failed"
+                ? generation.safeErrorMessage ?? "Generation failed"
+                : "Generation is active"),
+        })),
+    } as T;
+  }
+
   if (path === "/v1/gallery") {
     return {
       items: generations.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -282,10 +320,13 @@ async function api<T>(path: string, init: RequestInit = {}) {
   try {
     const apiToken = await getApiToken();
     const r = await fetch(`${API}${path}`, {
+      cache: "no-store",
       ...init,
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${apiToken}`,
+        "cache-control": "no-cache",
+        pragma: "no-cache",
         ...init.headers,
       },
     });
@@ -1236,6 +1277,30 @@ function GalleryArtifact({
         >
           <img src={thumbnail} alt="Video thumbnail" />
         </Link>
+        <button
+          className="gallery-edit-button"
+          type="button"
+          onClick={onOpen}
+          aria-label="Edit and trim video"
+          title="Edit and trim"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+          </svg>
+        </button>
+      </div>
+    );
+  }
+  if (isVideo && media.objectUrl) {
+    return (
+      <div className="gallery-media-wrap">
+        <video
+          className="gallery-media gallery-video"
+          src={media.objectUrl}
+          controls
+          preload="metadata"
+        />
         <button
           className="gallery-edit-button"
           type="button"
@@ -2219,34 +2284,61 @@ function Account() {
     </main>
   );
 }
+type RuntimeLogItem = {
+  id: string;
+  uid?: string;
+  status: Generation["status"];
+  queueStatus?: string;
+  attempt?: number;
+  claimedBy?: string;
+  leaseExpiresAt?: string;
+  capacityRetryAt?: string;
+  runtimeJobId?: string;
+  progress?: number;
+  runtimeMessage?: string;
+  runtimeProgress?: Generation["runtimeProgress"];
+  safeErrorMessage?: string;
+  outputKind?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  message: string;
+};
+type RuntimeLogsResponse = {
+  updatedAt: string;
+  items: RuntimeLogItem[];
+};
+function shortTime(value?: string) {
+  return value ? new Date(value).toLocaleTimeString() : "—";
+}
+function elapsedLabel(start?: string, end?: string) {
+  if (!start) return "—";
+  const started = Date.parse(start);
+  const ended = end ? Date.parse(end) : Date.now();
+  if (!Number.isFinite(started) || !Number.isFinite(ended)) return "—";
+  const seconds = Math.max(0, Math.floor((ended - started) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
+}
 function Admin() {
-  const [manualRuntimeOrigin, setManualRuntimeOrigin] = useState("");
   const r = useQuery({
     queryKey: ["runtime"],
     queryFn: () => api<RuntimeStatus>("/v1/runtime/status"),
     refetchInterval: 15_000,
   });
-  const call = (p: string) =>
-    api<RuntimeStatus>(p, { method: "POST" }).then(() => r.refetch());
-  const discover = useMutation({
-    mutationFn: () =>
-      api<RuntimeStatus>("/v1/admin/runtime/discover", { method: "POST" }),
-    onSuccess: () => r.refetch(),
-  });
-  const connectManual = useMutation({
-    mutationFn: () =>
-      api<RuntimeStatus>("/v1/admin/runtime/connect", {
-        method: "POST",
-        body: JSON.stringify({ baseUrl: manualRuntimeOrigin }),
-      }),
-    onSuccess: () => {
-      setManualRuntimeOrigin("");
-      return r.refetch();
-    },
+  const logs = useQuery({
+    queryKey: ["admin-runtime-logs"],
+    queryFn: () => api<RuntimeLogsResponse>("/v1/admin/runtime/logs?limit=40"),
+    refetchInterval: 3_000,
   });
   const discovery = r.data?.discovery;
   const connected =
     r.data?.status === "healthy" && discovery?.state === "connected";
+  const activeCount =
+    logs.data?.items.filter((item) =>
+      ["queued", "preparing", "generating", "uploading"].includes(item.status),
+    ).length ?? 0;
   return (
     <main className="admin-page">
       <h1 className="editorial-page-title">
@@ -2255,13 +2347,11 @@ function Admin() {
       <section className="panel runtime-discovery-panel">
         <header>
           <div>
-            <span className="account-eyebrow">Deploy Studio handover</span>
-            <h2>Automatic Lambda connection</h2>
+            <span className="account-eyebrow">Runtime operations</span>
+            <h2>Live generation log</h2>
             <p>
-              Deploy Studio securely publishes the active runtime. Video Lab
-              validates its renewable lease and health automatically. If the
-              handover is stuck, an administrator can force a health check
-              against the known Lambda origin.
+              Recent generation and queue activity, refreshed automatically for
+              administrator diagnostics.
             </p>
           </div>
           <span
@@ -2302,66 +2392,54 @@ function Admin() {
             <small>Queue</small>
             <strong>{r.data?.queueDepth ?? 0}</strong>
           </span>
+          <span>
+            <small>Active jobs</small>
+            <strong>{activeCount}</strong>
+          </span>
         </div>
-        <p className={connected ? "success" : "runtime-discovery-message"}>
-          {discovery?.message ??
-            "Waiting for Deploy Studio to publish the active runtime."}
-        </p>
-        <button
-          type="button"
-          disabled={discover.isPending}
-          onClick={() => discover.mutate()}
-        >
-          {discover.isPending ? "Refreshing…" : "Refresh handover"}
-        </button>
-        {discover.error && (
-          <p className="error">
-            {discover.error instanceof Error
-              ? discover.error.message
-              : "Runtime discovery failed"}
-          </p>
-        )}
-        <form
-          className="runtime-manual-connect"
-          onSubmit={(event) => {
-            event.preventDefault();
-            connectManual.mutate();
-          }}
-        >
-          <label>
-            <span>Known Lambda runtime origin</span>
-            <input
-              type="url"
-              value={manualRuntimeOrigin}
-              placeholder="https://approved-runtime.example"
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => setManualRuntimeOrigin(event.target.value)}
-            />
-          </label>
-          <button type="submit" disabled={connectManual.isPending}>
-            {connectManual.isPending ? "Checking…" : "Check and connect"}
-          </button>
-        </form>
-        {connectManual.error && (
-          <p className="error">
-            {connectManual.error instanceof Error
-              ? connectManual.error.message
-              : "Manual runtime connection failed"}
-          </p>
-        )}
-        <div className="runtime-admin-controls">
-          <button onClick={() => call("/v1/admin/runtime/pause")}>
-            Pause submissions
-          </button>
-          <button onClick={() => call("/v1/admin/runtime/resume")}>
-            Resume
-          </button>
-          <button onClick={() => call("/v1/admin/runtime/stop")}>
-            Kill switch
-          </button>
+        <div className="runtime-log-panel">
+          <div className="runtime-log-toolbar">
+            <span>
+              {logs.isFetching ? "Refreshing logs" : "Logs current"}
+            </span>
+            <button type="button" onClick={() => logs.refetch()}>
+              Refresh
+            </button>
+          </div>
+          {logs.error && (
+            <p className="error">
+              {logs.error instanceof Error
+                ? logs.error.message
+                : "Runtime logs could not be loaded"}
+            </p>
+          )}
+          <div className="runtime-log-list">
+            {(logs.data?.items ?? []).map((item) => (
+              <article
+                key={item.id}
+                className={`runtime-log-entry status-${item.status}`}
+              >
+                <div className="runtime-log-entry-main">
+                  <span>{shortTime(item.updatedAt)}</span>
+                  <strong>{item.message}</strong>
+                  <small>{item.id}</small>
+                </div>
+                <div className="runtime-log-entry-meta">
+                  <span>{item.status}</span>
+                  <span>queue {item.queueStatus ?? "—"}</span>
+                  <span>attempt {item.attempt ?? "—"}</span>
+                  <span>{elapsedLabel(item.createdAt, item.completedAt)}</span>
+                  <span>{typeof item.progress === "number" ? `${item.progress}%` : "—"}</span>
+                  <span>{item.runtimeProgress?.stage ?? item.outputKind ?? "—"}</span>
+                  <span>{item.runtimeJobId ?? "no runtime job"}</span>
+                </div>
+              </article>
+            ))}
+            {!logs.isLoading && !logs.data?.items.length && (
+              <p className="runtime-log-empty">No generation activity yet.</p>
+            )}
+          </div>
         </div>
-        <p>Pause and kill-switch controls remain administrator-only.</p>
       </section>
     </main>
   );

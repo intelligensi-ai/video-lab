@@ -72,9 +72,9 @@ function publicRuntimeMessage(
       runtime_workflow_unavailable:
         "The requested generation workflow is temporarily unavailable.",
       runtime_generated_text_policy_failed:
-        "The result contained unwanted captions or visible text after a bounded repair attempt. Your previous successful version remains available; retry with a new seed.",
+        "The runtime could not complete this generation. The previous successful version remains available.",
       runtime_generated_text_validation_missing:
-        "The generator did not return the required visible-text validation evidence. Your previous successful version remains available; please retry.",
+        "The runtime could not complete this generation. The previous successful version remains available.",
     };
     return (
       (failureCode ? knownMessages[failureCode] : undefined) ??
@@ -712,7 +712,6 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
           overall_goal: settings.overallGoal ?? input.prompt,
           original_master_prompt: settings.originalMasterPrompt ?? settings.overallGoal ?? input.prompt,
           audio_policy: settings.audioPolicy,
-          generated_text_policy: settings.generatedTextPolicy,
           prompt: input.prompt,
           negative_prompt: settings.negativePrompt,
           resolution: settings.resolution ?? resolution,
@@ -1281,29 +1280,57 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       this.cfg.outputPath ?? this.defaultPath("output"),
       runtimeJobId,
     );
-    const readStatusOutput = async () => {
+    type RuntimeOutputStatus = {
+      output?: string;
+      output_url?: string;
+      download_url?: string;
+      artifact_url?: string;
+      durationSeconds?: number;
+      duration_seconds?: number;
+      settings?: {
+        total_output_seconds?: number;
+        durationSeconds?: number;
+        duration_seconds?: number;
+        duration?: number;
+      };
+    };
+    const readStatusOutput = async (): Promise<RuntimeOutputStatus | undefined> => {
       const statusPath = this.path(
         this.cfg.statusPath ?? this.defaultPath("status"),
         runtimeJobId,
       );
       const statusRes = await this.request(statusPath);
       if (!statusRes.ok) return undefined;
-      return (await statusRes.json()) as {
-        output?: string;
-        output_url?: string;
-        download_url?: string;
-        artifact_url?: string;
-        durationSeconds?: number;
-        duration_seconds?: number;
-        settings?: {
-          total_output_seconds?: number;
-          durationSeconds?: number;
-          duration_seconds?: number;
-          duration?: number;
-        };
-      };
+      return (await statusRes.json()) as RuntimeOutputStatus;
     };
-    let res: Response;
+    const durationFromStatus = (status?: RuntimeOutputStatus) =>
+      Number(
+        status?.durationSeconds ??
+          status?.duration_seconds ??
+          status?.settings?.total_output_seconds ??
+          status?.settings?.durationSeconds ??
+          status?.settings?.duration_seconds ??
+          status?.settings?.duration ??
+          0,
+      );
+    const fetchStatusOutput = async (status?: RuntimeOutputStatus) => {
+      const outputUrl = status?.output_url ?? status?.download_url ?? status?.artifact_url;
+      if (!outputUrl) return undefined;
+      const target = /^https?:\/\//i.test(outputUrl)
+        ? new URL(outputUrl)
+        : new URL(outputUrl, `${this.cfg.baseUrl!.replace(/\/+$/, "")}/`);
+      const configuredOrigin = new URL(this.cfg.baseUrl!).origin;
+      if (target.origin !== configuredOrigin) {
+        throw new Error(
+          "Runtime returned an output URL outside its configured origin",
+        );
+      }
+      return fetch(target, {
+        headers: this.headers(),
+        redirect: "error",
+      });
+    };
+    let res: Response | undefined;
     try {
       res = await this.request(path, {
         headers: {
@@ -1312,42 +1339,21 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
         },
       });
     } catch {
-      throw new RuntimeLeaseUnavailableError();
+      res = undefined;
     }
     let durationSeconds = 0;
 
-    const leaseError = await runtimeLeaseUnavailableResponse(res);
-    if (leaseError) throw leaseError;
+    if (res) {
+      const leaseError = await runtimeLeaseUnavailableResponse(res);
+      if (leaseError) throw leaseError;
+    }
 
-    if (!res.ok && this.cfg.payloadMode === "deploy-studio") {
+    if (!res?.ok) {
       const status = await readStatusOutput();
       if (status) {
-        durationSeconds = Number(
-          status.durationSeconds ??
-            status.duration_seconds ??
-          status.settings?.total_output_seconds ??
-            status.settings?.durationSeconds ??
-            status.settings?.duration_seconds ??
-            status.settings?.duration ??
-            0,
-        );
-        const outputUrl =
-          status.output_url ?? status.download_url ?? status.artifact_url;
-        if (outputUrl) {
-          const target = /^https?:\/\//i.test(outputUrl)
-            ? new URL(outputUrl)
-            : new URL(outputUrl, `${this.cfg.baseUrl!.replace(/\/+$/, "")}/`);
-          const configuredOrigin = new URL(this.cfg.baseUrl!).origin;
-          if (target.origin !== configuredOrigin) {
-            throw new Error(
-              "Runtime returned an output URL outside its configured origin",
-            );
-          }
-          res = await fetch(target, {
-            headers: this.headers(),
-            redirect: "error",
-          });
-        } else if (status.output) {
+        durationSeconds = durationFromStatus(status);
+        res = await fetchStatusOutput(status);
+        if (!res && status.output) {
           throw new Error(
             `Runtime completed but exposes only a private output path (${status.output}); add GET /jobs/{jobId}/output to the Lambda runtime`,
           );
@@ -1355,6 +1361,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       }
     }
 
+    if (!res) throw new Error("Sulphur output fetch failed: no runtime output response");
     if (!res.ok)
       throw new Error(`Sulphur output fetch failed: ${await res.text()}`);
 
@@ -1391,15 +1398,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     assertRuntimeOutputBytes(bytes, normalizedContentType);
     if (!durationSeconds) {
       const status = await readStatusOutput().catch(() => undefined);
-      durationSeconds = Number(
-        status?.durationSeconds ??
-          status?.duration_seconds ??
-          status?.settings?.total_output_seconds ??
-          status?.settings?.durationSeconds ??
-          status?.settings?.duration_seconds ??
-          status?.settings?.duration ??
-          0,
-      );
+      durationSeconds = durationFromStatus(status);
     }
 
     return {
