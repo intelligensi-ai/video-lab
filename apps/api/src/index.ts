@@ -238,6 +238,7 @@ let runtimeState: RuntimeStatus = {
   status: "healthy",
   acceptingSubmissions: true,
   killSwitch: false,
+  generatedTextQualityControlDisabled: false,
   queueDepth: 0,
   updatedAt: nowIso(),
   lastHeartbeatAt: nowIso(),
@@ -257,6 +258,11 @@ function operationalErrorCode(error: unknown) {
     if (/^runtime_[a-z0-9_]+$/.test(code)) return code;
   }
   const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message === "storyboard_context_budget_exceeded") return "director_context_budget_exceeded";
+  if (message === "storyboard_enhancer_unavailable") return "director_unavailable";
+  if (message === "storyboard_enhancement_request_rejected") return "director_request_rejected";
+  if (message === "storyboard_enhancement_contract_incompatible") return "director_contract_incompatible";
+  if (message === "storyboard_enhancement_failed") return "director_invalid_response";
   if (message.includes("timeout")) return "runtime_timeout";
   if (/unauthori[sz]ed|forbidden|\b401\b|\b403\b/.test(message))
     return "runtime_authentication";
@@ -264,6 +270,19 @@ function operationalErrorCode(error: unknown) {
   if (/invalid|schema|json|unexpected/.test(message))
     return "runtime_invalid_response";
   return "runtime_failure";
+}
+function safeErrorDiagnostic(error: unknown) {
+  if (!(error instanceof Error)) return undefined;
+  const cause = error.cause;
+  return {
+    name: error.name,
+    message: error.message.slice(0, 200),
+    cause: typeof cause === "string"
+      ? cause.slice(0, 500)
+      : cause instanceof Error
+        ? `${cause.name}: ${cause.message}`.slice(0, 500)
+        : undefined,
+  };
 }
 const base64FieldByObjectPathField: Record<string, string> = {
   globalVisualAnchorObjectPath: "globalVisualAnchorBase64",
@@ -1564,6 +1583,11 @@ async function ensureRuntimeConfiguration() {
       } else {
         runtimeState = { ...runtimeState, killSwitch: false };
       }
+      runtimeState = {
+        ...runtimeState,
+        generatedTextQualityControlDisabled:
+          data.generatedTextQualityControlDisabled === true,
+      };
       if (manualRuntimeBaseUrl && runtimeState.status !== "paused") {
         useRuntimeEndpoint(manualRuntimeBaseUrl, "environment", "direct-worker");
         runtimeDiscovery = {
@@ -1585,6 +1609,8 @@ async function persistRuntimeControl(principal: Principal, action: string) {
       status: runtimeState.status,
       acceptingSubmissions: runtimeState.acceptingSubmissions,
       killSwitch: runtimeState.killSwitch,
+      generatedTextQualityControlDisabled:
+        runtimeState.generatedTextQualityControlDisabled === true,
       manualRuntimeBaseUrl: manualRuntimeBaseUrl ?? null,
       updatedAt: nowIso(),
       updatedBy: principal.uid,
@@ -2175,6 +2201,7 @@ export function requireGeneratedTextAcceptance(
   generation: StoredGeneration,
   qualityAssessment?: Generation["qualityAssessment"],
 ) {
+  if (generation.settings.generatedTextQualityControlDisabled === true) return;
   const rawPolicy = generation.settings.generatedTextPolicy;
   const policy = rawPolicy && typeof rawPolicy === "object" && !Array.isArray(rawPolicy)
     ? rawPolicy as Record<string, unknown>
@@ -3079,7 +3106,7 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
     const selectedControls = stringList(shot.selectedControls, `Shot ${index + 1} controls`, 16, 64);
     if (selectedControls.some((control) => !allowedControls.has(control))) invalid("invalid_storyboard", `Shot ${index + 1} contains an unsupported control`);
     const rawIntent = object(shot.audioIntent, `Shot ${index + 1} audio intent`);
-    exact(rawIntent, new Set(["mode", "reason"]), `Shot ${index + 1} audio intent`);
+    exact(rawIntent, new Set(["mode", "reason", "dialogue", "ambience", "soundEffects", "sound_effects", "music", "silence"]), `Shot ${index + 1} audio intent`);
     if (!audioIntentModes.has(String(rawIntent.mode))) invalid("invalid_storyboard", `Shot ${index + 1} audio intent is invalid`);
     const rawGeneratedTextIntent = object(
       shot.generatedTextIntent ?? { mode: "none", visibleText: [], reason: "Generated visible text defaults to forbidden." },
@@ -3104,6 +3131,11 @@ function enhancementRequest(value: unknown): StoryboardEnhancementRequest {
       audioIntent: {
         mode: rawIntent.mode as StoryboardEnhancementRequest["shots"][number]["audioIntent"]["mode"],
         reason: string(rawIntent.reason, `Shot ${index + 1} audio reason`, 1_000, true),
+        dialogue: string(rawIntent.dialogue ?? "", `Shot ${index + 1} dialogue direction`, 1_000, true),
+        ambience: string(rawIntent.ambience ?? "", `Shot ${index + 1} ambience direction`, 1_000, true),
+        soundEffects: string(rawIntent.soundEffects ?? rawIntent.sound_effects ?? "", `Shot ${index + 1} sound effects direction`, 1_000, true),
+        music: string(rawIntent.music ?? "", `Shot ${index + 1} music direction`, 1_000, true),
+        silence: string(rawIntent.silence ?? "", `Shot ${index + 1} silence direction`, 1_000, true),
       },
       generatedTextIntent: {
         mode: rawGeneratedTextIntent.mode as StoryboardEnhancementRequest["shots"][number]["generatedTextIntent"]["mode"],
@@ -3461,6 +3493,21 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
           .map((control) => String(control))
           .filter((control) => ["start_frame", "end_frame", "multi_keyframe"].includes(control)))]
       : [];
+    const audioIntent = scene.audioIntent && typeof scene.audioIntent === "object" && !Array.isArray(scene.audioIntent)
+      ? scene.audioIntent as Record<string, unknown>
+      : {};
+    const audioIntentMode = ["silent", "dialogue", "ambience", "sound_effects", "music", "mixed"].includes(String(audioIntent.mode))
+      ? String(audioIntent.mode)
+      : "silent";
+    scene.audioIntent = {
+      mode: audioIntentMode,
+      reason: String(audioIntent.reason ?? (audioIntentMode === "silent" ? "No scene-specific audio direction has been accepted." : "")).trim().slice(0, 1_000),
+      dialogue: String(audioIntent.dialogue ?? "").trim().slice(0, 1_000),
+      ambience: String(audioIntent.ambience ?? "").trim().slice(0, 1_000),
+      soundEffects: String(audioIntent.soundEffects ?? audioIntent.sound_effects ?? "").trim().slice(0, 1_000),
+      music: String(audioIntent.music ?? "").trim().slice(0, 1_000),
+      silence: String(audioIntent.silence ?? "").trim().slice(0, 1_000),
+    };
     const generatedTextIntent = scene.generatedTextIntent && typeof scene.generatedTextIntent === "object" && !Array.isArray(scene.generatedTextIntent)
       ? scene.generatedTextIntent as Record<string, unknown>
       : {};
@@ -4042,6 +4089,114 @@ function publicStoryboardAsyncJob(
   return visible as StoryboardEnhancementJob | DirectorProposalJob;
 }
 
+function compactText(value: unknown, limit = 800) {
+  return typeof value === "string"
+    ? value.replace(/\s+/g, " ").trim().slice(0, limit)
+    : "";
+}
+
+function compactStoryboardShot(shot: unknown) {
+  const source = shot && typeof shot === "object" && !Array.isArray(shot)
+    ? shot as Record<string, unknown>
+    : {};
+  const audioIntent = source.audioIntent && typeof source.audioIntent === "object" && !Array.isArray(source.audioIntent)
+    ? source.audioIntent as Record<string, unknown>
+    : {};
+  return {
+    shotNumber: source.shotNumber,
+    title: compactText(source.title, 140),
+    prompt: compactText(source.prompt, 500),
+    audioIntent: {
+      mode: audioIntent.mode,
+      reason: compactText(audioIntent.reason, 500),
+      dialogue: compactText(audioIntent.dialogue, 500),
+      ambience: compactText(audioIntent.ambience, 500),
+      soundEffects: compactText(audioIntent.soundEffects ?? audioIntent.sound_effects, 500),
+      music: compactText(audioIntent.music, 500),
+      silence: compactText(audioIntent.silence, 500),
+    },
+  };
+}
+
+function publicDirectorIoLogItem(job: StoredStoryboardAsyncJob) {
+  const request = job.request as unknown as Record<string, unknown>;
+  const proposal = job.proposalResult;
+  const enhancement = job.enhancementResult;
+  const shots = Array.isArray(request.shots)
+    ? request.shots.slice(0, 6).map(compactStoryboardShot)
+    : [];
+  return {
+    id: job.id,
+    uid: job.uid,
+    kind: job.kind,
+    status: job.status,
+    stage: job.stage,
+    projectId: job.projectId,
+    attempt: job.attempt,
+    claimedBy: job.claimedBy,
+    leaseExpiresAt: job.leaseExpiresAt,
+    retryAfterAt: job.retryAfterAt,
+    correlationId: job.correlationId,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    safeErrorMessage: job.safeErrorMessage,
+    input: {
+      message: compactText(request.message ?? request.userInstruction, 1_500),
+      selectedSceneId: request.selectedSceneId,
+      operation: request.operation,
+      targetShotNumber: request.targetShotNumber,
+      shotCount: request.shotCount,
+      audioPolicy: request.audioPolicy,
+      shots,
+    },
+    output: proposal
+      ? {
+          type: "proposal",
+          proposalId: proposal.id,
+          action: proposal.action,
+          summary: compactText(proposal.summary, 500),
+          explanation: compactText(proposal.explanation, 800),
+          diff: proposal.diff.map((item) => ({
+            path: item.path,
+            label: item.label,
+            before: compactText(item.before, 350),
+            after: compactText(item.after, 600),
+          })),
+        }
+      : enhancement
+        ? {
+            type: "enhancement",
+            polishedMasterPrompt: compactText(enhancement.polishedMasterPrompt, 800),
+            shotCount: enhancement.shots.length,
+            shots: enhancement.shots.slice(0, 6).map(compactStoryboardShot),
+          }
+        : undefined,
+  };
+}
+
+async function publicAdminDirectorLogs(limit = 30) {
+  const boundedLimit = boundedInteger(limit, 30, 1, 100);
+  if (localAuth) {
+    const items = [...storyboardAsyncJobs.values()]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, boundedLimit)
+      .map(publicDirectorIoLogItem);
+    return { updatedAt: nowIso(), items };
+  }
+  adminApp();
+  const snapshot = await getFirestore()
+    .collection(storyboardAsyncJobCollection)
+    .orderBy("createdAt", "desc")
+    .limit(boundedLimit)
+    .get();
+  return {
+    updatedAt: nowIso(),
+    items: snapshot.docs.map((doc) =>
+      publicDirectorIoLogItem(doc.data() as StoredStoryboardAsyncJob),
+    ),
+  };
+}
+
 function firestoreStoryboardAsyncJob(job: StoredStoryboardAsyncJob) {
   return JSON.parse(JSON.stringify(job)) as StoredStoryboardAsyncJob;
 }
@@ -4468,6 +4623,14 @@ function storyboardAsyncSafeFailure(error: unknown) {
   if (code === "runtime_authentication") {
     return "The Director connection could not be verified. Please try again shortly.";
   }
+  if (
+    error &&
+    typeof error === "object" &&
+    "detail" in error &&
+    typeof (error as { detail?: unknown }).detail === "string"
+  ) {
+    return (error as { detail: string }).detail;
+  }
   return "The Director request failed safely. Your existing work is unchanged.";
 }
 
@@ -4633,6 +4796,7 @@ async function processStoryboardAsyncJob(workerId: string) {
       kind: latest.kind,
       attempt: latest.attempt,
       errorCode: operationalErrorCode(error),
+      error: safeErrorDiagnostic(error),
       correlationId: latest.correlationId,
     });
     return true;
@@ -5990,6 +6154,8 @@ app.post(
       settings.generatedTextPolicy = creatorGeneratedTextPolicy(
         settings.generatedTextPolicy,
       );
+      settings.generatedTextQualityControlDisabled =
+        runtimeState.generatedTextQualityControlDisabled === true;
       settings.negativePrompt = creatorNegativePrompt(settings.negativePrompt);
       const requestedVideoModel = String(settings.videoModel ?? "ltx-2.3");
       if (!(longFormVideoModels as readonly string[]).includes(requestedVideoModel)) {
@@ -6667,6 +6833,13 @@ app.get("/v1/admin/runtime/logs", admin, async (req, res, next) => {
     next(error);
   }
 });
+app.get("/v1/admin/director/logs", admin, async (req, res, next) => {
+  try {
+    res.json(await publicAdminDirectorLogs(Number(req.query.limit ?? 30)));
+  } catch (error) {
+    next(error);
+  }
+});
 app.post("/v1/admin/runtime/discover", admin, async (_req, res, next) => {
   try {
     runtimeDiscoveryCheckedAt = 0;
@@ -6747,6 +6920,31 @@ app.post("/v1/admin/runtime/stop", admin, async (_req, res, next) => {
     };
     manualRuntimeBaseUrl = undefined;
     await persistRuntimeControl(res.locals.principal, "runtime_stop");
+    res.json(publicRuntimeStatus());
+  } catch (error) {
+    next(error);
+  }
+});
+app.post("/v1/admin/runtime/generated-text-qc", admin, async (req, res, next) => {
+  try {
+    if (typeof req.body?.disabled !== "boolean") {
+      throw problem(
+        400,
+        "invalid_generated_text_qc_control",
+        "Generated-text quality control requires a disabled boolean",
+      );
+    }
+    runtimeState = {
+      ...runtimeState,
+      generatedTextQualityControlDisabled: req.body.disabled,
+      updatedAt: nowIso(),
+    };
+    await persistRuntimeControl(
+      res.locals.principal,
+      req.body.disabled
+        ? "generated_text_quality_control_disabled"
+        : "generated_text_quality_control_enabled",
+    );
     res.json(publicRuntimeStatus());
   } catch (error) {
     next(error);
@@ -7041,6 +7239,11 @@ async function processQueueItem(workerId = "local-worker") {
     log("generation_failed", {
       generationId: g.id,
       errorCode: operationalErrorCode(e),
+      failureCode,
+      runtimeFailureCode:
+        e && typeof e === "object" && "code" in e
+          ? String((e as { code?: unknown }).code ?? "")
+          : undefined,
       creditsReturned,
     });
   } finally {

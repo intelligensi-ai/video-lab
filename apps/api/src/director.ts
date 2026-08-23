@@ -309,8 +309,13 @@ export function buildDirectorEnhancementRequest(
         ? {
             mode: String(asRecord(scene.audioIntent).mode) as StoryboardEnhancementRequest["shots"][number]["audioIntent"]["mode"],
             reason: String(asRecord(scene.audioIntent).reason ?? ""),
+            dialogue: String(asRecord(scene.audioIntent).dialogue ?? ""),
+            ambience: String(asRecord(scene.audioIntent).ambience ?? ""),
+            soundEffects: String(asRecord(scene.audioIntent).soundEffects ?? asRecord(scene.audioIntent).sound_effects ?? ""),
+            music: String(asRecord(scene.audioIntent).music ?? ""),
+            silence: String(asRecord(scene.audioIntent).silence ?? ""),
           }
-        : { mode: "silent", reason: "No scene-specific audio direction has been accepted." },
+        : { mode: "silent", reason: "No scene-specific audio direction has been accepted.", silence: "No scene-specific audio direction has been accepted." },
       generatedTextIntent: asRecord(scene.generatedTextIntent).mode
         ? {
             mode: String(asRecord(scene.generatedTextIntent).mode) as StoryboardEnhancementRequest["shots"][number]["generatedTextIntent"]["mode"],

@@ -66,6 +66,235 @@ describe("SulphurLtxRuntimeAdapter", () => {
     expect(calls[1].url).toBe("http://runtime.test/jobs/job-1");
   });
 
+  it("keeps LongForm upscale disabled by default in the runtime payload", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return Response.json({ id: "default-upscale-job", status: "queued" }, { status: 202 });
+      }),
+    );
+
+    await new SulphurLtxRuntimeAdapter({
+      baseUrl: "http://runtime.test",
+      payloadMode: "deploy-studio",
+    }).submitGeneration({
+      prompt: "A cinematic LongForm draft",
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        aspectRatio: "16:9",
+        durationSeconds: 4,
+        quality: "draft",
+      },
+    });
+
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({
+      post_process: "none",
+    });
+  });
+
+  it("sends the documented LongForm upscale post-process mode when enabled", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return Response.json({ id: "upscale-job", status: "queued" }, { status: 202 });
+      }),
+    );
+
+    await new SulphurLtxRuntimeAdapter({
+      baseUrl: "http://runtime.test",
+      payloadMode: "deploy-studio",
+    }).submitGeneration({
+      prompt: "A cinematic LongForm final",
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        aspectRatio: "16:9",
+        durationSeconds: 4,
+        quality: "high",
+        postProcess: "upscale",
+      },
+    });
+
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({
+      post_process: "upscale",
+    });
+  });
+
+  it("keeps generated-text QC bypass fields when LongForm upscale is enabled", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return Response.json({ id: "upscale-qc-bypass-job", status: "queued" }, { status: 202 });
+      }),
+    );
+
+    await new SulphurLtxRuntimeAdapter({
+      baseUrl: "http://runtime.test",
+      payloadMode: "deploy-studio",
+    }).submitGeneration({
+      prompt: "A cinematic LongForm final without QC gate",
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        aspectRatio: "16:9",
+        durationSeconds: 4,
+        quality: "high",
+        postProcess: "upscale",
+        generatedTextQualityControlDisabled: true,
+      },
+    });
+
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({
+      post_process: "upscale",
+      generated_text_quality_control: { enabled: false, mode: "disabled_by_admin" },
+      quality_control: { generated_text: false },
+    });
+  });
+
+  it("still sends existing LongForm generation payloads without upscale", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return Response.json({ id: "longform-no-upscale-job", status: "queued" }, { status: 202 });
+      }),
+    );
+
+    await new SulphurLtxRuntimeAdapter({
+      baseUrl: "http://runtime.test",
+      payloadMode: "deploy-studio",
+    }).submitGeneration({
+      prompt: "A two-scene LongForm project",
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        videoModel: "ltx-2.3",
+        aspectRatio: "16:9",
+        durationSeconds: 8,
+        quality: "draft",
+        postProcess: "none",
+        audioPolicy: {
+          mode: "directed",
+          dialogue: "prompted_only",
+          soundEffects: "intent_only",
+          ambience: "intent_only",
+          music: "off",
+          preserveSourceAudio: true,
+        },
+        storyboard: [
+          {
+            id: "scene-1",
+            title: "Start",
+            prompt: "The camera opens on a quiet harbour.",
+            duration: 4,
+            trimStart: 0,
+            trimEnd: 4,
+            seed: 1001,
+            transition: "cut",
+            transitionDuration: 0.5,
+            carryPreviousFrame: false,
+          },
+        ],
+      },
+    });
+
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({
+      video_model: "ltx-2.3",
+      post_process: "none",
+      audio_policy: {
+        mode: "directed",
+        preserveSourceAudio: true,
+      },
+      storyboard: [
+        {
+          id: "scene-1",
+          prompt: "The camera opens on a quiet harbour.",
+        },
+      ],
+    });
+  });
+
+  it("passes scene audio intent through to LongForm runtime payloads", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return Response.json({ id: "dialogue-intent-job", status: "queued" }, { status: 202 });
+      }),
+    );
+
+    await new SulphurLtxRuntimeAdapter({
+      baseUrl: "http://runtime.test",
+      payloadMode: "deploy-studio",
+    }).submitGeneration({
+      prompt: "A poolside conversation without visible captions",
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        videoModel: "ltx-2.3",
+        aspectRatio: "16:9",
+        durationSeconds: 8,
+        quality: "draft",
+        audioPolicy: {
+          mode: "directed",
+          dialogue: "on",
+          soundEffects: "intent_only",
+          ambience: "intent_only",
+          music: "off",
+          preserveSourceAudio: false,
+        },
+        storyboard: [
+          {
+            id: "scene-1",
+            title: "Poolside chat",
+            prompt: "Contestants chat by the pool with natural reactions and no readable text.",
+            duration: 8,
+            trimStart: 0,
+            trimEnd: 8,
+            seed: 1001,
+            transition: "cut",
+            transitionDuration: 0.5,
+            carryPreviousFrame: false,
+            audioIntent: {
+              mode: "dialogue",
+              reason: "One contestant says: Yeah, he was getting way too deep for me.",
+              dialogue: "One contestant says: Yeah, he was getting way too deep for me.",
+              ambience: "Subtle poolside room tone.",
+              soundEffects: "Light glass movement.",
+              music: "",
+              silence: "",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({
+      audio_policy: {
+        mode: "directed",
+        dialogue: "on",
+      },
+      storyboard: [
+        {
+          id: "scene-1",
+          audio_intent: {
+            mode: "dialogue",
+            reason: "One contestant says: Yeah, he was getting way too deep for me.",
+            dialogue: "One contestant says: Yeah, he was getting way too deep for me.",
+            ambience: "Subtle poolside room tone.",
+            sound_effects: "Light glass movement.",
+            music: "",
+            silence: "",
+          },
+        },
+      ],
+    });
+  });
+
   it("replays an ambiguous paid submission once with the same idempotency key", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal(
@@ -609,7 +838,6 @@ describe("SulphurLtxRuntimeAdapter", () => {
           transition: "cut",
           carry_previous_frame: true,
           reference_ids: ["reference-monolith"],
-          generated_text_intent: { mode: "none", visibleText: [], reason: "No visible text requested." },
           seed_override: true,
           summary: "The monolith is fully visible above the mist.",
           continuity_overrides: { lighting: "Warm dawn rim light" },
@@ -625,6 +853,9 @@ describe("SulphurLtxRuntimeAdapter", () => {
     expect(JSON.parse(String(calls[1].init?.body))).not.toHaveProperty(
       "generated_text_policy",
     );
+    expect(
+      JSON.stringify(JSON.parse(String(calls[1].init?.body))),
+    ).not.toContain("generated_text_intent");
     expect(health.capabilities).toMatchObject({
       defaultVideoModel: "ltx-2.5",
       videoModels: [
@@ -641,6 +872,129 @@ describe("SulphurLtxRuntimeAdapter", () => {
         referenceConditioning: "supported",
       },
     });
+  });
+
+  it("strips quoted dialogue from forbidden-text long-form runtime payloads", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return url.endsWith("/health")
+          ? Response.json({
+              ok: true,
+              ready: true,
+              worker: "longform-ltx-storyboard-studio",
+            })
+          : Response.json({ id: "dialogue-safe-job" }, { status: 202 });
+      }),
+    );
+
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "http://runtime.test",
+      payloadMode: "deploy-studio",
+    });
+    await adapter.healthCheck();
+    await adapter.submitGeneration({
+      prompt: "Narrator (warm): \"This text should never appear on screen\"",
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        videoModel: "ltx-2.3",
+        aspectRatio: "16:9",
+        durationSeconds: 8,
+        quality: "draft",
+        overallGoal: "A reality scene with people reacting naturally.",
+        originalMasterPrompt: "Narrator: \"The Director version is not working\"",
+        negativePrompt: "captions, subtitles, readable text",
+        generatedTextPolicy: {
+          mode: "forbidden", captions: false, subtitles: false, closedCaptions: false,
+          titleCards: false, textOverlays: false, logos: false, watermarks: false,
+          signage: "avoid_readable_text",
+        },
+        storyboard: [
+          {
+            id: "scene-1",
+            title: "Poolside chat",
+            prompt: "As the camera tracks around the group, one contestant says:\n\nYeah, he was getting way too deep for me. Saying stuff like What is your favourite animal?\n\nThe others laugh.",
+            duration: 8,
+            trimStart: 0,
+            trimEnd: 8,
+            seed: 1342,
+            transition: "cut",
+            transitionDuration: 0.75,
+            carryPreviousFrame: false,
+          },
+        ],
+      },
+    });
+
+    const payload = JSON.parse(String(calls[1].init?.body));
+    expect(payload.prompt).not.toContain("This text should never appear");
+    expect(payload.original_master_prompt).not.toContain("Director version");
+    expect(payload.storyboard[0].prompt).not.toContain("Yeah, he was getting");
+    expect(payload.storyboard[0].prompt).not.toMatch(/\bsays\b/i);
+    expect(payload.storyboard[0].prompt).toContain("no readable on-screen text");
+  });
+
+  it("passes an admin generated-text QC bypass through to the runtime payload", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return url.endsWith("/health")
+          ? Response.json({
+              ok: true,
+              ready: true,
+              worker: "longform-ltx-storyboard-studio",
+            })
+          : Response.json({ id: "qc-disabled-job" }, { status: 202 });
+      }),
+    );
+
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "http://runtime.test",
+      payloadMode: "deploy-studio",
+    });
+    await adapter.healthCheck();
+    await adapter.submitGeneration({
+      prompt: "A reality-show pool scene",
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        videoModel: "ltx-2.3",
+        aspectRatio: "16:9",
+        durationSeconds: 8,
+        quality: "draft",
+        generatedTextQualityControlDisabled: true,
+        generatedTextPolicy: {
+          mode: "forbidden", captions: false, subtitles: false, closedCaptions: false,
+          titleCards: false, textOverlays: false, logos: false, watermarks: false,
+          signage: "avoid_readable_text",
+        },
+        storyboard: [
+          {
+            id: "scene-1",
+            title: "Poolside chat",
+            prompt: "One contestant says:\n\nYeah, he was getting way too deep for me.\n\nThe others laugh.",
+            duration: 8,
+            trimStart: 0,
+            trimEnd: 8,
+            seed: 1342,
+            transition: "cut",
+            transitionDuration: 0.75,
+            carryPreviousFrame: false,
+          },
+        ],
+      },
+    });
+
+    const payload = JSON.parse(String(calls[1].init?.body));
+    expect(payload.generated_text_quality_control).toMatchObject({
+      enabled: false,
+      mode: "disabled_by_admin",
+    });
+    expect(payload.quality_control).toMatchObject({ generated_text: false });
+    expect(payload.storyboard[0].prompt).toContain("Yeah, he was getting");
   });
 
   it("wraps a Sulphur request as one scene for a LongForm worker", async () => {

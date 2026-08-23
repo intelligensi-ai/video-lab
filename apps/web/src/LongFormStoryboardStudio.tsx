@@ -72,6 +72,16 @@ type LongFormReference = {
   helper: string;
 };
 
+const UPSCALE_POST_PROCESS_MODES = new Set(["upscale", "both"]);
+
+function postProcessUpscaleEnabled(postProcess: string) {
+  return UPSCALE_POST_PROCESS_MODES.has(postProcess);
+}
+
+function postProcessSupportsUpscale(postProcess?: string[]) {
+  return !postProcess || postProcess.includes("upscale") || postProcess.includes("both");
+}
+
 const transitionOptions: Array<{
   value: StoryboardTransition;
   label: string;
@@ -404,6 +414,46 @@ const continuityFields = [
   ["visualStyle", "Visual style"],
   ["audio", "Audio"],
 ] as const;
+
+type SceneSoundTabKey = "dialogue" | "ambience" | "soundEffects" | "music" | "silence";
+
+const sceneSoundTabs: Array<{
+  key: SceneSoundTabKey;
+  label: string;
+  mode: NonNullable<LongFormGenerationPayload["scenes"][number]["audioIntent"]>["mode"];
+  placeholder: string;
+}> = [
+  {
+    key: "dialogue",
+    label: "Dialogue",
+    mode: "dialogue",
+    placeholder: "Lines, spoken intent, delivery style, or note that dialogue should be implied rather than visible as captions.",
+  },
+  {
+    key: "ambience",
+    label: "Ambience",
+    mode: "ambience",
+    placeholder: "Background bed: room tone, crowd wash, wind, water, traffic, space, distance.",
+  },
+  {
+    key: "soundEffects",
+    label: "Effects",
+    mode: "sound_effects",
+    placeholder: "Specific diegetic actions: doors, footsteps, impacts, UI bleeps, machinery, Foley.",
+  },
+  {
+    key: "music",
+    label: "Music",
+    mode: "music",
+    placeholder: "Score/performance direction, genre, intensity, cue timing, or state that music must be absent.",
+  },
+  {
+    key: "silence",
+    label: "Silence",
+    mode: "silent",
+    placeholder: "When and why to keep the scene silent, muted, or restrained.",
+  },
+];
 
 const initialForm: LongFormGenerationPayload = {
   overallGoal: "",
@@ -1220,6 +1270,9 @@ export default function LongFormStoryboardStudio({
         Boolean(scene.endFrame || scene.endFrameGenerationId)),
   );
   const runtimeFeatureStatus = runtime.data?.capabilities?.featureStatus ?? {};
+  const runtimePostProcess = runtime.data?.capabilities?.postProcess;
+  const upscaleSupported = postProcessSupportsUpscale(runtimePostProcess);
+  const upscaleEnabled = postProcessUpscaleEnabled(form.postProcess);
   const videoModels = longFormVideoModelsForRuntime(runtime.data);
   const changeVideoModel = async (videoModel: LongFormVideoModel) => {
     if ((form.videoModel ?? "ltx-2.3") === videoModel) return;
@@ -2302,31 +2355,77 @@ export default function LongFormStoryboardStudio({
                       <option value="no">Disabled</option>
                     </select>
                   </Field>
-                  <Field
-                    label="Finishing pass"
-                    help="These are delivery transforms after you accept the creative draft. They use FFmpeg and cannot repair identity drift, weak motion or composition."
+                  <div
+                    className={`lf-field lf-upscale-controls ${!upscaleSupported ? "is-disabled" : ""}`}
+                    data-help="LongForm runtime upscale is a delivery pass after generation. The current runtime documents a fixed 2x Lanczos upscale, capped at 3840 x 2160, with high-quality CRF 18 output."
                   >
-                    <select
-                      value={form.postProcess}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          postProcess: event.target.value,
-                        }))
-                      }
-                    >
-                      <option value="none">
-                        Draft — no delivery transform
-                      </option>
-                      <option value="interpolate">
-                        Review — smooth motion
-                      </option>
-                      <option value="upscale">
-                        Final — delivery upscale
-                      </option>
-                      <option value="both">Final — smooth + upscale</option>
-                    </select>
-                  </Field>
+                    <span className="lf-label">Upscale</span>
+                    <label className="lf-toggle lf-ultra-toggle">
+                      <input
+                        type="checkbox"
+                        checked={upscaleEnabled}
+                        disabled={!upscaleSupported}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            postProcess: event.target.checked
+                              ? current.postProcess === "interpolate"
+                                ? "both"
+                                : "upscale"
+                              : current.postProcess === "both"
+                                ? "interpolate"
+                                : "none",
+                          }))
+                        }
+                      />
+                      <span aria-hidden="true" />
+                      <span className="lf-toggle-copy">
+                        <strong>{upscaleSupported ? "Delivery upscale" : "Upscale unavailable"}</strong>
+                        <small>
+                          {upscaleSupported
+                            ? "Adds the runtime post-process upscale pass."
+                            : "The connected runtime does not advertise upscale."}
+                        </small>
+                      </span>
+                    </label>
+                    <div className="lf-upscale-grid">
+                      <label>
+                        <span>Mode</span>
+                        <select
+                          value={form.postProcess}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              postProcess: event.target.value,
+                            }))
+                          }
+                        >
+                          <option value="none">Disabled</option>
+                          <option value="interpolate">Smooth motion</option>
+                          <option
+                            value="upscale"
+                            disabled={!upscaleSupported || Boolean(runtimePostProcess && !runtimePostProcess.includes("upscale"))}
+                          >
+                            2x upscale
+                          </option>
+                          <option
+                            value="both"
+                            disabled={!upscaleSupported || Boolean(runtimePostProcess && !runtimePostProcess.includes("both"))}
+                          >
+                            Smooth + 2x upscale
+                          </option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>Scale</span>
+                        <input value={upscaleEnabled ? "2x fixed" : "Off"} disabled readOnly />
+                      </label>
+                      <label>
+                        <span>Quality</span>
+                        <input value={upscaleEnabled ? "High - CRF 18" : "Draft"} disabled readOnly />
+                      </label>
+                    </div>
+                  </div>
                   <Field
                     label="Output format"
                     help="MP4 has the broadest playback compatibility; WebM is a modern web-focused container."
@@ -3232,6 +3331,7 @@ function SceneCard({
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState(index === 0);
+  const [activeSoundTab, setActiveSoundTab] = useState<SceneSoundTabKey>("dialogue");
   const selectedTransition =
     transitionOptions.find((option) => option.value === scene.transition) ??
     transitionOptions[0];
@@ -3239,6 +3339,36 @@ function SceneCard({
     index === 0
       ? "Wide street-level tracking shot. The founder notices a thin teal reflection moving through puddles. Keep the face and trench coat consistent; slow handheld pursuit; cool rain and warm shop windows."
       : "Begin from the previous final frame. The signal climbs a bridge rail as the camera arcs around the founder, revealing the skyline. Preserve direction of travel, identity, wet materials and the restrained teal-and-amber palette.";
+  const activeSound = sceneSoundTabs.find((tab) => tab.key === activeSoundTab) ?? sceneSoundTabs[0];
+  const updateSoundIntent = (key: SceneSoundTabKey, value: string) => {
+    const nextIntent = {
+      mode: scene.audioIntent?.mode ?? "silent",
+      reason: scene.audioIntent?.reason ?? "",
+      dialogue: scene.audioIntent?.dialogue ?? "",
+      ambience: scene.audioIntent?.ambience ?? "",
+      soundEffects: scene.audioIntent?.soundEffects ?? "",
+      music: scene.audioIntent?.music ?? "",
+      silence: scene.audioIntent?.silence ?? "",
+      [key]: value,
+    };
+    const enabledModes = sceneSoundTabs
+      .filter((tab) => tab.key !== "silence" && String(nextIntent[tab.key] ?? "").trim())
+      .map((tab) => tab.mode);
+    onChange({
+      audioIntent: {
+        ...nextIntent,
+        mode:
+          enabledModes.length > 1
+            ? "mixed"
+            : enabledModes[0] ?? (String(nextIntent.silence).trim() ? "silent" : "silent"),
+        reason: sceneSoundTabs
+          .map((tab) => [tab.label, String(nextIntent[tab.key] ?? "").trim()] as const)
+          .filter(([, note]) => note)
+          .map(([label, note]) => `${label}: ${note}`)
+          .join("\n"),
+      },
+    });
+  };
   return (
     <article className={expanded ? "lf-scene" : "lf-scene collapsed"}>
       <header>
@@ -3583,44 +3713,35 @@ function SceneCard({
                     onChange={(event) => onChange({ continuityNotes: event.target.value })}
                   />
                 </label>
-                <label>
-                  <span>Sound intent</span>
-                  <select
-                    aria-label={`Scene ${index + 1} sound intent`}
-                    value={scene.audioIntent?.mode ?? "silent"}
-                    onChange={(event) =>
-                      onChange({
-                        audioIntent: {
-                          mode: event.target.value as NonNullable<StoryboardScenePayload["audioIntent"]>["mode"],
-                          reason: scene.audioIntent?.reason ?? "",
-                        },
-                      })
-                    }
-                  >
-                    <option value="silent">Silent</option>
-                    <option value="dialogue">Dialogue</option>
-                    <option value="ambience">Ambience</option>
-                    <option value="sound_effects">Sound effects</option>
-                    <option value="music">Music</option>
-                    <option value="mixed">Mixed sound</option>
-                  </select>
-                </label>
-                <label>
-                  <span>Sound direction</span>
-                  <textarea
-                    aria-label={`Scene ${index + 1} sound direction`}
-                    value={scene.audioIntent?.reason ?? ""}
-                    placeholder="Why should this scene include—or omit—sound?"
-                    onChange={(event) =>
-                      onChange({
-                        audioIntent: {
-                          mode: scene.audioIntent?.mode ?? "silent",
-                          reason: event.target.value,
-                        },
-                      })
-                    }
-                  />
-                </label>
+                <div className="lf-scene-sound-editor">
+                  <div className="lf-scene-sound-tabs" role="tablist" aria-label={`Scene ${index + 1} sound intent`}>
+                    {sceneSoundTabs.map((tab) => {
+                      const hasNote = Boolean(String(scene.audioIntent?.[tab.key] ?? "").trim());
+                      return (
+                        <button
+                          key={tab.key}
+                          type="button"
+                          role="tab"
+                          aria-selected={activeSoundTab === tab.key}
+                          className={activeSoundTab === tab.key ? "active" : ""}
+                          onClick={() => setActiveSoundTab(tab.key)}
+                        >
+                          <span>{tab.label}</span>
+                          {hasNote && <small />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <label className="lf-scene-sound-field">
+                    <span>{activeSound.label} direction</span>
+                    <textarea
+                      aria-label={`Scene ${index + 1} ${activeSound.label.toLowerCase()} sound direction`}
+                      value={scene.audioIntent?.[activeSound.key] ?? ""}
+                      placeholder={activeSound.placeholder}
+                      onChange={(event) => updateSoundIntent(activeSound.key, event.target.value)}
+                    />
+                  </label>
+                </div>
                 <button
                   type="button"
                   className="lf-outline lf-scene-sound-director"
@@ -4514,7 +4635,15 @@ function Preview({
           className="lf-primary lf-generate"
           onClick={onGenerate}
         >
-          {generateLabel}
+          <span className="lf-button-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path
+                d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.2-6.2a1.1 1.1 0 0 0 0-1.8L9.6 4.9C8.9 4.5 8 5 8 5.8Z"
+                fill="currentColor"
+              />
+            </svg>
+          </span>
+          <span>{generateLabel}</span>
         </button>
         {loading && generation && (
           <button
@@ -4524,7 +4653,19 @@ function Preview({
             disabled={cancelling}
             onClick={onCancel}
           >
-            {cancelling ? "Cancelling…" : "Cancel active render"}
+            <span className="lf-button-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <rect
+                  x="7"
+                  y="7"
+                  width="10"
+                  height="10"
+                  rx="2"
+                  fill="currentColor"
+                />
+              </svg>
+            </span>
+            <span>{cancelling ? "Cancelling…" : "Cancel active render"}</span>
           </button>
         )}
         {video.objectUrl && (

@@ -774,6 +774,11 @@ export interface components {
             /** @enum {string} */
             mode: "silent" | "dialogue" | "ambience" | "sound_effects" | "music" | "mixed";
             reason: string;
+            dialogue?: string;
+            ambience?: string;
+            soundEffects?: string;
+            music?: string;
+            silence?: string;
         };
         StoryboardGeneratedTextPolicy: {
             /** @enum {string} */

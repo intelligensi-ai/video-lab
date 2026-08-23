@@ -103,6 +103,49 @@ function optionalPositiveInteger<K extends string>(key: K, value: unknown) {
     : {};
 }
 
+function generatedVisibleTextForbidden(settings: RuntimeVideoSettings) {
+  if (settings.generatedTextQualityControlDisabled === true) return false;
+  const policy = settings.generatedTextPolicy;
+  if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
+    return true;
+  }
+  return String(policy.mode ?? "forbidden") === "forbidden";
+}
+
+function stripDialogueForSilentVideoPrompt(value: string | undefined) {
+  if (typeof value !== "string") return value;
+  let text = value
+    .replace(
+      /\b(?:narrator|voiceover|voice-over|host|presenter|contestant|character|speaker|announcer)\s*\([^)]*\)\s*:\s*["“”][\s\S]*?["“”]/gi,
+      "The person reacts naturally without any readable on-screen text.",
+    )
+    .replace(
+      /\b(?:narrator|voiceover|voice-over|host|presenter|contestant|character|speaker|announcer)\s*:\s*["“”][\s\S]*?["“”]/gi,
+      "The person reacts naturally without any readable on-screen text.",
+    )
+    .replace(
+      /\b(?:says?|speaks?|delivers?|delivering|utters?|remarks?|asks?|replies?|responds?)\b[^.\n:]*:\s*["“”][\s\S]*?["“”]/gi,
+      "reacts naturally with expressive body language and no readable on-screen text",
+    )
+    .replace(
+      /\b(?:says?|speaks?|delivers?|delivering|utters?|remarks?|asks?|replies?|responds?)\b[^.\n]*["“”][\s\S]*?["“”]/gi,
+      "reacts naturally with expressive body language and no readable on-screen text",
+    )
+    .replace(
+      /\b(?:says?|speaks?|delivers?|delivering|utters?|remarks?|asks?|replies?|responds?)\b[^.\n:]{0,180}:\s*(?:\n\s*)?[^\n][\s\S]*?(?=\n\s*\n|$)/gi,
+      "reacts naturally with expressive body language and no readable on-screen text",
+    )
+    .replace(/["“”][^"“”\n]{6,240}["“”]/g, "")
+    .replace(/\b(?:caption|captions|subtitle|subtitles|closed captions|lower third|title card|text overlay|speech bubble)\b/gi, "no readable on-screen text")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!text) {
+    text = "A cinematic visual scene with natural performances, expressive reactions, and no readable on-screen text.";
+  }
+  return text;
+}
+
 function safeQualityAssessment(value: unknown): Generation["qualityAssessment"] | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const source = value as Record<string, unknown>;
@@ -165,6 +208,7 @@ export interface RuntimeVideoSettings {
   originalMasterPrompt?: string;
   audioPolicy?: Record<string, unknown>;
   generatedTextPolicy?: Record<string, unknown>;
+  generatedTextQualityControlDisabled?: boolean;
   projectId?: string;
   operationScope?:
     "project" | "scene" | "start_frame" | "end_frame" | "assembly";
@@ -200,6 +244,15 @@ export interface RuntimeVideoSettings {
     transitionDuration: number;
     carryPreviousFrame: boolean;
     referenceIds?: string[];
+    audioIntent?: {
+      mode: "silent" | "dialogue" | "ambience" | "sound_effects" | "music" | "mixed";
+      reason: string;
+      dialogue?: string;
+      ambience?: string;
+      soundEffects?: string;
+      music?: string;
+      silence?: string;
+    };
     generatedTextIntent?: Record<string, unknown>;
     startFrameBase64?: string;
     endFrameBase64?: string;
@@ -678,6 +731,9 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
         this.detectedWorker === "longform-ltx-storyboard-studio";
 
       if (isLongForm) {
+        const sanitizePrompt = generatedVisibleTextForbidden(settings)
+          ? stripDialogueForSilentVideoPrompt
+          : (value: string | undefined) => value;
         const storyboard = settings.storyboard?.length
           ? settings.storyboard
           : [
@@ -706,13 +762,19 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
           video_model: settings.videoModel ?? "ltx-2.3",
           operation_scope: settings.operationScope ?? "project",
           operation_scene_id: settings.operationSceneId,
-          frame_prompt: settings.framePrompt,
+          frame_prompt: sanitizePrompt(settings.framePrompt),
           operation_frame_base64: settings.operationFrameBase64,
           film_bible: settings.filmBible,
-          overall_goal: settings.overallGoal ?? input.prompt,
-          original_master_prompt: settings.originalMasterPrompt ?? settings.overallGoal ?? input.prompt,
+          overall_goal: sanitizePrompt(settings.overallGoal ?? input.prompt),
+          original_master_prompt: sanitizePrompt(settings.originalMasterPrompt ?? settings.overallGoal ?? input.prompt),
           audio_policy: settings.audioPolicy,
-          prompt: input.prompt,
+          generated_text_quality_control: settings.generatedTextQualityControlDisabled === true
+            ? { enabled: false, mode: "disabled_by_admin" }
+            : undefined,
+          quality_control: settings.generatedTextQualityControlDisabled === true
+            ? { generated_text: false }
+            : undefined,
+          prompt: sanitizePrompt(input.prompt),
           negative_prompt: settings.negativePrompt,
           resolution: settings.resolution ?? resolution,
           fps: settings.fps ?? settings.frameRate ?? 24,
@@ -744,7 +806,7 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
           storyboard: storyboard.map((scene) => ({
             id: scene.id,
             title: scene.title,
-            prompt: scene.prompt,
+            prompt: sanitizePrompt(scene.prompt),
             duration: scene.duration,
             trim_start: scene.trimStart,
             trim_end: scene.trimEnd,
@@ -756,7 +818,17 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
             transition_duration: scene.transitionDuration,
             carry_previous_frame: scene.carryPreviousFrame,
             reference_ids: scene.referenceIds,
-            generated_text_intent: scene.generatedTextIntent,
+            audio_intent: scene.audioIntent
+              ? {
+                  mode: scene.audioIntent.mode,
+                  reason: scene.audioIntent.reason,
+                  dialogue: scene.audioIntent.dialogue,
+                  ambience: scene.audioIntent.ambience,
+                  sound_effects: scene.audioIntent.soundEffects,
+                  music: scene.audioIntent.music,
+                  silence: scene.audioIntent.silence,
+                }
+              : undefined,
             start_frame_base64: scene.startFrameBase64,
             end_frame_base64: scene.endFrameBase64,
             keyframes: scene.keyframes?.map((keyframe) => ({

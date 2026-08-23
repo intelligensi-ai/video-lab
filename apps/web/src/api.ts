@@ -648,6 +648,55 @@ export function effectiveNegativePrompt(value: string) {
     .join(", ");
 }
 
+function effectiveAudioPolicy(payload: LongFormGenerationPayload) {
+  if (payload.audioPolicy.mode === "silent") return payload.audioPolicy;
+  const sceneModes = new Set(
+    payload.scenes
+      .map((scene) => scene.audioIntent?.mode)
+      .filter((mode): mode is NonNullable<StoryboardScenePayload["audioIntent"]>["mode"] =>
+        Boolean(mode && mode !== "silent"),
+      ),
+  );
+  if (!sceneModes.size) return payload.audioPolicy;
+  return {
+    ...payload.audioPolicy,
+    mode: "directed" as const,
+    dialogue: sceneModes.has("dialogue") || sceneModes.has("mixed") ? "on" as const : payload.audioPolicy.dialogue,
+    soundEffects: sceneModes.has("sound_effects") || sceneModes.has("mixed") ? "on" as const : payload.audioPolicy.soundEffects,
+    ambience: sceneModes.has("ambience") || sceneModes.has("mixed") ? "on" as const : payload.audioPolicy.ambience,
+    music: sceneModes.has("music") || sceneModes.has("mixed") ? "on" as const : payload.audioPolicy.music,
+  };
+}
+
+function audioIntentReason(intent: StoryboardScenePayload["audioIntent"]) {
+  if (!intent) return "";
+  const entries = [
+    ["Dialogue", intent.dialogue],
+    ["Ambience", intent.ambience],
+    ["Sound effects", intent.soundEffects],
+    ["Music", intent.music],
+    ["Silence", intent.silence],
+  ]
+    .map(([label, value]) => [label, typeof value === "string" ? value.trim() : ""] as const)
+    .filter(([, value]) => value);
+  return entries.length
+    ? entries.map(([label, value]) => `${label}: ${value}`).join("\n")
+    : intent.reason;
+}
+
+function runtimeAudioIntent(scene: StoryboardScenePayload) {
+  if (!scene.audioIntent) return undefined;
+  return {
+    mode: scene.audioIntent.mode,
+    reason: audioIntentReason(scene.audioIntent),
+    dialogue: scene.audioIntent.dialogue,
+    ambience: scene.audioIntent.ambience,
+    soundEffects: scene.audioIntent.soundEffects,
+    music: scene.audioIntent.music,
+    silence: scene.audioIntent.silence,
+  };
+}
+
 export async function generateLongFormVideo(
   payload: LongFormGenerationPayload,
   projectId: string,
@@ -680,6 +729,7 @@ export async function generateLongFormVideo(
         : await fileToDataUrl(scene.endFrame);
       return {
         ...scene,
+        audioIntent: runtimeAudioIntent(scene),
         prompt:
           scene.prompt.trim() ||
           `Scene ${index + 1}: create a clear cinematic beat that advances this film overview: ${payload.overallGoal}`,
@@ -719,7 +769,7 @@ export async function generateLongFormVideo(
         quality: payload.postProcess === "none" ? "draft" : "high",
         overallGoal: payload.overallGoal,
         originalMasterPrompt: payload.originalOverallGoal ?? payload.overallGoal,
-        audioPolicy: payload.audioPolicy,
+        audioPolicy: effectiveAudioPolicy(payload),
         generatedTextPolicy: payload.generatedTextPolicy,
         projectId,
         operationScope: "project",
@@ -820,9 +870,10 @@ export function storyboardEnhancementRequest(
         scene.startFrame || scene.endFrame ? "image_to_video" : "text_to_video",
       referenceIds: scene.referenceIds ?? [],
       selectedControls: scene.recommendedControls ?? [],
-      audioIntent: scene.audioIntent ?? {
+      audioIntent: runtimeAudioIntent(scene) ?? {
         mode: "silent",
         reason: "No scene-specific audio direction has been accepted.",
+        silence: "No scene-specific audio direction has been accepted.",
       },
       generatedTextIntent: scene.generatedTextIntent ?? {
         mode: "none",
@@ -909,7 +960,7 @@ export async function generateStoryboardFrame(
         framePrompt,
         overallGoal: payload.overallGoal,
         originalMasterPrompt: payload.originalOverallGoal ?? payload.overallGoal,
-        audioPolicy: payload.audioPolicy,
+        audioPolicy: effectiveAudioPolicy(payload),
         generatedTextPolicy: payload.generatedTextPolicy,
         filmBible: payload.continuityBible,
         negativePrompt: effectiveNegativePrompt(payload.negativePrompt),
@@ -968,7 +1019,7 @@ export async function generateStoryboardScene(
         operationSceneId: scene.id,
         overallGoal: payload.overallGoal,
         originalMasterPrompt: payload.originalOverallGoal ?? payload.overallGoal,
-        audioPolicy: payload.audioPolicy,
+        audioPolicy: effectiveAudioPolicy(payload),
         generatedTextPolicy: payload.generatedTextPolicy,
         filmBible: payload.continuityBible,
         negativePrompt: effectiveNegativePrompt(payload.negativePrompt),
@@ -1023,7 +1074,7 @@ export async function assembleStoryboardFilm(
         operationScope: "assembly",
         overallGoal: payload.overallGoal,
         originalMasterPrompt: payload.originalOverallGoal ?? payload.overallGoal,
-        audioPolicy: payload.audioPolicy,
+        audioPolicy: effectiveAudioPolicy(payload),
         generatedTextPolicy: payload.generatedTextPolicy,
         resolution: payload.resolution,
         fps: payload.fps,

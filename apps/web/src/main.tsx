@@ -169,6 +169,7 @@ async function demoApi<T>(path: string, init: RequestInit = {}) {
       status: "healthy",
       acceptingSubmissions: true,
       killSwitch: false,
+      generatedTextQualityControlDisabled: false,
       lastHeartbeatAt: nowIso(),
       queueDepth: generations.filter((g) =>
         ["queued", "preparing", "generating", "uploading"].includes(g.status),
@@ -212,6 +213,53 @@ async function demoApi<T>(path: string, init: RequestInit = {}) {
                 ? generation.safeErrorMessage ?? "Generation failed"
                 : "Generation is active"),
         })),
+    } as T;
+  }
+
+  if (path.startsWith("/v1/admin/director/logs")) {
+    return {
+      updatedAt: nowIso(),
+      items: [
+        {
+          id: "demo-director-job",
+          uid: token(),
+          kind: "director_proposal",
+          status: "completed",
+          stage: "completed",
+          projectId: "demo-project",
+          attempt: 1,
+          correlationId: "demo-director-correlation",
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+          input: {
+            message: "Improve scene 1 sound direction.",
+            selectedSceneId: "scene-1",
+            shots: [
+              {
+                shotNumber: 1,
+                title: "Demo scene",
+                prompt: "A concise visual prompt.",
+                audioIntent: {
+                  mode: "dialogue",
+                  dialogue: "Natural spoken exchange without visible captions.",
+                  ambience: "Soft room tone.",
+                  soundEffects: "",
+                  music: "",
+                  silence: "",
+                },
+              },
+            ],
+          },
+          output: {
+            type: "proposal",
+            proposalId: "demo-proposal",
+            action: "propose_scene_change",
+            summary: "Director returned a scene sound update.",
+            explanation: "The dialogue intent was separated from visual text.",
+            diff: [],
+          },
+        },
+      ],
     } as T;
   }
 
@@ -294,6 +342,7 @@ async function demoApi<T>(path: string, init: RequestInit = {}) {
       status: "healthy",
       acceptingSubmissions: true,
       killSwitch: false,
+      generatedTextQualityControlDisabled: false,
       lastHeartbeatAt: nowIso(),
       queueDepth: generations.filter((g) =>
         ["queued", "preparing", "generating", "uploading"].includes(g.status),
@@ -2308,6 +2357,60 @@ type RuntimeLogsResponse = {
   updatedAt: string;
   items: RuntimeLogItem[];
 };
+type DirectorLogShot = {
+  shotNumber?: number;
+  title?: string;
+  prompt?: string;
+  audioIntent?: {
+    mode?: string;
+    reason?: string;
+    dialogue?: string;
+    ambience?: string;
+    soundEffects?: string;
+    music?: string;
+    silence?: string;
+  };
+};
+type DirectorLogItem = {
+  id: string;
+  uid: string;
+  kind: "storyboard_enhancement" | "director_proposal";
+  status: string;
+  stage: string;
+  projectId?: string;
+  attempt?: number;
+  claimedBy?: string;
+  leaseExpiresAt?: string;
+  retryAfterAt?: string;
+  correlationId?: string;
+  createdAt: string;
+  updatedAt: string;
+  safeErrorMessage?: string;
+  input: {
+    message?: string;
+    selectedSceneId?: string;
+    operation?: string;
+    targetShotNumber?: number;
+    shotCount?: number;
+    audioPolicy?: unknown;
+    shots?: DirectorLogShot[];
+  };
+  output?: {
+    type: "proposal" | "enhancement";
+    proposalId?: string;
+    action?: string;
+    summary?: string;
+    explanation?: string;
+    polishedMasterPrompt?: string;
+    shotCount?: number;
+    diff?: Array<{ path: string; label: string; before: string; after: string }>;
+    shots?: DirectorLogShot[];
+  };
+};
+type DirectorLogsResponse = {
+  updatedAt: string;
+  items: DirectorLogItem[];
+};
 function shortTime(value?: string) {
   return value ? new Date(value).toLocaleTimeString() : "—";
 }
@@ -2321,7 +2424,20 @@ function elapsedLabel(start?: string, end?: string) {
   const remainder = seconds % 60;
   return minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
 }
+function soundIntentSummary(intent?: DirectorLogShot["audioIntent"]) {
+  if (!intent) return "No sound intent";
+  return [
+    intent.mode ? `mode: ${intent.mode}` : "",
+    intent.dialogue ? `dialogue: ${intent.dialogue}` : "",
+    intent.ambience ? `ambience: ${intent.ambience}` : "",
+    intent.soundEffects ? `effects: ${intent.soundEffects}` : "",
+    intent.music ? `music: ${intent.music}` : "",
+    intent.silence ? `silence: ${intent.silence}` : "",
+    intent.reason ? `reason: ${intent.reason}` : "",
+  ].filter(Boolean).join(" | ") || "No sound intent";
+}
 function Admin() {
+  const qc = useQueryClient();
   const r = useQuery({
     queryKey: ["runtime"],
     queryFn: () => api<RuntimeStatus>("/v1/runtime/status"),
@@ -2332,9 +2448,27 @@ function Admin() {
     queryFn: () => api<RuntimeLogsResponse>("/v1/admin/runtime/logs?limit=40"),
     refetchInterval: 3_000,
   });
+  const directorLogs = useQuery({
+    queryKey: ["admin-director-logs"],
+    queryFn: () => api<DirectorLogsResponse>("/v1/admin/director/logs?limit=30"),
+    refetchInterval: 3_000,
+  });
+  const generatedTextQc = useMutation({
+    mutationFn: (disabled: boolean) =>
+      api<RuntimeStatus>("/v1/admin/runtime/generated-text-qc", {
+        method: "POST",
+        body: JSON.stringify({ disabled }),
+      }),
+    onSuccess: (status) => {
+      qc.setQueryData(["runtime"], status);
+      void r.refetch();
+    },
+  });
   const discovery = r.data?.discovery;
   const connected =
     r.data?.status === "healthy" && discovery?.state === "connected";
+  const generatedTextQcDisabled =
+    r.data?.generatedTextQualityControlDisabled === true;
   const activeCount =
     logs.data?.items.filter((item) =>
       ["queued", "preparing", "generating", "uploading"].includes(item.status),
@@ -2396,7 +2530,34 @@ function Admin() {
             <small>Active jobs</small>
             <strong>{activeCount}</strong>
           </span>
+          <span>
+            <small>Generated text QC</small>
+            <strong>{generatedTextQcDisabled ? "Disabled" : "Enabled"}</strong>
+          </span>
         </div>
+        <div className="runtime-admin-controls">
+          <button
+            type="button"
+            disabled={generatedTextQc.isPending || r.isLoading}
+            onClick={() => generatedTextQc.mutate(!generatedTextQcDisabled)}
+          >
+            {generatedTextQcDisabled
+              ? "Enable generated-text QC"
+              : "Disable generated-text QC"}
+          </button>
+          <p>
+            {generatedTextQcDisabled
+              ? "Generated-text quality control is bypassed for new renders so completed videos can be reviewed manually."
+              : "Generated-text quality control can stop renders when the runtime detects captions or readable text."}
+          </p>
+        </div>
+        {generatedTextQc.error && (
+          <p className="error">
+            {generatedTextQc.error instanceof Error
+              ? generatedTextQc.error.message
+              : "Generated-text quality control could not be updated"}
+          </p>
+        )}
         <div className="runtime-log-panel">
           <div className="runtime-log-toolbar">
             <span>
@@ -2437,6 +2598,89 @@ function Admin() {
             ))}
             {!logs.isLoading && !logs.data?.items.length && (
               <p className="runtime-log-empty">No generation activity yet.</p>
+            )}
+          </div>
+        </div>
+        <div className="runtime-log-panel director-log-panel">
+          <div className="runtime-log-toolbar">
+            <span>
+              {directorLogs.isFetching ? "Refreshing Director I/O" : "Director I/O current"}
+            </span>
+            <button type="button" onClick={() => directorLogs.refetch()}>
+              Refresh
+            </button>
+          </div>
+          {directorLogs.error && (
+            <p className="error">
+              {directorLogs.error instanceof Error
+                ? directorLogs.error.message
+                : "Director logs could not be loaded"}
+            </p>
+          )}
+          <div className="runtime-log-list">
+            {(directorLogs.data?.items ?? []).map((item) => (
+              <article
+                key={item.id}
+                className={`runtime-log-entry director-log-entry status-${item.status}`}
+              >
+                <div className="runtime-log-entry-main">
+                  <span>{shortTime(item.updatedAt)}</span>
+                  <strong>
+                    {item.kind === "director_proposal"
+                      ? "Director proposal"
+                      : "Storyboard enhancement"}{" "}
+                    {item.output?.action ? `· ${item.output.action}` : ""}
+                  </strong>
+                  <small>{item.id}</small>
+                </div>
+                <div className="runtime-log-entry-meta">
+                  <span>{item.status}</span>
+                  <span>{item.stage}</span>
+                  <span>attempt {item.attempt ?? "—"}</span>
+                  <span>{elapsedLabel(item.createdAt, item.status === "completed" || item.status === "failed" || item.status === "cancelled" ? item.updatedAt : undefined)}</span>
+                  <span>{item.input.selectedSceneId ?? item.input.operation ?? "project"}</span>
+                  <span>{item.correlationId ?? "no correlation"}</span>
+                </div>
+                <div className="director-log-io">
+                  <section>
+                    <small>Input</small>
+                    <p>{item.input.message || "No user instruction captured"}</p>
+                    {item.input.shots?.map((shot) => (
+                      <p key={`${item.id}-input-${shot.shotNumber ?? shot.title}`} className="director-log-shot">
+                        <strong>{shot.shotNumber ? `Scene ${shot.shotNumber}` : "Scene"}:</strong>{" "}
+                        {shot.title || shot.prompt || "Untitled"}<br />
+                        {soundIntentSummary(shot.audioIntent)}
+                      </p>
+                    ))}
+                  </section>
+                  <section>
+                    <small>Output</small>
+                    <p>
+                      {item.safeErrorMessage ??
+                        item.output?.summary ??
+                        item.output?.polishedMasterPrompt ??
+                        "Waiting for Director output"}
+                    </p>
+                    {item.output?.explanation && <p>{item.output.explanation}</p>}
+                    {item.output?.shots?.map((shot) => (
+                      <p key={`${item.id}-output-${shot.shotNumber ?? shot.title}`} className="director-log-shot">
+                        <strong>{shot.shotNumber ? `Scene ${shot.shotNumber}` : "Scene"}:</strong>{" "}
+                        {shot.title || shot.prompt || "Untitled"}<br />
+                        {soundIntentSummary(shot.audioIntent)}
+                      </p>
+                    ))}
+                    {item.output?.diff?.length ? (
+                      <details>
+                        <summary>Diff</summary>
+                        <pre>{JSON.stringify(item.output.diff, null, 2)}</pre>
+                      </details>
+                    ) : null}
+                  </section>
+                </div>
+              </article>
+            ))}
+            {!directorLogs.isLoading && !directorLogs.data?.items.length && (
+              <p className="runtime-log-empty">No Director activity yet.</p>
             )}
           </div>
         </div>

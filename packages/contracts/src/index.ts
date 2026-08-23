@@ -94,6 +94,7 @@ export interface RuntimeStatus {
   status: "healthy" | "degraded" | "unavailable" | "paused";
   acceptingSubmissions: boolean;
   killSwitch: boolean;
+  generatedTextQualityControlDisabled?: boolean;
   lastHeartbeatAt?: string;
   activeGenerationId?: string;
   queueDepth: number;
@@ -249,6 +250,11 @@ export interface StoryboardAudioPolicy {
 export interface StoryboardAudioIntent {
   mode: "silent" | "dialogue" | "ambience" | "sound_effects" | "music" | "mixed";
   reason: string;
+  dialogue?: string;
+  ambience?: string;
+  soundEffects?: string;
+  music?: string;
+  silence?: string;
 }
 
 export interface StoryboardGeneratedTextPolicy {

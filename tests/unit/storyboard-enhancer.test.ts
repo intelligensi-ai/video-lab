@@ -85,6 +85,17 @@ const runtimeContext: StoryboardEnhancementRuntimeContext = {
   visualReferences: [],
   textOnlyReferenceIds: [],
 };
+const directorAudioIntent = (intent: StoryboardEnhancementRequest["shots"][number]["audioIntent"]) => ({
+  mode: intent.mode,
+  reason: [
+    intent.reason,
+    intent.dialogue ? `Dialogue: ${intent.dialogue}` : "",
+    intent.ambience ? `Ambience: ${intent.ambience}` : "",
+    intent.soundEffects ? `Sound effects: ${intent.soundEffects}` : "",
+    intent.music ? `Music: ${intent.music}` : "",
+    intent.silence ? `Silence: ${intent.silence}` : "",
+  ].filter(Boolean).join(" ").slice(0, 1_000),
+});
 
 describe("storyboard enhancer contract", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -329,7 +340,7 @@ describe("storyboard enhancer contract", () => {
             generationMode: shot.generationMode,
             referenceIds: shot.referenceIds,
             selectedControls: shot.selectedControls,
-            audioIntent: shot.audioIntent,
+            audioIntent: directorAudioIntent(shot.audioIntent),
             generatedTextIntent: shot.generatedTextIntent,
             carryPreviousFrame: shot.carryPreviousFrame,
             firstFrameAvailable: shot.firstFrameAvailable,
@@ -362,6 +373,52 @@ describe("storyboard enhancer contract", () => {
     await expect(client.enhance(request, runtimeContext)).resolves.toMatchObject({
       provider: "llama_cpp",
       model: "Bonsai-27B-Q1_0",
+      shots: [{ shotNumber: 1 }, { shotNumber: 2 }],
+    });
+  });
+
+  it("flattens expanded Video Lab sound tabs for the current Director runtime contract", async () => {
+    const requestWithSoundTabs: StoryboardEnhancementRequest = {
+      ...request,
+      shots: request.shots.map((shot, index) => ({
+        ...shot,
+        audioIntent: index === 0
+          ? {
+              mode: "dialogue",
+              reason: "Use restrained production sound.",
+              dialogue: "One short ancient Greek line, spoken naturally.",
+              ambience: "Harbour wind and distant city activity.",
+              soundEffects: "Soft rope creaks.",
+              music: "",
+              silence: "",
+            }
+          : shot.audioIntent,
+      })),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.shots[0].audioIntent).toEqual({
+          mode: "dialogue",
+          reason: "Use restrained production sound. Dialogue: One short ancient Greek line, spoken naturally. Ambience: Harbour wind and distant city activity. Sound effects: Soft rope creaks.",
+        });
+        expect(body.shots[0].audioIntent.dialogue).toBeUndefined();
+        return Response.json({
+          ...mockStoryboardEnhancement(requestWithSoundTabs),
+          provider: "llama_cpp",
+          model: "Bonsai-27B-Q1_0",
+        });
+      }),
+    );
+    const client = new DeployStudioStoryboardEnhancerClient({
+      baseUrl: "https://api.intelligensi.ai",
+      token: "server-only-key",
+      runtimeId: "longform-ltx-storyboard-studio",
+    });
+
+    await expect(client.enhance(requestWithSoundTabs, runtimeContext)).resolves.toMatchObject({
+      provider: "llama_cpp",
       shots: [{ shotNumber: 1 }, { shotNumber: 2 }],
     });
   });

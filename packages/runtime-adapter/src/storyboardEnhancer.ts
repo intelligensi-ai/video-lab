@@ -115,7 +115,7 @@ function runtimeApiEnhancementRequest(
       generationMode: shot.generationMode,
       referenceIds: shot.referenceIds,
       selectedControls: shot.selectedControls,
-      audioIntent: shot.audioIntent,
+      audioIntent: directorAudioIntent(shot.audioIntent),
       generatedTextIntent: shot.generatedTextIntent,
       carryPreviousFrame: shot.carryPreviousFrame,
       firstFrameAvailable: shot.firstFrameAvailable,
@@ -160,7 +160,7 @@ function deployStudioEnhancementRequest(
       generationMode: shot.generationMode,
       referenceIds: shot.referenceIds,
       selectedControls: shot.selectedControls,
-      audioIntent: shot.audioIntent,
+      audioIntent: directorAudioIntent(shot.audioIntent),
       generatedTextIntent: shot.generatedTextIntent,
     })),
     ...(request.targetShotNumber === undefined
@@ -171,6 +171,29 @@ function deployStudioEnhancementRequest(
     audioPolicy: request.audioPolicy,
     generatedTextPolicy: request.generatedTextPolicy,
     videoModel: request.videoModel ?? "ltx-2.3",
+  };
+}
+
+function directorAudioIntent(intent: StoryboardAudioIntent): Pick<StoryboardAudioIntent, "mode" | "reason"> {
+  const details = [
+    ["Dialogue", intent.dialogue],
+    ["Ambience", intent.ambience],
+    ["Sound effects", intent.soundEffects],
+    ["Music", intent.music],
+    ["Silence", intent.silence],
+  ]
+    .flatMap(([label, value]) => {
+      const textValue = String(value ?? "").trim();
+      return textValue ? [`${label}: ${textValue}`] : [];
+    })
+    .join(" ");
+  return {
+    mode: intent.mode,
+    reason: [intent.reason, details]
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean)
+      .join(" ")
+      .slice(0, 1_000),
   };
 }
 
@@ -190,6 +213,20 @@ function exactKeys(
     throw new Error(`${label} contains unexpected fields`);
   }
   if ([...allowed].some((key) => !Object.prototype.hasOwnProperty.call(value, key))) {
+    throw new Error(`${label} is missing required fields`);
+  }
+}
+
+function exactKeysWithRequired(
+  value: Record<string, unknown>,
+  allowed: Set<string>,
+  required: Set<string>,
+  label: string,
+) {
+  if (Object.keys(value).some((key) => !allowed.has(key))) {
+    throw new Error(`${label} contains unexpected fields`);
+  }
+  if ([...required].some((key) => !Object.prototype.hasOwnProperty.call(value, key))) {
     throw new Error(`${label} is missing required fields`);
   }
 }
@@ -349,6 +386,11 @@ function normalizeDeployStudioEnhancement(
           ? audioIntent?.mode
           : fallbackShot.audioIntent.mode,
         reason: optionalString(audioIntent?.reason, fallbackShot.audioIntent.reason),
+        dialogue: optionalString(audioIntent?.dialogue, fallbackShot.audioIntent.dialogue ?? ""),
+        ambience: optionalString(audioIntent?.ambience, fallbackShot.audioIntent.ambience ?? ""),
+        soundEffects: optionalString(audioIntent?.soundEffects ?? audioIntent?.sound_effects, fallbackShot.audioIntent.soundEffects ?? ""),
+        music: optionalString(audioIntent?.music, fallbackShot.audioIntent.music ?? ""),
+        silence: optionalString(audioIntent?.silence, fallbackShot.audioIntent.silence ?? ""),
       },
       generatedTextIntent: {
         mode: ["none", "environmental", "explicit_overlay"].includes(String(generatedTextIntent?.mode))
@@ -490,7 +532,12 @@ export function validateStoryboardEnhancement(
     const recommendedControls = stringList(shot.recommendedControls, "Shot control", 16, 64);
     if (recommendedControls.some((control) => !allowedControls.has(control))) throw new Error("Shot contains an unsupported control");
     const rawAudioIntent = object(shot.audioIntent, "Shot audio intent");
-    exactKeys(rawAudioIntent, new Set(["mode", "reason"]), "Shot audio intent");
+    exactKeysWithRequired(
+      rawAudioIntent,
+      new Set(["mode", "reason", "dialogue", "ambience", "soundEffects", "sound_effects", "music", "silence"]),
+      new Set(["mode", "reason"]),
+      "Shot audio intent",
+    );
     const audioMode = String(rawAudioIntent.mode) as StoryboardAudioIntent["mode"];
     if (!["silent", "dialogue", "ambience", "sound_effects", "music", "mixed"].includes(audioMode)) throw new Error("Shot audio intent is invalid");
     const candidateVariations = stringList(shot.candidateVariations, "Candidate variation", 4, 2_000);
@@ -509,7 +556,15 @@ export function validateStoryboardEnhancement(
       continuityNotes: text(shot.continuityNotes, "Continuity notes", 2_000),
       referenceIds,
       recommendedControls,
-      audioIntent: { mode: audioMode, reason: text(rawAudioIntent.reason, "Audio intent reason", 1_000) },
+      audioIntent: {
+        mode: audioMode,
+        reason: text(rawAudioIntent.reason, "Audio intent reason", 1_000),
+        dialogue: optionalString(rawAudioIntent.dialogue, ""),
+        ambience: optionalString(rawAudioIntent.ambience, ""),
+        soundEffects: optionalString(rawAudioIntent.soundEffects ?? rawAudioIntent.sound_effects, ""),
+        music: optionalString(rawAudioIntent.music, ""),
+        silence: optionalString(rawAudioIntent.silence, ""),
+      },
       generatedTextIntent: generatedTextIntent(shot.generatedTextIntent, request),
       candidateVariations,
     };
