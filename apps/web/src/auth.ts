@@ -31,6 +31,63 @@ export const firebaseApp = isProductionFirebase
 export const firebaseAuth = firebaseApp ? getAuth(firebaseApp) : undefined;
 let signInPromise: Promise<User> | undefined;
 
+function browserSessionStorage() {
+  if (typeof window === "undefined") return undefined;
+  try {
+    return window.sessionStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+function browserLocalStorage() {
+  if (typeof window === "undefined") return undefined;
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+function readJsonStorage<T>(key: string, fallback: T, preferSession = true): T {
+  const stores = preferSession
+    ? [browserSessionStorage(), browserLocalStorage()]
+    : [browserLocalStorage(), browserSessionStorage()];
+  for (const store of stores) {
+    if (!store) continue;
+    try {
+      const raw = store.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as T;
+      return parsed;
+    } catch {
+      continue;
+    }
+  }
+  return fallback;
+}
+
+function writeJsonStorage(key: string, value: unknown, preferSession = true) {
+  const serialized = JSON.stringify(value);
+  const stores = preferSession
+    ? [browserSessionStorage(), browserLocalStorage()]
+    : [browserLocalStorage(), browserSessionStorage()];
+  for (const store of stores) {
+    if (!store) continue;
+    try {
+      store.setItem(key, serialized);
+      return;
+    } catch {
+      continue;
+    }
+  }
+}
+
+function removeStoredValue(key: string) {
+  browserSessionStorage()?.removeItem(key);
+  browserLocalStorage()?.removeItem(key);
+}
+
 async function ensureUser() {
   if (!firebaseAuth) throw new Error('Firebase Auth is not configured');
   // Firebase restores a persisted Google session asynchronously. Waiting here
@@ -54,7 +111,11 @@ export async function ensureAnonymousUser() {
 
 export async function getApiToken() {
   if (!isProductionFirebase) {
-    return localStorage.getItem('vl_token') || 'demo-user';
+    return (
+      browserSessionStorage()?.getItem("vl_token") ??
+      browserLocalStorage()?.getItem("vl_token") ??
+      "demo-user"
+    );
   }
   return (await ensureUser()).getIdToken();
 }
@@ -141,7 +202,7 @@ export function getFriendlyAuthError(error: unknown) {
 
 export async function signOutUser() {
   if (!firebaseAuth) {
-    localStorage.removeItem('vl_token');
+    removeStoredValue("vl_token");
     return;
   }
   await signOut(firebaseAuth);
@@ -161,8 +222,7 @@ export async function getFirebaseUser() {
 
 export async function loadRegistrationProfile() {
   if (!firebaseApp) {
-    try { return JSON.parse(localStorage.getItem('vl_registration') ?? '{}') as Record<string, unknown>; }
-    catch { return {}; }
+    return readJsonStorage<Record<string, unknown>>("vl_registration", {}, true);
   }
   const user = await ensureUser();
   const snapshot = await getDoc(doc(getFirestore(firebaseApp), 'users', user.uid));
@@ -170,7 +230,7 @@ export async function loadRegistrationProfile() {
 }
 
 export async function saveRegistrationProfile(registration: Record<string, unknown>) {
-  localStorage.setItem('vl_registration', JSON.stringify(registration));
+  writeJsonStorage("vl_registration", registration, true);
   if (!firebaseApp) return;
   const user = await ensureUser();
   await setDoc(doc(getFirestore(firebaseApp), 'users', user.uid), {

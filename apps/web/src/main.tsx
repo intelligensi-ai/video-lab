@@ -50,7 +50,27 @@ const DirectorWorkspace = React.lazy(
 const DEMO_GENERATIONS_KEY = "vl_demo_generations";
 const ENABLE_DEMO_API =
   import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_API === "true";
-const token = () => localStorage.getItem("vl_token") || "demo-user";
+function readSessionValue(key: string, fallback: string) {
+  try {
+    return window.sessionStorage.getItem(key) ?? window.localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeSessionValue(key: string, value: string) {
+  try {
+    window.sessionStorage.setItem(key, value);
+  } catch {
+    try {
+      window.localStorage.setItem(key, value);
+    } catch {
+      // If storage is unavailable, the app can still continue with in-memory state.
+    }
+  }
+}
+
+const token = () => readSessionValue("vl_token", "demo-user");
 
 type GenerationRequest = {
   prompt: string;
@@ -2107,19 +2127,19 @@ function Account() {
   const [authError, setAuthError] = useState<string>();
   const [authBusy, setAuthBusy] = useState(false);
   const [preferredName, setPreferredName] = useState(
-    () => localStorage.getItem("vl_profile_name") ?? "",
+    () => readSessionValue("vl_profile_name", ""),
   );
   const [creativeRole, setCreativeRole] = useState(
-    () => localStorage.getItem("vl_profile_role") ?? "",
+    () => readSessionValue("vl_profile_role", ""),
   );
   const [avatarChoice, setAvatarChoice] = useState(
-    () => localStorage.getItem("vl_profile_avatar") ?? "google",
+    () => readSessionValue("vl_profile_avatar", "google"),
   );
   useEffect(() => observeAuth(setFirebaseUser), []);
   useEffect(() => {
-    localStorage.setItem("vl_profile_name", preferredName);
-    localStorage.setItem("vl_profile_role", creativeRole);
-    localStorage.setItem("vl_profile_avatar", avatarChoice);
+    writeSessionValue("vl_profile_name", preferredName);
+    writeSessionValue("vl_profile_role", creativeRole);
+    writeSessionValue("vl_profile_avatar", avatarChoice);
   }, [preferredName, creativeRole, avatarChoice]);
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/v1/me") });
   const googleProfile = firebaseUser?.providerData.find(

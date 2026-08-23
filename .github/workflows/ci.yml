@@ -19,5 +19,6 @@ jobs:
       - run: pnpm openapi:lint
       - run: pnpm lint
       - run: pnpm typecheck
+      - run: pnpm audit --prod --audit-level high
       - run: pnpm test
       - run: pnpm build
