@@ -1164,6 +1164,11 @@ components:
       properties:
         mode: { type: string, enum: [silent, dialogue, ambience, sound_effects, music, mixed] }
         reason: { type: string, maxLength: 1000 }
+        dialogue: { type: string, maxLength: 1000 }
+        ambience: { type: string, maxLength: 1000 }
+        soundEffects: { type: string, maxLength: 1000 }
+        music: { type: string, maxLength: 1000 }
+        silence: { type: string, maxLength: 1000 }
     StoryboardGeneratedTextPolicy:
       type: object
       additionalProperties: false

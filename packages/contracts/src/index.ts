@@ -32,6 +32,8 @@ export interface VideoSettings {
 export interface Generation {
   id: string;
   prompt: string;
+  title?: string;
+  sceneSummary?: string;
   settings: VideoSettings;
   inputAssets?: unknown[];
   status: GenerationStatus;

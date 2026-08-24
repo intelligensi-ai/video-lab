@@ -124,6 +124,82 @@ type StoredGeneration = Generation & {
   outputObjectPath?: string;
   outputSha256?: string;
 };
+// Used at creation time so title/sceneSummary are never empty, and as the
+// permanent fallback if the Director Agent title call below fails or times out.
+function truncateAtWordBoundary(text: string, maxLength: number): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= maxLength) return collapsed;
+  const cut = collapsed.slice(0, maxLength - 1);
+  const lastSpace = cut.lastIndexOf(" ");
+  const base = lastSpace > maxLength * 0.4 ? cut.slice(0, lastSpace) : cut;
+  return `${base.trimEnd()}…`;
+}
+function deriveFallbackTitle(prompt: string): string {
+  return truncateAtWordBoundary(prompt, 50);
+}
+function deriveFallbackSceneSummary(prompt: string): string {
+  return truncateAtWordBoundary(prompt, 160);
+}
+// Best-effort call to Deploy Studio's Director Agent for a real AI-written
+// title/scene summary. Reuses the same base URL/token already configured for
+// storyboard enhancement. Returns undefined on any failure so the caller can
+// keep the deterministic fallback already stored on the generation.
+async function requestDirectorTitle(
+  prompt: string,
+): Promise<{ title?: string; sceneSummary?: string } | undefined> {
+  const baseUrlRaw = process.env.VIDEO_DEPLOY_STUDIO_BASE_URL;
+  const token = process.env.VIDEO_DEPLOY_STUDIO_API_TOKEN?.trim();
+  if (!baseUrlRaw || !token) return undefined;
+  let origin: string;
+  try {
+    origin = new URL(baseUrlRaw).origin;
+  } catch {
+    return undefined;
+  }
+  try {
+    const response = await fetch(new URL("/api/director-agent/title", `${origin}/`), {
+      method: "POST",
+      redirect: "error",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ prompt: prompt.slice(0, 4_000) }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) return undefined;
+    const payload = (await response.json().catch(() => undefined)) as
+      | { title?: unknown; sceneSummary?: unknown }
+      | undefined;
+    const title =
+      typeof payload?.title === "string" ? payload.title.trim().slice(0, 50) : "";
+    const sceneSummary =
+      typeof payload?.sceneSummary === "string"
+        ? payload.sceneSummary.trim().slice(0, 160)
+        : "";
+    return title || sceneSummary
+      ? { ...(title ? { title } : {}), ...(sceneSummary ? { sceneSummary } : {}) }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+async function patchGenerationFields(
+  id: string,
+  patch: { title?: string; sceneSummary?: string },
+) {
+  if (localAuth) {
+    const current = gens.get(id);
+    if (current) gens.set(id, { ...current, ...patch });
+    return;
+  }
+  adminApp();
+  try {
+    await getFirestore().collection("generations").doc(id).update(patch);
+  } catch {
+    /* Best-effort enrichment; ignore if the generation was deleted meanwhile. */
+  }
+}
 type StoredGenerationEdit = {
   id: string;
   uid: string;
@@ -6445,6 +6521,8 @@ app.post(
         requestHash,
         creatorAuthorization: reserveCreatorAuthorization(entitlement, id),
         prompt,
+        title: deriveFallbackTitle(prompt),
+        sceneSummary: deriveFallbackSceneSummary(prompt),
         settings,
         ...(referenceSnapshot.length > 0 ? { referenceSnapshot } : {}),
         inputAssets,
@@ -6472,6 +6550,9 @@ app.post(
       };
       log("generation_submitted", { uid: p.uid, generationId: id });
       res.status(201).json(publicGeneration(gen));
+      void requestDirectorTitle(prompt)
+        .then((result) => (result ? patchGenerationFields(id, result) : undefined))
+        .catch(() => undefined);
       void refreshQueueDepth().catch((error) =>
         log("runtime_capacity_refresh_failed", {
           errorCode: operationalErrorCode(error),
