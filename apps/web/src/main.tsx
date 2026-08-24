@@ -105,6 +105,15 @@ function isFrameOutput(generation?: Generation) {
   return output.kind === "frame" || output.contentType?.startsWith("image/");
 }
 
+function truncateAtWordBoundary(text: string, maxLength: number) {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= maxLength) return collapsed;
+  const cut = collapsed.slice(0, maxLength - 1);
+  const lastSpace = cut.lastIndexOf(" ");
+  const base = lastSpace > maxLength * 0.4 ? cut.slice(0, lastSpace) : cut;
+  return `${base.trimEnd()}…`;
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -1684,11 +1693,14 @@ function GalleryVideoEditor({
 function Detail() {
   const { id } = useParams();
   const [editorOpen, setEditorOpen] = useState(false);
+  const [promptExpanded, setPromptExpanded] = useState(false);
   const q = useQuery({
     queryKey: ["gen", id],
     queryFn: () => api<Generation>(`/v1/generations/${id}`),
     refetchInterval: 1500,
   });
+  const me = useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/v1/me") });
+  const isAdmin = me.data?.roles.includes("admin") ?? false;
   const proc = useMutation({
     mutationFn: () => api("/v1/dev/process-one", { method: "POST" }),
     onSuccess: () => q.refetch(),
@@ -1702,6 +1714,7 @@ function Detail() {
   const media = useAuthenticatedVideo(g?.output?.downloadUrl);
   const isVideo = isVideoOutput(g);
   const isFrame = isFrameOutput(g);
+  const thumbnail = g ? localStorage.getItem(`vl_thumbnail_${g.id}`) : null;
   const statusLabel = g?.status.replace("_", " ") ?? "";
   const createdLabel = g
     ? new Date(g.createdAt).toLocaleString(undefined, {
@@ -1721,12 +1734,9 @@ function Detail() {
       {g && (
         <>
           <header className="generation-detail-hero">
-            <Link className="generation-back-link" to="/gallery">
-              Back to gallery
-            </Link>
             <div>
               <span className="gallery-eyebrow">Generation details</span>
-              <h1>{g.prompt}</h1>
+              <h1>{g.title || truncateAtWordBoundary(g.prompt, 50)}</h1>
             </div>
             <div className="generation-detail-status">
               <span>{statusLabel}</span>
@@ -1749,6 +1759,15 @@ function Detail() {
                   src={media.objectUrl}
                   alt="Generated frame"
                 />
+              ) : isVideo && thumbnail ? (
+                <div className="generation-detail-media-loading">
+                  <img
+                    className="generation-detail-media-thumb"
+                    src={thumbnail}
+                    alt="Video thumbnail"
+                  />
+                  {g.output?.downloadUrl && <VideoRetrievalMark />}
+                </div>
               ) : (
                 <div className="thumb big">
                   {g.output?.downloadUrl ? <VideoRetrievalMark /> : g.status}
@@ -1761,14 +1780,6 @@ function Detail() {
             <aside className="generation-detail-sidebar">
               <div className="generation-detail-metrics">
                 <div>
-                  <span>Status</span>
-                  <strong>{statusLabel}</strong>
-                </div>
-                <div>
-                  <span>Output</span>
-                  <strong>{isFrame ? "Frame" : "Video"}</strong>
-                </div>
-                <div>
                   <span>Duration</span>
                   <strong>{durationLabel}</strong>
                 </div>
@@ -1777,9 +1788,23 @@ function Detail() {
                   <strong>{String(g.settings.videoModel ?? "ltx-2.3")}</strong>
                 </div>
               </div>
+              <section className="generation-scene-card">
+                <span>Scene</span>
+                <p>{g.sceneSummary || truncateAtWordBoundary(g.prompt, 160)}</p>
+              </section>
               <section className="generation-prompt-card">
                 <span>Prompt</span>
-                <p>{g.prompt}</p>
+                <p className={promptExpanded ? "expanded" : ""}>{g.prompt}</p>
+                {g.prompt.length > 220 && (
+                  <button
+                    className="gallery-prompt-toggle"
+                    type="button"
+                    aria-expanded={promptExpanded}
+                    onClick={() => setPromptExpanded((value) => !value)}
+                  >
+                    {promptExpanded ? "Read less" : "Read more"}
+                  </button>
+                )}
               </section>
               {g.safeErrorMessage && (
                 <p className="error">{g.safeErrorMessage}</p>
@@ -1788,7 +1813,7 @@ function Detail() {
                 {isVideo && media.objectUrl && (
                   <button
                     type="button"
-                    className="generation-edit-action"
+                    className="generation-edit-action gradient-action"
                     onClick={() => setEditorOpen(true)}
                   >
                     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1800,21 +1825,49 @@ function Detail() {
                 )}
                 {media.objectUrl && (
                   <a
-                    className="button"
+                    className="button gradient-action"
                     href={media.objectUrl}
                     download={`${g.id}.${isFrame ? "png" : "mp4"}`}
                   >
-                    Download
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    <span>Download</span>
                   </a>
                 )}
-                <button onClick={() => navigator.clipboard.writeText(g.prompt)}>
-                  Copy prompt
+                <button
+                  type="button"
+                  className="gradient-action"
+                  onClick={() => navigator.clipboard.writeText(g.prompt)}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  <span>Copy prompt</span>
                 </button>
-                <Link className="button" to="/videolab">
-                  Create Variation
+                <Link className="button gradient-action" to="/videolab">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <polyline points="23 4 23 10 17 10" />
+                    <polyline points="1 20 1 14 7 14" />
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                  </svg>
+                  <span>Create Variation</span>
                 </Link>
                 {!["completed", "failed", "cancelled"].includes(g.status) && (
-                  <button onClick={() => cancel.mutate()}>Cancel</button>
+                  <button
+                    type="button"
+                    className="gradient-action gradient-action-cancel"
+                    onClick={() => cancel.mutate()}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                    <span>Cancel</span>
+                  </button>
                 )}
                 {import.meta.env.DEV &&
                   import.meta.env.VITE_ENABLE_DEMO_API === "true" && (
@@ -1828,10 +1881,12 @@ function Detail() {
                   <dt>Created</dt>
                   <dd>{createdLabel}</dd>
                 </div>
-                <div>
-                  <dt>ID</dt>
-                  <dd>{g.id}</dd>
-                </div>
+                {isAdmin && (
+                  <div>
+                    <dt>ID</dt>
+                    <dd>{g.id}</dd>
+                  </div>
+                )}
               </dl>
             </aside>
           </section>
@@ -1841,9 +1896,47 @@ function Detail() {
               onClose={() => setEditorOpen(false)}
             />
           )}
+          <DetailCarousel currentId={g.id} />
         </>
       )}
     </main>
+  );
+}
+function DetailCarousel({ currentId }: { currentId: string }) {
+  const q = useQuery({
+    queryKey: ["gallery"],
+    queryFn: () => api<{ items: Generation[] }>("/v1/gallery"),
+  });
+  const items = q.data?.items ?? [];
+  if (!items.length) return null;
+  return (
+    <nav className="detail-carousel" aria-label="Gallery">
+      <div className="detail-carousel-track">
+        {items.map((item) => {
+          const thumbnail = localStorage.getItem(`vl_thumbnail_${item.id}`);
+          return (
+            <Link
+              key={item.id}
+              to={`/generations/${item.id}`}
+              className={
+                item.id === currentId
+                  ? "detail-carousel-item active"
+                  : "detail-carousel-item"
+              }
+              title={item.title || item.prompt}
+            >
+              {thumbnail ? (
+                <img src={thumbnail} alt="" />
+              ) : (
+                <span className="detail-carousel-fallback">
+                  {isFrameOutput(item) ? "Frame" : item.status}
+                </span>
+              )}
+            </Link>
+          );
+        })}
+      </div>
+    </nav>
   );
 }
 type RegistrationProfile = {
