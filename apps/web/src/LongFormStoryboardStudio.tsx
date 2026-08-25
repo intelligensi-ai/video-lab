@@ -1291,11 +1291,6 @@ export default function LongFormStoryboardStudio({
     !enhancement.isPending &&
     !classicBriefEnhancement.isPending &&
     !directorRepair.isPending;
-  const creatorLengthLocked =
-    Boolean(
-      currentGeneration &&
-        !["failed", "cancelled"].includes(currentGeneration.status),
-    ) && !canGenerateNow;
   const runtimeFeatureStatus = runtime.data?.capabilities?.featureStatus ?? {};
   const runtimePostProcess = runtime.data?.capabilities?.postProcess;
   const upscaleSupported = postProcessSupportsUpscale(runtimePostProcess);
@@ -1564,7 +1559,7 @@ export default function LongFormStoryboardStudio({
           <span className="lf-label lf-format-heading">
             Length
             <output className="lf-duration-value">
-              {Math.min(totalSeconds, creatorMaxScenes * 4)}
+              {Math.min(totalSeconds, creatorMaxScenes * 8)}
               <small>s</small>
             </output>
           </span>
@@ -1572,11 +1567,11 @@ export default function LongFormStoryboardStudio({
             type="range"
             className="lf-minimal-duration-slider"
             aria-label="Video length"
-            disabled={!sessionReady || creatorLengthLocked}
+            disabled={!sessionReady}
             min={1}
-            max={creatorMaxScenes * 4}
+            max={creatorMaxScenes * 8}
             step={1}
-            value={Math.min(totalSeconds, creatorMaxScenes * 4)}
+            value={Math.min(totalSeconds, creatorMaxScenes * 8)}
             onChange={(event) => {
               const value = Number(event.target.value);
               setForm((current) => ({
@@ -1590,11 +1585,6 @@ export default function LongFormStoryboardStudio({
               }));
             }}
           />
-          {creatorLengthLocked && (
-            <small>
-              Length is locked after previews or video are created. Start a new project to choose another length.
-            </small>
-          )}
         </div>
       )}
       </div>

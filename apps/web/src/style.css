@@ -2849,6 +2849,20 @@ body:not(:has(.home)) .error-panel {
   color: #2b0e00;
   box-shadow: 0 14px 32px #c2410c50;
 }
+.generation-detail-actions .gradient-action-delete {
+  background: linear-gradient(110deg, #8f2e22, #c2392a 60%, #e04b39);
+  color: #2b0a06;
+  box-shadow: 0 10px 26px #8f2e2235;
+}
+.generation-detail-actions .gradient-action-delete:hover {
+  background: linear-gradient(110deg, #8f2e22, #c2392a 60%, #e04b39);
+  color: #2b0a06;
+  box-shadow: 0 14px 32px #8f2e2250;
+}
+.generation-detail-actions .gradient-action-delete:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
 @media (max-width: 560px) {
   .generation-detail-actions {
     align-items: stretch;

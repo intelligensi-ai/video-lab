@@ -1692,6 +1692,8 @@ function GalleryVideoEditor({
 }
 function Detail() {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [editorOpen, setEditorOpen] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const q = useQuery({
@@ -1710,6 +1712,20 @@ function Detail() {
       api<Generation>(`/v1/generations/${id}/cancel`, { method: "POST" }),
     onSuccess: () => q.refetch(),
   });
+  const deletion = useMutation({
+    mutationFn: () => api<void>(`/v1/generations/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      if (id) localStorage.removeItem(`vl_thumbnail_${id}`);
+      void queryClient.invalidateQueries({ queryKey: ["gallery"] });
+      navigate("/gallery", { replace: true });
+    },
+  });
+  const requestDelete = () => {
+    const confirmed = window.confirm(
+      "Delete this video from your gallery and Firebase Storage? This can't be undone.",
+    );
+    if (confirmed) deletion.mutate();
+  };
   const g = q.data;
   const media = useAuthenticatedVideo(g?.output?.downloadUrl);
   const isVideo = isVideoOutput(g);
@@ -1856,6 +1872,21 @@ function Detail() {
                   </svg>
                   <span>Create Variation</span>
                 </Link>
+                <button
+                  type="button"
+                  className="gradient-action gradient-action-delete"
+                  disabled={deletion.isPending}
+                  onClick={requestDelete}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 6h18" />
+                    <path d="M8 6V4h8v2" />
+                    <path d="M19 6l-1 14H6L5 6" />
+                    <path d="M10 11v5" />
+                    <path d="M14 11v5" />
+                  </svg>
+                  <span>{deletion.isPending ? "Deleting…" : "Delete"}</span>
+                </button>
                 {!["completed", "failed", "cancelled"].includes(g.status) && (
                   <button
                     type="button"
@@ -1876,6 +1907,11 @@ function Detail() {
                     </button>
                   )}
               </div>
+              {deletion.error && (
+                <p className="error" role="alert">
+                  Delete failed: {deletion.error.message}
+                </p>
+              )}
               <dl className="generation-detail-record">
                 <div>
                   <dt>Created</dt>
