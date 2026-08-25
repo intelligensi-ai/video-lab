@@ -161,6 +161,32 @@ describe("minimal VideoLab project safety", () => {
     expect(planned.map((item) => item.seed)).toEqual([1337, 4001, 4002]);
   });
 
+  it.each([
+    [1, 1],
+    [8, 1],
+    [9, 2],
+    [16, 2],
+    [17, 3],
+    [24, 3],
+  ])(
+    "plans %i seconds as exactly %i deterministic Creator scenes",
+    (requestedSeconds, expectedScenes) => {
+      const planned = creatorScenesForTotalDuration(
+        [scene("scene-1", 5)],
+        requestedSeconds,
+        7000,
+      );
+
+      expect(planned).toHaveLength(expectedScenes);
+      expect(planned.reduce((total, item) => total + item.duration, 0)).toBe(
+        requestedSeconds,
+      );
+      expect(planned.every((item) => item.duration >= 1 && item.duration <= 8)).toBe(
+        true,
+      );
+    },
+  );
+
   it("respects the runtime scene limit and exact bounded duration", () => {
     const planned = creatorScenesForTotalDuration(
       [scene("scene-1", 5)],

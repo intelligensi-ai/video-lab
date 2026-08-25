@@ -255,8 +255,11 @@ type StoredStoryboardProject = {
   createdAt: string;
   updatedAt: string;
 };
-type StoredDirectorProposal = DirectorProposal & { uid: string };
 type DirectorContextPolicy = "none" | "project";
+type StoredDirectorProposal = DirectorProposal & {
+  uid: string;
+  directorContextPolicy?: DirectorContextPolicy;
+};
 type StoredStoryboardAsyncJob = {
   id: string;
   uid: string;
@@ -4049,7 +4052,11 @@ async function deleteStoryboardProject(uid: string, id: string) {
 }
 
 function publicDirectorProposal(proposal: StoredDirectorProposal): DirectorProposal {
-  const { uid: _uid, ...visible } = proposal;
+  const {
+    uid: _uid,
+    directorContextPolicy: _directorContextPolicy,
+    ...visible
+  } = proposal;
   return visible;
 }
 
@@ -5201,6 +5208,7 @@ async function buildDirectorProposal(
     invalidations,
     diff: directorDiff(intent.action, project.form, resolvedSceneId, payload),
     payload,
+    directorContextPolicy: options.contextPolicy ?? "project",
     createdAt: now,
     updatedAt: now,
   };
@@ -5945,7 +5953,10 @@ app.post(
         proposalId: proposal.id,
         action: proposal.action,
       });
-      if (proposal.kind === "draft_change") {
+      if (
+        proposal.kind === "draft_change" &&
+        proposal.directorContextPolicy !== "none"
+      ) {
         void createDirectorMemoryCandidate({
           ownerUid: res.locals.principal.uid,
           projectId: proposal.projectId,

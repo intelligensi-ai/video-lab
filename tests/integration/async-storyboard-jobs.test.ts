@@ -339,6 +339,14 @@ describe("durable asynchronous storyboard jobs", () => {
       expect(JSON.stringify(completed.body)).not.toContain("directorContextPolicy");
       expect(JSON.stringify(completed.body).toLowerCase()).not.toContain("love island");
       expect(JSON.stringify(completed.body).toLowerCase()).not.toContain("tropical villa");
+      const accepted = await request(app)
+        .post(`/v1/storyboards/director/proposals/${completed.body.result.id}/accept`)
+        .set("authorization", `Bearer ${owner}`)
+        .send({})
+        .expect(200);
+      expect(accepted.body.proposal.state).toBe("accepted");
+      expect(JSON.stringify(accepted.body)).not.toContain("directorContextPolicy");
+      expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       fetchSpy.mockRestore();
       if (previousMemory.enabled === undefined) delete process.env.DIRECTOR_MEMORY_ENABLED;
