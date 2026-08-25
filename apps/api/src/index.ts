@@ -1276,15 +1276,16 @@ function createRuntimeAdapter(
   mode: "configured" | "direct-worker" = "configured",
 ) {
   const directWorker = mode === "direct-worker";
+  const useDirectWorker = directWorker && !usesIntelligensiRuntimeApi;
   return new SulphurLtxRuntimeAdapter({
     baseUrl,
-    token: directWorker
+    token: useDirectWorker
       ? process.env.VIDEO_RUNTIME_DIRECT_WORKER_TOKEN ??
         videoLabRuntimeApiKey()
       : videoLabRuntimeApiKey(),
     runtimeId:
       process.env.VIDEO_RUNTIME_ID ?? "longform-ltx-storyboard-studio",
-    healthPath: directWorker
+    healthPath: useDirectWorker
       ? "/health"
       : usesIntelligensiRuntimeApi
         ? process.env.VIDEO_RUNTIME_HEALTH_PATH
@@ -1293,14 +1294,14 @@ function createRuntimeAdapter(
     statusPath: process.env.VIDEO_RUNTIME_STATUS_PATH,
     cancelPath: process.env.VIDEO_RUNTIME_CANCEL_PATH,
     outputPath: process.env.VIDEO_RUNTIME_OUTPUT_PATH,
-    authHeaderName: directWorker
+    authHeaderName: useDirectWorker
       ? (process.env.VIDEO_RUNTIME_DIRECT_WORKER_AUTH_HEADER ??
         "authorization")
       : process.env.VIDEO_RUNTIME_AUTH_HEADER,
-    authScheme: directWorker
+    authScheme: useDirectWorker
       ? (process.env.VIDEO_RUNTIME_DIRECT_WORKER_AUTH_SCHEME ?? "Bearer")
       : process.env.VIDEO_RUNTIME_AUTH_SCHEME,
-    payloadMode: directWorker
+    payloadMode: useDirectWorker
       ? "deploy-studio"
       : usesIntelligensiRuntimeApi
         ? "intelligensi-api"
@@ -2457,7 +2458,8 @@ async function reconcileActiveGeneration(uid: string) {
             active,
             runtimeStatus.state === "cancelled"
               ? "Cancelled by user"
-              : "Generation failed safely. Please retry when the runtime is available.",
+              : runtimeStatus.message ??
+                "Generation failed safely. Please retry when the runtime is available.",
           );
     const q = queue.find((item) => item.generationId === active.id) ?? {
       generationId: active.id,
@@ -6233,7 +6235,12 @@ app.post(
       settings.generatedTextQualityControlDisabled =
         runtimeState.generatedTextQualityControlDisabled === true;
       settings.negativePrompt = creatorNegativePrompt(settings.negativePrompt);
-      const requestedVideoModel = String(settings.videoModel ?? "ltx-2.3");
+      const requestedVideoModel = String(
+        settings.videoModel ??
+        (settings as { video_model?: unknown }).video_model ??
+        runtimeState.capabilities?.defaultVideoModel ??
+        "ltx-2.3",
+      );
       if (!(longFormVideoModels as readonly string[]).includes(requestedVideoModel)) {
         throw problem(400, "invalid_video_model", "Video model is not supported");
       }
@@ -6253,6 +6260,7 @@ app.post(
         );
       }
       settings.videoModel = requestedVideoModel;
+      (settings as { video_model?: string }).video_model = requestedVideoModel;
       if (!Array.isArray(inputAssets) || inputAssets.length > 3) {
         throw problem(
           400,
@@ -7305,13 +7313,16 @@ async function processQueueItem(workerId = "local-worker") {
       ),
       failureCode,
       safeErrorMessage: `${
-        failureCode === "runtime_timeout"
-          ? "Generation timed out. Please retry when the runtime is available."
-          : failureCode === "runtime_authentication"
-                ? "Generation access could not be verified. Please retry shortly."
-                : failureCode === "runtime_invalid_response"
-                  ? "The generator returned an invalid response. Your successful work is unchanged."
-                  : "Generation failed safely. Please retry when the runtime is available."
+        generatedTextFailureCode(e)
+          ? (e instanceof Error && e.message) ||
+            "The generated video contained on-screen text that isn't allowed by this project's text policy after repair attempts. Adjust the prompt or policy, then retry."
+          : failureCode === "runtime_timeout"
+            ? "Generation timed out. Please retry when the runtime is available."
+            : failureCode === "runtime_authentication"
+                  ? "Generation access could not be verified. Please retry shortly."
+                  : failureCode === "runtime_invalid_response"
+                    ? "The generator returned an invalid response. Your successful work is unchanged."
+                    : "Generation failed safely. Please retry when the runtime is available."
       }${creditsReturned ? " Credits were returned." : ""}`,
       updatedAt: nowIso(),
     };
