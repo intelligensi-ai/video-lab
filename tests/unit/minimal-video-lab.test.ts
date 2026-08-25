@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { defaultGeneratedTextPolicy } from "@video-lab/contracts";
 import {
+  acceptedGenerationRequiresConfirmation,
   creatorScenesForTotalDuration,
   formForStudioVariant,
   generationPayloadForStudioVariant,
@@ -62,6 +63,28 @@ function projectForm(): LongFormGenerationPayload {
 }
 
 describe("minimal VideoLab project safety", () => {
+  it("requires confirmation only before replacing a downloadable completed film", () => {
+    expect(
+      acceptedGenerationRequiresConfirmation({
+        status: "completed",
+        output: { downloadUrl: "/v1/media/video-accepted" },
+      }),
+    ).toBe(true);
+    expect(
+      acceptedGenerationRequiresConfirmation({
+        status: "completed",
+        output: {},
+      }),
+    ).toBe(false);
+    expect(
+      acceptedGenerationRequiresConfirmation({
+        status: "failed",
+        output: { downloadUrl: "/v1/media/video-accepted" },
+      }),
+    ).toBe(false);
+    expect(acceptedGenerationRequiresConfirmation()).toBe(false);
+  });
+
   it("keeps the consolidated launch runbook linked and explicit about release evidence", () => {
     const readme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
     const runbook = readFileSync(
@@ -89,6 +112,7 @@ describe("minimal VideoLab project safety", () => {
 
   it("preserves and submits the Director's complete minimal storyboard", () => {
     const original = projectForm();
+    original.videoModel = "ltx-2.5";
     const restored = formForStudioVariant(original, true);
     const submitted = generationPayloadForStudioVariant(restored, true);
 
@@ -102,10 +126,13 @@ describe("minimal VideoLab project safety", () => {
     ]);
     expect(original.scenes).toHaveLength(2);
     expect(submitted).toEqual(restored);
+    expect(restored.videoModel).toBe("ltx-2.3");
+    expect(submitted.videoModel).toBe("ltx-2.3");
   });
 
   it("normalises the generated-text policy for the advanced payload while leaving everything else intact", () => {
     const original = projectForm();
+    original.videoModel = "ltx-2.5";
     const submitted = generationPayloadForStudioVariant(original, false);
 
     expect(submitted).toEqual({

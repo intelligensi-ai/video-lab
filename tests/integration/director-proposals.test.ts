@@ -125,6 +125,7 @@ describe("Director proposals", () => {
       .send({})
       .expect(200);
     expect(accepted.body.proposal.state).toBe("accepted");
+    expect(accepted.body.project.form.scenes[0]).toEqual(project.body.form.scenes[0]);
     expect(accepted.body.project.form.scenes[0].prompt).toBe(projectForm().scenes[0].prompt);
     expect(accepted.body.project.form.scenes[1].prompt).not.toBe(projectForm().scenes[1].prompt);
     expect(accepted.body.project.form.scenes[1].prompt).toContain("scene 2");

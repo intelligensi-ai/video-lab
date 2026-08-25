@@ -14,63 +14,87 @@ test("landing page presents the creator entry point", async ({ page }) => {
 
 test("minimal VideoLab exposes only Director, preview, generation and three output choices", async ({
   page,
+  request: apiRequest,
 }) => {
   await page.addInitScript(() =>
     localStorage.setItem("vl_token", "e2e-minimal-video-user"),
   );
-  await page.route("**/api/v1/storyboard-enhancements", async (route) => {
-    const request = route.request().postDataJSON() as {
-      shotCount: number;
-      masterPrompt: string;
-    };
-    const result = {
-      contractVersion: "2",
-      polishedMasterPrompt: `Director plan: ${request.masterPrompt}`,
-      negativePrompt: "blur, flicker, malformed anatomy, duplicate subjects, unwanted visible text",
-      continuityBible: {
-        characters: "One recurring musician.", wardrobe: "A dark raincoat.", props: "A blue hand light.", location: "A rain-dark city.", sceneGeometry: "Travel continues left to right.", timeOfDay: "Night.", lighting: "Blue practical light and warm windows.", palette: "Blue and amber.", lens: "35mm.", cameraPosition: "Eye level.", cameraMovement: "Measured tracking.", visualStyle: "Grounded cinematic realism.", audio: "No audio unless requested.",
-      },
-      referenceUsagePlan: [],
-      assumptions: ["The blue light is handheld."],
-      shots: Array.from({ length: request.shotCount }, (_, index) => ({
-        shotNumber: index + 1,
-        title: `Director scene ${index + 1}`,
-        narrativePurpose: `Advance story beat ${index + 1}.`,
-        prompt: `The musician follows the blue light in scene ${index + 1}.`,
-        firstFramePrompt: `Opening composition for scene ${index + 1}.`,
-        lastFramePrompt: `Closing composition for scene ${index + 1}.`,
-        continuityNotes: "Preserve the musician, raincoat, blue light and direction of travel.",
-        referenceIds: [],
-        recommendedControls: [],
-        audioIntent: { mode: "silent", reason: "No sound was requested." },
-        generatedTextIntent: { mode: "none", visibleText: [], reason: "Visible text is forbidden." },
-        candidateVariations: ["Measured tracking variation."],
-      })),
-      visualReferenceAnalyses: [],
-      vision: { mode: "planning_only", attachedReferenceIds: [], textOnlyReferenceIds: [] },
-      provider: "mock",
-      model: "e2e-director",
-      instructionBundle: {
-        directorVersion: "e2e",
-        enhancerVersion: "e2e",
-        framePromptVersion: "e2e",
-        hash: "0".repeat(64),
-      },
-    };
+  let projectId = "";
+  const proposal = {
+    id: "proposal_e2e_01",
+    projectId: "",
+    projectRevision: "revision_e2e_01",
+    kind: "draft_change",
+    action: "propose_storyboard_change",
+    state: "pending",
+    summary: "Director planned the storyboard.",
+    explanation: "Review every editable scene before generating.",
+    confirmationRequired: false,
+    executionClass: "text",
+    affectedSceneIds: [],
+    preserve: [],
+    invalidations: [],
+    diff: [],
+    payload: {},
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await page.route("**/api/v1/storyboards/director/creator/jobs", async (route) => {
+    const body = route.request().postDataJSON() as { projectId: string };
+    projectId = body.projectId;
+    proposal.projectId = projectId;
     await route.fulfill({
       status: 202,
       contentType: "application/json",
       body: JSON.stringify({
-        id: "enhance_e2e_01",
-        kind: "storyboard_enhancement",
+        id: "director_job_e2e_01",
+        kind: "director_proposal",
         status: "completed",
         stage: "completed",
-        projectId: "e2e-project",
+        projectId,
         attempt: 1,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        result,
-        links: { self: "/v1/storyboard-enhancements/enhance_e2e_01", cancel: null },
+        result: proposal,
+        links: { self: "/v1/storyboards/director/jobs/director_job_e2e_01", cancel: null },
+      }),
+    });
+  });
+  await page.route("**/api/v1/storyboards/director/proposals/proposal_e2e_01/accept", async (route) => {
+    const response = await apiRequest.get(`${apiBaseUrl}/v1/storyboards/projects/${projectId}`, {
+      headers: { authorization: "Bearer e2e-minimal-video-user" },
+    });
+    expect(response.ok()).toBe(true);
+    const project = await response.json();
+    const form = project.form as {
+      overallGoal: string;
+      scenes: Array<Record<string, unknown>>;
+      [key: string]: unknown;
+    };
+    const scenes = form.scenes.map((scene, index) => ({
+      ...scene,
+      title: `Director scene ${index + 1}`,
+      narrativePurpose: `Advance story beat ${index + 1}.`,
+      prompt: `The musician follows the blue light in scene ${index + 1}.`,
+      firstFramePrompt: `Opening composition for scene ${index + 1}.`,
+      lastFramePrompt: `Closing composition for scene ${index + 1}.`,
+      continuityNotes: "Preserve the musician, raincoat, blue light and direction of travel.",
+      audioIntent: { mode: "silent", reason: "No sound was requested." },
+    }));
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        proposal: { ...proposal, state: "accepted" },
+        project: {
+          ...project,
+          form: {
+            ...form,
+            overallGoal: `Director plan: ${form.overallGoal}`,
+            negativePrompt: "blur, flicker, malformed anatomy, duplicate subjects, unwanted visible text",
+            scenes,
+          },
+        },
       }),
     });
   });
@@ -94,27 +118,37 @@ test("minimal VideoLab exposes only Director, preview, generation and three outp
   await expect(page.getByLabel("Video length")).toHaveValue("8");
   await page.getByRole("button", { name: "Improve with Director" }).click();
   await expect(brief).toHaveValue(/Director plan:/);
-  await expect(page.getByLabel("Scene 1 title")).toHaveValue("Director scene 1");
+  await expect(page.getByLabel("Scene 1 direction")).toHaveValue(
+    "The musician follows the blue light in scene 1.",
+  );
   await expect(page.getByLabel("Shared negative prompt").first()).toHaveValue(/unwanted visible text/);
   await page.getByText("Scene purpose, continuity and sound").first().click();
   await expect(page.getByLabel("Scene 1 narrative purpose")).toHaveValue("Advance story beat 1.");
   await expect(page.getByLabel("Scene 1 continuity notes")).toHaveValue(/Preserve the musician/);
-  await expect(page.getByLabel("Scene 1 sound intent")).toHaveValue("silent");
+  await expect(page.getByRole("tab", { name: "Silence" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(page.getByText("Project references")).toHaveCount(0);
   await expect(page.getByText("Scene direction")).toBeVisible();
-  await expect(page.getByText("First frame / last frame")).toBeVisible();
+  await page.getByText("First frame / last frame").click();
   await expect(
-    page.getByRole("button", { name: "3 · Generate video" }),
+    page.getByRole("button", { name: "Generate video" }),
   ).toBeDisabled();
-  await expect(page.getByText(/Generate and review the first and last frame/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "2 · Generate missing previews" })).toBeEnabled();
+  await expect(page.getByLabel("First frame direction")).toHaveValue(
+    "Opening composition for scene 1.",
+  );
+  await expect(page.getByLabel("Last frame direction")).toHaveValue(
+    "Closing composition for scene 1.",
+  );
+  await expect(page.getByRole("button", { name: "Generate first/last" })).toBeEnabled();
   await expect(page.getByRole("link", { name: /Advanced/ })).toHaveAttribute(
     "href",
     "/storyboard/advanced",
   );
 });
 
-test("Video Lab exposes LTX 2.5 only when the managed runtime advertises it", async ({
+test("minimal VideoLab stays on LTX 2.3 while Advanced exposes an advertised LTX 2.5 preview", async ({
   page,
 }) => {
   await page.addInitScript(() =>
@@ -158,6 +192,8 @@ test("Video Lab exposes LTX 2.5 only when the managed runtime advertises it", as
   });
 
   await page.goto("/videolab");
+  await expect(page.getByLabel("Video model")).toHaveCount(0);
+  await page.goto("/storyboard/advanced");
   const selector = page.getByLabel("Video model");
   await expect(selector).toHaveValue("ltx-2.3");
   await expect(selector.locator('option[value="ltx-2.5"]')).toBeEnabled();

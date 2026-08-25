@@ -293,6 +293,12 @@ export function creatorScenesForTotalDuration(
   });
 }
 
+export function acceptedGenerationRequiresConfirmation(
+  generation?: Pick<Generation, "status" | "output">,
+) {
+  return generation?.status === "completed" && Boolean(generation.output?.downloadUrl);
+}
+
 const formatPresets: Array<{
   key: string;
   label: string;
@@ -440,6 +446,27 @@ const sceneSoundTabs: Array<{
   },
 ];
 
+function sceneSoundTabForIntent(
+  scene: Pick<StoryboardScenePayload, "audioIntent">,
+): SceneSoundTabKey {
+  const mode = scene.audioIntent?.mode;
+  if (mode === "silent") return "silence";
+  if (mode === "ambience") return "ambience";
+  if (mode === "sound_effects") return "soundEffects";
+  if (mode === "music") return "music";
+  if (mode === "dialogue") return "dialogue";
+  if (mode === "mixed") {
+    return (
+      sceneSoundTabs.find(
+        (tab) =>
+          tab.key !== "silence" &&
+          Boolean(String(scene.audioIntent?.[tab.key] ?? "").trim()),
+      )?.key ?? "dialogue"
+    );
+  }
+  return "dialogue";
+}
+
 const initialForm: LongFormGenerationPayload = {
   overallGoal: "",
   negativePrompt: "",
@@ -523,15 +550,20 @@ export function formForStudioVariant(
         },
       }))
     : seedScenes(isClassic);
-  return { ...normalized, scenes };
+  return {
+    ...normalized,
+    videoModel: isClassic ? "ltx-2.3" : normalized.videoModel,
+    scenes,
+  };
 }
 
 export function generationPayloadForStudioVariant(
   form: LongFormGenerationPayload,
-  _isClassic: boolean,
+  isClassic: boolean,
 ): LongFormGenerationPayload {
   return {
     ...form,
+    videoModel: isClassic ? "ltx-2.3" : form.videoModel,
     generatedTextPolicy: defaultGeneratedTextPolicy(),
     scenes: form.scenes.map((scene) => ({
       ...scene,
@@ -657,6 +689,7 @@ export default function LongFormStoryboardStudio({
   }));
   const [history, setHistory] = useState<Generation[]>([]);
   const [selected, setSelected] = useState<Generation>();
+  const [preservedGeneration, setPreservedGeneration] = useState<Generation>();
   const autoSelectedRef = useRef(true);
   const pinSelected = (generation: Generation) => {
     autoSelectedRef.current = false;
@@ -683,13 +716,22 @@ export default function LongFormStoryboardStudio({
   const [sessionStatus, setSessionStatus] = useState<
     "loading" | "saving" | "saved" | "error"
   >("loading");
-  const [videoSettingsExpanded, setVideoSettingsExpanded] = useState(false);
   const runtime = useQuery({
     queryKey: ["runtime"],
     queryFn: getRuntimeStatus,
   });
   const gallery = useQuery({ queryKey: ["gallery"], queryFn: getGallery });
+  const preserveAcceptedGeneration = () => {
+    if (!acceptedGenerationRequiresConfirmation(selected)) return;
+    setPreservedGeneration(selected);
+    setHistory((items) =>
+      items.some((item) => item.id === selected.id)
+        ? items
+        : [selected, ...items].slice(0, 8),
+    );
+  };
   const mutation = useMutation({
+    onMutate: preserveAcceptedGeneration,
     mutationFn: () => {
       if (!projectId) throw new Error("Choose a project before rendering.");
       return generateLongFormVideo(
@@ -703,6 +745,7 @@ export default function LongFormStoryboardStudio({
     },
   });
   const assembly = useMutation({
+    onMutate: preserveAcceptedGeneration,
     mutationFn: () => {
       if (!projectId) throw new Error("Choose a project before assembling.");
       return assembleStoryboardFilm(form, projectId);
@@ -909,6 +952,14 @@ export default function LongFormStoryboardStudio({
       current?.id === generation.data?.id ? generation.data : current,
     );
   }, [generation.data]);
+  useEffect(() => {
+    if (generation.data?.status !== "completed") return;
+    if (generation.data.id === preservedGeneration?.id) return;
+    setPreservedGeneration(undefined);
+  }, [generation.data, preservedGeneration?.id]);
+  useEffect(() => {
+    setPreservedGeneration(undefined);
+  }, [projectId]);
   useEffect(() => {
     if (!selected || ["completed", "failed", "cancelled"].includes(selected.status)) return;
     const errorMessage = generation.error instanceof Error ? generation.error.message : "";
@@ -1466,44 +1517,7 @@ export default function LongFormStoryboardStudio({
             </button>
           </div>
         </IconField>
-        <button
-          type="button"
-          className="lf-video-settings-toggle"
-          aria-expanded={videoSettingsExpanded}
-          aria-label={
-            videoSettingsExpanded
-              ? "Hide more video settings"
-              : "Show more video settings"
-          }
-          onClick={() => setVideoSettingsExpanded((current) => !current)}
-        >
-          <span className="lf-video-settings-toggle-arrow" aria-hidden="true" />
-        </button>
       </div>
-      {videoSettingsExpanded && (
-        <div className="lf-video-settings-row">
-          <IconField icon="⚙" label="Video model">
-            <select
-              aria-label="Video model"
-              disabled={!sessionReady}
-              value={selectedVideoModel}
-              onChange={(event) =>
-                void changeVideoModel(event.target.value as LongFormVideoModel)
-              }
-            >
-              {videoModels.map((model) => (
-                <option key={model.id} value={model.id} disabled={!model.available}>
-                  {longFormVideoModelLabel(model)}
-                </option>
-              ))}
-            </select>
-            <small>Submitting {selectedVideoModel}</small>
-          </IconField>
-          <IconField icon="T" label="On-screen text">
-            <span className="lf-static-setting">Disabled</span>
-          </IconField>
-        </div>
-      )}
     </div>
     <div className="lf-preview-formats">
       <div className="lf-preview-formats-row">
@@ -2515,6 +2529,7 @@ export default function LongFormStoryboardStudio({
           )}
           <Preview
             generation={currentGeneration}
+            preservedGeneration={preservedGeneration}
             loading={isRendering}
             submissionError={mutation.error?.message}
             canGenerate={canGenerateNow}
@@ -2522,10 +2537,20 @@ export default function LongFormStoryboardStudio({
               mutation.isPending
                 ? "◌ Generating video…"
                 : isClassic
-                  ? "Generator"
+                  ? "Generate video"
                   : "Generate complete film in one run"
             }
-            onGenerate={() => mutation.mutate()}
+            onGenerate={() => {
+              if (
+                acceptedGenerationRequiresConfirmation(currentGeneration) &&
+                !window.confirm(
+                  "Generate a new version? Your current finished video will stay available until the replacement succeeds.",
+                )
+              ) {
+                return;
+              }
+              mutation.mutate();
+            }}
             cancelling={cancellation.isPending}
             onCancel={() => cancellation.mutate()}
             cancelError={cancellation.error?.message}
@@ -3336,7 +3361,12 @@ function SceneCard({
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState(index === 0);
-  const [activeSoundTab, setActiveSoundTab] = useState<SceneSoundTabKey>("dialogue");
+  const [activeSoundTab, setActiveSoundTab] = useState<SceneSoundTabKey>(() =>
+    sceneSoundTabForIntent(scene),
+  );
+  useEffect(() => {
+    setActiveSoundTab(sceneSoundTabForIntent(scene));
+  }, [scene.audioIntent?.mode]);
   const selectedTransition =
     transitionOptions.find((option) => option.value === scene.transition) ??
     transitionOptions[0];
@@ -4452,6 +4482,7 @@ function formatElapsed(createdAt?: string, now = Date.now()) {
 
 function Preview({
   generation,
+  preservedGeneration,
   loading,
   submissionError,
   canGenerate,
@@ -4468,6 +4499,7 @@ function Preview({
   videoSettingsPanel,
 }: {
   generation?: Generation;
+  preservedGeneration?: Generation;
   loading: boolean;
   submissionError?: string;
   canGenerate: boolean;
@@ -4483,7 +4515,8 @@ function Preview({
   headerControls?: React.ReactNode;
   videoSettingsPanel?: React.ReactNode;
 }) {
-  const video = useAuthenticatedVideo(generation?.output?.downloadUrl);
+  const mediaGeneration = preservedGeneration ?? generation;
+  const video = useAuthenticatedVideo(mediaGeneration?.output?.downloadUrl);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!loading) return;
@@ -4570,7 +4603,7 @@ function Preview({
       >
         {video.objectUrl ? (
           <video key={aspectRatio} src={video.objectUrl} controls />
-        ) : generation?.output?.downloadUrl ? (
+        ) : mediaGeneration?.output?.downloadUrl ? (
           <VideoRetrievalMark />
         ) : (
           <img
@@ -4680,7 +4713,7 @@ function Preview({
             title="Download video"
             data-help="Save the completed film file to your device."
             href={video.objectUrl}
-            download={`${generation?.id ?? "video"}.mp4`}
+            download={`${mediaGeneration?.id ?? "video"}.mp4`}
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
