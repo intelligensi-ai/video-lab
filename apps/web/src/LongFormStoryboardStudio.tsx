@@ -35,6 +35,7 @@ import {
   getStoryboardDraft,
   listStoryboardProjects,
   fetchUserAsset,
+  resumePendingDirectorProposal,
   storeUserAsset,
   storyboardAsyncProgressMessage,
   waitForGeneration,
@@ -705,6 +706,7 @@ export default function LongFormStoryboardStudio({
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [enhancementProgress, setEnhancementProgress] = useState("");
   const [undoForm, setUndoForm] = useState<LongFormGenerationPayload>();
+  const resumedDirectorJobRef = useRef("");
   const [frameStates, setFrameStates] = useState<Record<string, FrameState>>(
     {},
   );
@@ -828,6 +830,39 @@ export default function LongFormStoryboardStudio({
     },
     onSettled: () => setEnhancementProgress(""),
   });
+  useEffect(() => {
+    if (!sessionReady || !projectId || resumedDirectorJobRef.current === projectId) return;
+    resumedDirectorJobRef.current = projectId;
+    let cancelled = false;
+    setEnhancementProgress("Checking for an unfinished Director request…");
+    void resumePendingDirectorProposal(projectId, {
+      onProgress: (job) => {
+        if (!cancelled) setEnhancementProgress(storyboardAsyncProgressMessage(job));
+      },
+    })
+      .then(async (proposal) => {
+        if (cancelled) return;
+        if (!proposal) {
+          setEnhancementProgress("");
+          return;
+        }
+        const result = await acceptDirectorProposal(proposal.id);
+        if (cancelled) return;
+        setUndoForm(form);
+        if (result.project) {
+          setForm((current) => mergeServerForm(current, result.project!.form));
+        }
+        setEnhancementProgress("Director update applied.");
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setEnhancementProgress(error instanceof Error ? error.message : "The Director request could not be resumed.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form, projectId, sessionReady]);
   useEffect(() => {
     const items = gallery.data?.items ?? [];
     setHistory(items.slice(0, 8));

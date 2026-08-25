@@ -1142,6 +1142,24 @@ export const createCreatorDirectorProposal = (
     options,
   ) as Promise<DirectorProposal>;
 
+export async function resumePendingDirectorProposal(
+  projectId: string,
+  options: StoryboardAsyncOptions = {},
+) {
+  const storageKey = pendingStoryboardStorageKey("director", projectId);
+  const pending = loadPendingStoryboardJob(storageKey);
+  if (!pending?.jobId) return undefined;
+  return waitForStoryboardAsyncJob<DirectorProposalJob>(
+    `/v1/storyboards/director/jobs/${encodeURIComponent(pending.jobId)}`,
+    await api<DirectorProposalJob>(
+      `/v1/storyboards/director/jobs/${encodeURIComponent(pending.jobId)}`,
+      { signal: options.signal },
+    ),
+    storageKey,
+    options,
+  ) as Promise<DirectorProposal>;
+}
+
 export const cancelStoryboardEnhancementJob = (jobId: string) =>
   api<StoryboardEnhancementJob>(
     `/v1/storyboard-enhancements/${encodeURIComponent(jobId)}/cancel`,

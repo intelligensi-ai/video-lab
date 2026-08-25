@@ -26,6 +26,7 @@ import {
   listDirectorProposals,
   listStoryboardProjects,
   MAX_INTERMEDIATE_KEYFRAMES,
+  resumePendingDirectorProposal,
   storeUserAsset,
   storyboardAsyncProgressMessage,
   waitForGeneration,
@@ -239,6 +240,7 @@ export function useDirectorWorkspace() {
   ]);
   const formRef = useRef(form);
   const projectTitleRef = useRef(projectTitle);
+  const resumedDirectorJobRef = useRef("");
 
   useEffect(() => {
     formRef.current = form;
@@ -801,6 +803,45 @@ export function useDirectorWorkspace() {
     },
     [ownerId, projectId],
   );
+
+  useEffect(() => {
+    if (!ready || !projectId || resumedDirectorJobRef.current === projectId) return;
+    resumedDirectorJobRef.current = projectId;
+    let cancelled = false;
+    setDirectorBusy(true);
+    void resumePendingDirectorProposal(projectId, {
+      onProgress: (job) => {
+        if (!cancelled) setNotice(storyboardAsyncProgressMessage(job));
+      },
+    })
+      .then((proposal) => {
+        if (cancelled || !proposal) return;
+        setCurrentProposal(proposal.state === "pending" ? proposal : undefined);
+        setProposals((items) => [proposal, ...items.filter((item) => item.id !== proposal.id)].slice(0, 50));
+        setMessages((items) => [
+          ...items,
+          {
+            id: proposal.id,
+            from: "director",
+            text: proposal.explanation,
+            proposal,
+          },
+        ]);
+        setNotice(proposal.kind === "answer" ? "Director status answer ready." : "Review the Director proposal before applying it.");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        const text = error instanceof Error ? error.message : "The Director could not resume its proposal.";
+        setMessages((items) => [...items, { id: crypto.randomUUID(), from: "director", text }]);
+        setNotice(/\bunchanged\b/i.test(text) ? text : `${text} Your project is unchanged.`);
+      })
+      .finally(() => {
+        if (!cancelled) setDirectorBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, ready]);
 
   const acceptProposal = useCallback(
     async (proposal = currentProposal) => {
