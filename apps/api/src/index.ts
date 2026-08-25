@@ -329,7 +329,7 @@ function operationalErrorCode(error: unknown) {
       code === "runtime_generated_text_validation_missing" ||
       code === "runtime_generated_text_policy_failed"
     ) {
-      return "runtime_failure";
+      return code;
     }
     if (/^runtime_[a-z0-9_]+$/.test(code)) return code;
   }
@@ -7161,6 +7161,11 @@ async function processQueueItem(workerId = "local-worker") {
         .operationScope,
       videoModel: (runtimeInput.settings as { videoModel?: unknown })
         .videoModel,
+      video_model: (runtimeInput.settings as { video_model?: unknown })
+        .video_model,
+      generatedTextQualityControlDisabled: (
+        runtimeInput.settings as { generatedTextQualityControlDisabled?: unknown }
+      ).generatedTextQualityControlDisabled,
       durationSeconds: (runtimeInput.settings as { durationSeconds?: unknown })
         .durationSeconds,
       sceneCount: Array.isArray(
@@ -7238,6 +7243,36 @@ async function processQueueItem(workerId = "local-worker") {
         st.qualityAssessment,
         jobDeadline,
       );
+    } else if (
+      g.settings.generatedTextQualityControlDisabled === true &&
+      isGeneratedTextAdvisoryFailure(st.failureCode ?? "")
+    ) {
+      log("generation_generated_text_qc_bypass_recovery", {
+        generationId: g.id,
+        runtimeJobId: sub.runtimeJobId,
+        failureCode: st.failureCode,
+      });
+      try {
+        await completeGenerationFromRuntimeWithRecovery(
+          gens.get(g.id)!,
+          sub.runtimeJobId,
+          st.qualityAssessment,
+          jobDeadline,
+        );
+      } catch (outputError) {
+        log("generation_generated_text_qc_bypass_output_unavailable", {
+          generationId: g.id,
+          runtimeJobId: sub.runtimeJobId,
+          failureCode: st.failureCode,
+          errorCode: operationalErrorCode(outputError),
+        });
+        const runtimeFailure = new Error(
+          st.message ?? "The runtime could not complete this generation.",
+        ) as Error & { code?: string };
+        runtimeFailure.name = "RuntimeGenerationFailure";
+        runtimeFailure.code = st.failureCode ?? "runtime_job_failed";
+        throw runtimeFailure;
+      }
     } else {
       const runtimeFailure = new Error(st.message ?? "The runtime could not complete this generation.") as Error & { code?: string };
       runtimeFailure.name = "RuntimeGenerationFailure";

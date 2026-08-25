@@ -239,6 +239,86 @@ describe('generation worker failure handling', () => {
     }
   }, 15_000);
 
+  it('recovers generated media when admin text QC bypass is enabled and runtime marks text QC failed', async () => {
+    vi.stubEnv('VIDEO_RUNTIME_PROVIDER', 'sulphur-ltx');
+    vi.stubEnv('VIDEO_RUNTIME_BASE_URL', 'http://runtime.test');
+    vi.stubEnv('VIDEO_RUNTIME_PAYLOAD_MODE', 'deploy-studio');
+    let outputRequests = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith('/jobs') && init?.method === 'POST') {
+        return Response.json({ id: 'text-qc-failed-runtime-job' }, { status: 202 });
+      }
+      if (requestUrl.endsWith('/jobs/text-qc-failed-runtime-job/output')) {
+        outputRequests += 1;
+        return new Response(new Uint8Array([
+          0x00, 0x00, 0x00, 0x18,
+          0x66, 0x74, 0x79, 0x70,
+          0x69, 0x73, 0x6f, 0x6d,
+        ]), {
+          status: 200,
+          headers: { 'content-type': 'video/mp4' },
+        });
+      }
+      if (requestUrl.endsWith('/jobs/text-qc-failed-runtime-job')) {
+        return Response.json({
+          id: 'text-qc-failed-runtime-job',
+          status: 'failed',
+          progress: 100,
+          error: {
+            code: 'runtime_generated_text_policy_failed',
+            message: 'Generated text policy failed',
+          },
+          quality_report: {
+            version: 'generated-text-qc-v1',
+            advisory: false,
+            score: 0,
+            recommendation: 'repair',
+            checks: [{ id: 'generated_text_policy', status: 'failed', confidence: 0.99 }],
+          },
+        });
+      }
+      throw new Error(`Unexpected test URL: ${requestUrl}`);
+    }));
+
+    const { app, processOne } = await import('../../apps/api/src/index.js');
+    await request(app)
+      .post('/v1/admin/runtime/generated-text-qc')
+      .set('authorization', 'Bearer admin-token')
+      .send({ disabled: true })
+      .expect(200);
+    const auth = { authorization: 'Bearer text-qc-bypass-owner' };
+    const submitted = await request(app)
+      .post('/v1/generations')
+      .set(auth)
+      .set('Idempotency-Key', 'text-qc-bypass-key')
+      .send({
+        prompt: 'A completed render that the runtime labels as generated text failure',
+        settings: {
+          aspectRatio: '16:9',
+          durationSeconds: 2,
+          quality: 'draft',
+        },
+      })
+      .expect(201);
+
+    await processOne('text-qc-bypass-worker');
+    const generation = await request(app)
+      .get(`/v1/generations/${submitted.body.id}`)
+      .set(auth)
+      .expect(200);
+
+    expect(generation.body.status).toBe('completed');
+    expect(generation.body.failureCode).toBeUndefined();
+    expect(generation.body.safeErrorMessage).toBeUndefined();
+    expect(generation.body.output?.kind).toBe('video');
+    expect(generation.body.qualityAssessment?.checks?.[0]).toMatchObject({
+      id: 'generated_text_policy',
+      status: 'failed',
+    });
+    expect(outputRequests).toBe(1);
+  }, 15_000);
+
   it('preserves an active job when runtime cancellation cannot be confirmed', async () => {
     vi.stubEnv('VIDEO_RUNTIME_PROVIDER', 'sulphur-ltx');
     vi.stubEnv('VIDEO_RUNTIME_BASE_URL', 'http://runtime.test');
