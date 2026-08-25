@@ -6469,12 +6469,20 @@ body:not(:has(.home)) textarea:focus::placeholder {
   border-radius: 999px;
   background: none;
   color: #087f76;
-  font-size: 1.3rem;
   line-height: 1;
   padding: 0;
   transition:
     color 0.15s ease,
     background 0.15s ease;
+}
+.lf-download svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 .lf-download:hover {
   background: #159d9122;
