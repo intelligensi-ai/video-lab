@@ -20,6 +20,7 @@ import {
   assembleStoryboardFilm,
   acceptDirectorProposal,
   cancelGeneration,
+  createCreatorDirectorProposal,
   createDirectorProposal,
   createStoryboardProject,
   deleteStoryboardProject,
@@ -719,7 +720,10 @@ export default function LongFormStoryboardStudio({
       throw new Error("Open a saved project before asking the Director.");
     }
     await saveStoryboardSession(sessionOwner, projectId, projectTitle, form);
-    const proposal = await createDirectorProposal(
+    const submitDirectorProposal = isClassic
+      ? createCreatorDirectorProposal
+      : createDirectorProposal;
+    const proposal = await submitDirectorProposal(
       { projectId, message, selectedSceneId },
       {
         onProgress: (job) =>
@@ -759,7 +763,6 @@ export default function LongFormStoryboardStudio({
     mutationFn: () =>
       runDirectorProposal(
         `Plan this creative brief into exactly ${form.scenes.length} scenes while preserving my intent.`,
-        form.scenes[0]?.id,
       ),
     onSuccess: (result) => {
       setUndoForm(form);
@@ -1257,7 +1260,7 @@ export default function LongFormStoryboardStudio({
     MAX_STORYBOARD_SCENES,
     runtime.data?.capabilities?.maxScenes ?? MAX_STORYBOARD_SCENES,
   );
-  const creatorMaxScenes = Math.min(1, runtimeMaxScenes);
+  const creatorMaxScenes = Math.min(MAX_CREATOR_SCENES, runtimeMaxScenes);
   const creatorPreviewReady = form.scenes.every(
     (scene) =>
       Boolean(scene.acceptedVideoGenerationId || scene.candidateGenerationIds?.length) ||
@@ -1601,7 +1604,7 @@ export default function LongFormStoryboardStudio({
               {isClassic ? "Director" : "Creative brief"}
             </span>
             <div className="prompt-field-heading">
-              <h2>{isClassic ? "Creator Outline" : "Overview"}</h2>
+              <h2>{isClassic ? "Create your storyboard" : "Overview"}</h2>
               {!isClassic && (
                 <button
                   type="button"
@@ -1775,7 +1778,7 @@ export default function LongFormStoryboardStudio({
                 <div className="lf-section-head">
                   <div>
                     <span className="lf-label">Timeline</span>
-                    <h2>{isClassic ? "Scene" : "Storyboard scenes"}</h2>
+                    <h2>{isClassic ? "Review your scenes" : "Storyboard scenes"}</h2>
                   </div>
                   {!isClassic && (
                     <button

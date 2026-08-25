@@ -113,9 +113,16 @@ change those decisions.
 
 ## Semantic Director memory
 
-Semantic memory is optional, server-only and feature-flagged. Retrieval is
-owner/project scoped, bounded and sanitized. Only approved memory is formatted
-into Director context. Candidate writes are separately gated.
+The minimal Creator does not retrieve semantic memory. It submits through the
+dedicated `/v1/storyboards/director/creator/jobs` route, where the server fixes
+the context policy to `none`; a browser payload cannot enable Advanced memory.
+This prevents an earlier project's subjects, characters or style from leaking
+into a fresh simple project.
+
+Advanced mode may use optional, server-only, feature-flagged semantic memory.
+Its retrieval is owner/project scoped, bounded and sanitized. Only approved
+memory is formatted into Director context. Candidate writes are separately
+gated.
 
 Memory is advisory. It cannot override the user's current request, accepted
 project state, scene count or order, references, audio or generated-text policy,

@@ -256,6 +256,7 @@ type StoredStoryboardProject = {
   updatedAt: string;
 };
 type StoredDirectorProposal = DirectorProposal & { uid: string };
+type DirectorContextPolicy = "none" | "project";
 type StoredStoryboardAsyncJob = {
   id: string;
   uid: string;
@@ -265,6 +266,7 @@ type StoredStoryboardAsyncJob = {
   projectId?: string;
   projectRevision?: string;
   request: StoryboardEnhancementRequest | DirectorProposalRequest;
+  directorContextPolicy?: DirectorContextPolicy;
   requestHash: string;
   idempotencyHash: string;
   correlationId: string;
@@ -4113,9 +4115,10 @@ function storyboardAsyncTerminal(status: StoredStoryboardAsyncJob["status"]) {
 function storyboardAsyncRequestHash(
   kind: StoredStoryboardAsyncJob["kind"],
   request: StoredStoryboardAsyncJob["request"],
+  directorContextPolicy?: DirectorContextPolicy,
 ) {
   return createHash("sha256")
-    .update(`${kind}\0${JSON.stringify(request)}`)
+    .update(`${kind}\0${directorContextPolicy ?? "default"}\0${JSON.stringify(request)}`)
     .digest("hex");
 }
 
@@ -4333,6 +4336,7 @@ async function enqueueStoryboardAsyncJob(input: {
   uid: string;
   kind: StoredStoryboardAsyncJob["kind"];
   request: StoredStoryboardAsyncJob["request"];
+  directorContextPolicy?: DirectorContextPolicy;
   projectId?: string;
   projectRevision?: string;
   idempotencyKey: string;
@@ -4342,7 +4346,11 @@ async function enqueueStoryboardAsyncJob(input: {
     input.uid,
     `storyboard:${input.kind}:${input.idempotencyKey}`,
   );
-  const requestHash = storyboardAsyncRequestHash(input.kind, input.request);
+  const requestHash = storyboardAsyncRequestHash(
+    input.kind,
+    input.request,
+    input.directorContextPolicy,
+  );
   const existingLocal = storyboardAsyncIdempotency.get(idempotencyHash);
   if (existingLocal) {
     if (existingLocal.requestHash !== requestHash) {
@@ -4366,6 +4374,9 @@ async function enqueueStoryboardAsyncJob(input: {
     ...(input.projectId ? { projectId: input.projectId } : {}),
     ...(input.projectRevision ? { projectRevision: input.projectRevision } : {}),
     request: input.request,
+    ...(input.directorContextPolicy
+      ? { directorContextPolicy: input.directorContextPolicy }
+      : {}),
     requestHash,
     idempotencyHash,
     correlationId: nanoid(20),
@@ -4819,6 +4830,7 @@ async function processStoryboardAsyncJob(workerId: string) {
         project,
         request.message,
         request.selectedSceneId,
+        { contextPolicy: job.directorContextPolicy ?? "project" },
       );
       job = await markStoryboardAsyncStage(job, "validating");
       const latest = await reloadStoryboardAsyncJob(job);
@@ -5085,12 +5097,20 @@ async function buildDirectorProposal(
   project: StoredStoryboardProject,
   message: string,
   selectedSceneId?: string,
-  options: { firebaseIdToken?: string } = {},
+  options: {
+    firebaseIdToken?: string;
+    contextPolicy?: DirectorContextPolicy;
+  } = {},
 ) {
   const scenes = directorSceneRecords(project.form);
-  const selectedScene = scenes.find((scene) => String(scene.id) === selectedSceneId) ?? scenes[0];
-  const resolvedSceneId = selectedScene ? String(selectedScene.id) : undefined;
   const intent = classifyDirectorMessage(message);
+  const selectedScene = selectedSceneId
+    ? scenes.find((scene) => String(scene.id) === selectedSceneId)
+    : undefined;
+  if (selectedSceneId && !selectedScene) {
+    throw problem(400, "invalid_scene", "The selected scene does not belong to this project");
+  }
+  const resolvedSceneId = selectedScene ? String(selectedScene.id) : undefined;
   const payload: Record<string, unknown> = {
     ...(intent.edge ? { edge: intent.edge } : {}),
     ...(intent.sceneCount ? { sceneCount: intent.sceneCount } : {}),
@@ -5111,19 +5131,22 @@ async function buildDirectorProposal(
     if (!String(project.form.overallGoal ?? "").trim()) {
       throw problem(400, "missing_creative_brief", "Add a creative brief before asking the Director to rewrite it");
     }
-    const enhancementRequest = await attachDirectorMemory(
-      uid,
-      buildDirectorEnhancementRequest(
-        project.form,
-        message,
-        intent,
-        resolvedSceneId,
-        directorControls(),
-        project.id,
-      ),
+    const baseEnhancementRequest = buildDirectorEnhancementRequest(
+      project.form,
+      message,
+      intent,
       resolvedSceneId,
-      "improve_with_director",
+      directorControls(),
+      project.id,
     );
+    const enhancementRequest = options.contextPolicy === "none"
+      ? baseEnhancementRequest
+      : await attachDirectorMemory(
+          uid,
+          baseEnhancementRequest,
+          resolvedSceneId,
+          "improve_with_director",
+        );
     const resolved = await resolveEnhancementRuntimeContext(
       uid,
       project,
@@ -5688,11 +5711,12 @@ app.post(
     }
   },
 );
-app.post(
-  "/v1/storyboards/director/jobs",
-  auth,
-  distributedRateLimit({ name: "storyboard-director-submit", limit: 30 }),
-  async (req, res, next) => {
+function submitDirectorProposalJob(contextPolicy: DirectorContextPolicy) {
+  return async (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
     try {
       const input = directorProposalInput(req.body);
       const uid = res.locals.principal.uid as string;
@@ -5707,6 +5731,7 @@ app.post(
         uid,
         kind: "director_proposal",
         request,
+        directorContextPolicy: contextPolicy,
         projectId: project.id,
         projectRevision: project.updatedAt,
         idempotencyKey: storyboardAsyncIdempotencyKey(req),
@@ -5724,7 +5749,20 @@ app.post(
     } catch (error) {
       next(error);
     }
-  },
+  };
+}
+
+app.post(
+  "/v1/storyboards/director/creator/jobs",
+  auth,
+  distributedRateLimit({ name: "storyboard-creator-director-submit", limit: 30 }),
+  submitDirectorProposalJob("none"),
+);
+app.post(
+  "/v1/storyboards/director/jobs",
+  auth,
+  distributedRateLimit({ name: "storyboard-director-submit", limit: 30 }),
+  submitDirectorProposalJob("project"),
 );
 app.get(
   "/v1/storyboards/director/jobs/:id",
@@ -7093,7 +7131,7 @@ async function processQueueItem(workerId = "local-worker") {
     return true;
   }
   let finishClaim = true;
-  let jobDeadline = Date.now() + runtimeJobTimeoutMs();
+  let jobDeadline: number;
   try {
     if (g.runtimeJobId) {
       jobDeadline = Date.now() + runtimeOutputRecoveryWindowMs();

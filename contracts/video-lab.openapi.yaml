@@ -232,6 +232,33 @@ paths:
         "400": { description: Invalid or unsupported Director request }
         "503": { description: Local Director unavailable for creative rewriting }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/storyboards/director/creator/jobs:
+    post:
+      operationId: submitCreatorDirectorProposalJob
+      summary: Queue a durable owner-scoped Creator proposal without Advanced project memory
+      description: The server fixes the Director context policy to no retained memory. Browser fields cannot enable project memory on this route.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DirectorProposalRequest" }
+      responses:
+        "202":
+          description: Creator proposal queued or idempotently recovered
+          headers:
+            Location: { schema: { type: string } }
+            Retry-After: { schema: { type: integer, minimum: 1 } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectorProposalJob" }
+        "409": { description: Idempotency conflict or active owner job }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /v1/storyboards/director/jobs:
     post:
       operationId: submitDirectorProposalJob

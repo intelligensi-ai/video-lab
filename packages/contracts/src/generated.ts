@@ -178,6 +178,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/storyboards/director/creator/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Queue a durable owner-scoped Creator proposal without Advanced project memory
+         * @description The server fixes the Director context policy to no retained memory. Browser fields cannot enable project memory on this route.
+         */
+        post: operations["submitCreatorDirectorProposalJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/storyboards/director/jobs": {
         parameters: {
             query?: never;
@@ -1433,6 +1453,43 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    submitCreatorDirectorProposalJob: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DirectorProposalRequest"];
+            };
+        };
+        responses: {
+            /** @description Creator proposal queued or idempotently recovered */
+            202: {
+                headers: {
+                    Location?: string;
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectorProposalJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Idempotency conflict or active owner job */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            429: components["responses"]["RateLimited"];
         };
     };
     submitDirectorProposalJob: {

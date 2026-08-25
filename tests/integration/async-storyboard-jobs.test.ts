@@ -281,6 +281,127 @@ describe("durable asynchronous storyboard jobs", () => {
     );
   });
 
+  it("keeps Creator planning project-wide and bypasses Advanced memory server-side", async () => {
+    const previousMemory = {
+      enabled: process.env.DIRECTOR_MEMORY_ENABLED,
+      baseUrl: process.env.DIRECTOR_MEMORY_BASE_URL,
+      token: process.env.DIRECTOR_MEMORY_API_TOKEN,
+    };
+    process.env.DIRECTOR_MEMORY_ENABLED = "true";
+    process.env.DIRECTOR_MEMORY_BASE_URL = "https://director-memory.test";
+    process.env.DIRECTOR_MEMORY_API_TOKEN = "private-test-token";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        schemaVersion: 1,
+        degraded: false,
+        items: [{
+          id: "unrelated-project-memory",
+          scope: "project",
+          category: "prompt_improvement",
+          title: "Love Island continuity",
+          summary: "Keep the tropical villa and reality-show contestants in every scene.",
+          confidence: 1,
+          modelTags: ["ltx-2.3"],
+        }],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    try {
+      const owner = "async-creator-no-memory-owner";
+      const project = await request(app)
+        .post("/v1/storyboards/projects")
+        .set("authorization", `Bearer ${owner}`)
+        .send({ title: "Fresh Creator project", form: projectForm() })
+        .expect(201);
+      const submitted = await request(app)
+        .post("/v1/storyboards/director/creator/jobs")
+        .set("authorization", `Bearer ${owner}`)
+        .set("idempotency-key", "creator-project-plan-0001")
+        .send({
+          projectId: project.body.id,
+          message: "Plan this creative brief into exactly 2 scenes while preserving my intent.",
+        })
+        .expect(202);
+
+      await processOne("async-creator-no-memory-worker");
+      const completed = await request(app)
+        .get(`/v1/storyboards/director/jobs/${submitted.body.id}`)
+        .set("authorization", `Bearer ${owner}`)
+        .expect(200);
+
+      expect(completed.body).toMatchObject({ status: "completed", stage: "completed" });
+      expect(completed.body.result.affectedSceneIds).toEqual([]);
+      expect(completed.body.result.payload.sceneId).toBeUndefined();
+      expect(completed.body.result.payload.enhancement.shots).toHaveLength(2);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(JSON.stringify(completed.body)).not.toContain("directorContextPolicy");
+      expect(JSON.stringify(completed.body).toLowerCase()).not.toContain("love island");
+      expect(JSON.stringify(completed.body).toLowerCase()).not.toContain("tropical villa");
+    } finally {
+      fetchSpy.mockRestore();
+      if (previousMemory.enabled === undefined) delete process.env.DIRECTOR_MEMORY_ENABLED;
+      else process.env.DIRECTOR_MEMORY_ENABLED = previousMemory.enabled;
+      if (previousMemory.baseUrl === undefined) delete process.env.DIRECTOR_MEMORY_BASE_URL;
+      else process.env.DIRECTOR_MEMORY_BASE_URL = previousMemory.baseUrl;
+      if (previousMemory.token === undefined) delete process.env.DIRECTOR_MEMORY_API_TOKEN;
+      else process.env.DIRECTOR_MEMORY_API_TOKEN = previousMemory.token;
+    }
+  });
+
+  it("keeps the Advanced Director on project-scoped memory", async () => {
+    const previousMemory = {
+      enabled: process.env.DIRECTOR_MEMORY_ENABLED,
+      baseUrl: process.env.DIRECTOR_MEMORY_BASE_URL,
+      token: process.env.DIRECTOR_MEMORY_API_TOKEN,
+    };
+    process.env.DIRECTOR_MEMORY_ENABLED = "true";
+    process.env.DIRECTOR_MEMORY_BASE_URL = "https://director-memory.test";
+    process.env.DIRECTOR_MEMORY_API_TOKEN = "private-test-token";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ schemaVersion: 1, degraded: false, items: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    try {
+      const owner = "async-advanced-memory-owner";
+      const project = await request(app)
+        .post("/v1/storyboards/projects")
+        .set("authorization", `Bearer ${owner}`)
+        .send({ title: "Advanced memory project", form: projectForm() })
+        .expect(201);
+      await request(app)
+        .post("/v1/storyboards/director/jobs")
+        .set("authorization", `Bearer ${owner}`)
+        .set("idempotency-key", "advanced-project-memory-0001")
+        .send({
+          projectId: project.body.id,
+          selectedSceneId: "scene-2",
+          message: "Improve scene two without changing scene one.",
+        })
+        .expect(202);
+
+      await processOne("async-advanced-memory-worker");
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body));
+      expect(body).toMatchObject({
+        ownerUid: owner,
+        projectId: project.body.id,
+        selectedSceneId: "scene-2",
+      });
+    } finally {
+      fetchSpy.mockRestore();
+      if (previousMemory.enabled === undefined) delete process.env.DIRECTOR_MEMORY_ENABLED;
+      else process.env.DIRECTOR_MEMORY_ENABLED = previousMemory.enabled;
+      if (previousMemory.baseUrl === undefined) delete process.env.DIRECTOR_MEMORY_BASE_URL;
+      else process.env.DIRECTOR_MEMORY_BASE_URL = previousMemory.baseUrl;
+      if (previousMemory.token === undefined) delete process.env.DIRECTOR_MEMORY_API_TOKEN;
+      else process.env.DIRECTOR_MEMORY_API_TOKEN = previousMemory.token;
+    }
+  });
+
   it("does not apply a queued Director result after the project revision changes", async () => {
     const owner = "async-revision-owner";
     const project = await request(app)

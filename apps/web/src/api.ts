@@ -1124,6 +1124,24 @@ export const createDirectorProposal = (
     options,
   ) as Promise<DirectorProposal>;
 
+/**
+ * Creator mode deliberately uses a separate server route whose context policy
+ * is fixed to `none`. This is a security and product boundary: changing a
+ * browser payload cannot enable Advanced project memory for the simple flow.
+ */
+export const createCreatorDirectorProposal = (
+  request: DirectorProposalRequest,
+  options: StoryboardAsyncOptions = {},
+) =>
+  submitStoryboardAsyncJob<DirectorProposalJob>(
+    "/v1/storyboards/director/creator/jobs",
+    (jobId) => `/v1/storyboards/director/jobs/${encodeURIComponent(jobId)}`,
+    "director",
+    request.projectId,
+    request,
+    options,
+  ) as Promise<DirectorProposal>;
+
 export const cancelStoryboardEnhancementJob = (jobId: string) =>
   api<StoryboardEnhancementJob>(
     `/v1/storyboard-enhancements/${encodeURIComponent(jobId)}/cancel`,
