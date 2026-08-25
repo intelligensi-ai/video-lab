@@ -146,15 +146,16 @@ describe("minimal VideoLab project safety", () => {
     expect(planned.reduce((total, item) => total + item.duration, 0)).toBe(16);
   });
 
-  it("does not remove or resize scenes that already contain successful media", () => {
-    const protectedScene = {
+  it("resizes scenes even when they already have accepted media, since the change only affects the next render", () => {
+    const acceptedScene = {
       ...scene("scene-1", 5),
       startFrameGenerationId: "frame-accepted",
       acceptedVideoGenerationId: "video-accepted",
     };
-    const original = [protectedScene, scene("scene-2", 4)];
+    const original = [acceptedScene, scene("scene-2", 4)];
 
-    expect(creatorScenesForTotalDuration(original, 4, 1337)).toBe(original);
-    expect(creatorScenesForTotalDuration(original, 12, 1337)).toBe(original);
+    const shortened = creatorScenesForTotalDuration(original, 4, 1337);
+    expect(shortened.map((item) => item.duration)).toEqual([4]);
+    expect(shortened[0].acceptedVideoGenerationId).toBe("video-accepted");
   });
 });

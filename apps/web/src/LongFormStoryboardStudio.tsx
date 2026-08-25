@@ -231,17 +231,6 @@ function seedScenes(isClassic: boolean): StoryboardScenePayload[] {
 const MAX_CREATOR_DURATION_SECONDS = 24;
 const MAX_CREATOR_SCENES = 3;
 
-function sceneHasGeneratedMedia(scene: StoryboardScenePayload) {
-  return Boolean(
-    scene.startFrame ||
-      scene.endFrame ||
-      scene.startFrameGenerationId ||
-      scene.endFrameGenerationId ||
-      scene.acceptedVideoGenerationId ||
-      scene.candidateGenerationIds?.length,
-  );
-}
-
 /**
  * Converts the Creator's single total-length choice into the smallest valid
  * storyboard. Application code owns the count and durations; the Director
@@ -269,13 +258,6 @@ export function creatorScenesForTotalDuration(
     { length: sceneCount },
     (_, index) => baseDuration + (index < remainder ? 1 : 0),
   );
-
-  const wouldChangeGeneratedWork = scenes.some(
-    (scene, index) =>
-      sceneHasGeneratedMedia(scene) &&
-      (index >= sceneCount || scene.duration !== durations[index]),
-  );
-  if (wouldChangeGeneratedWork) return scenes;
 
   return durations.map((duration, index) => {
     const existing = scenes[index];
