@@ -57,7 +57,9 @@ import {
 } from "./storyboardSession.js";
 import { runtimeProgressCounter } from "./runtimeProgress.js";
 import {
+  defaultLongFormVideoModelForRuntime,
   longFormVideoModelLabel,
+  longFormVideoModelAvailable,
   longFormVideoModelsForRuntime,
   longFormProjectHasRenderedVideo,
   prepareLongFormVideoModelSwitch,
@@ -194,9 +196,9 @@ const initialScenes: StoryboardScenePayload[] = [
     id: "scene-1",
     title: "Scene 1",
     prompt: "",
-    duration: 5,
+    duration: 4,
     trimStart: 0,
-    trimEnd: 5,
+    trimEnd: 4,
     seed: 1337,
     seedOverrideEnabled: false,
     summary: "",
@@ -560,16 +562,15 @@ export function generationPayloadForStudioVariant(
   };
 }
 
+// Setting changes made here (resolution, fps, negative prompt, per-scene
+// direction, etc.) are captured fresh for the next render; they no longer
+// invalidate clips already accepted from a prior render, since assembly
+// normalizes resolution/fps per clip (see server-side assembly handling).
 function markAcceptedClipsStale(
   form: LongFormGenerationPayload,
-  staleReason: string,
+  _staleReason: string,
 ): LongFormGenerationPayload {
-  return {
-    ...form,
-    scenes: form.scenes.map((scene) =>
-      scene.acceptedVideoGenerationId ? { ...scene, staleReason } : scene,
-    ),
-  };
+  return form;
 }
 
 async function hydrateGeneratedFrameFiles(form: LongFormGenerationPayload) {
@@ -923,6 +924,22 @@ export default function LongFormStoryboardStudio({
       current?.id === generation.data?.id ? generation.data : current,
     );
   }, [generation.data]);
+  useEffect(() => {
+    if (!selected || ["completed", "failed", "cancelled"].includes(selected.status)) return;
+    const errorMessage = generation.error instanceof Error ? generation.error.message : "";
+    const pollingAuthFailed = /unauthori[sz]ed|forbidden|401|403/i.test(errorMessage);
+    const updatedAt = Date.parse(selected.updatedAt);
+    const stale = Number.isFinite(updatedAt) && Date.now() - updatedAt > 20 * 60_000;
+    if (!pollingAuthFailed && !stale) return;
+    setSelected({
+      ...selected,
+      status: "failed",
+      safeErrorMessage: pollingAuthFailed
+        ? "Render status could not be refreshed through the authenticated backend. Retry the render from the current project."
+        : "This render did not report progress for too long and was cleared from the active preview. Retry the render from the current project.",
+      updatedAt: new Date().toISOString(),
+    });
+  }, [generation.error, selected]);
   const currentGeneration = generation.data ?? selected;
   const isRendering =
     mutation.isPending ||
@@ -1259,23 +1276,43 @@ export default function LongFormStoryboardStudio({
     runtime.data?.capabilities?.maxScenes ?? MAX_STORYBOARD_SCENES,
   );
   const creatorMaxScenes = Math.min(1, runtimeMaxScenes);
-  const creatorLengthLocked = Boolean(
-    currentGeneration &&
-      !["failed", "cancelled"].includes(currentGeneration.status),
-  );
   const creatorPreviewReady = form.scenes.every(
     (scene) =>
       Boolean(scene.acceptedVideoGenerationId || scene.candidateGenerationIds?.length) ||
       (Boolean(scene.startFrame || scene.startFrameGenerationId) &&
         Boolean(scene.endFrame || scene.endFrameGenerationId)),
   );
+  const canGenerateNow =
+    sessionReady &&
+    Boolean(projectId) &&
+    !invalid &&
+    (!isClassic || creatorPreviewReady) &&
+    !mutation.isPending &&
+    !enhancement.isPending &&
+    !classicBriefEnhancement.isPending &&
+    !directorRepair.isPending;
+  const creatorLengthLocked =
+    Boolean(
+      currentGeneration &&
+        !["failed", "cancelled"].includes(currentGeneration.status),
+    ) && !canGenerateNow;
   const runtimeFeatureStatus = runtime.data?.capabilities?.featureStatus ?? {};
   const runtimePostProcess = runtime.data?.capabilities?.postProcess;
   const upscaleSupported = postProcessSupportsUpscale(runtimePostProcess);
   const upscaleEnabled = postProcessUpscaleEnabled(form.postProcess);
   const videoModels = longFormVideoModelsForRuntime(runtime.data);
+  const runtimeDefaultVideoModel = defaultLongFormVideoModelForRuntime(runtime.data);
+  const selectedVideoModel = form.videoModel ?? runtimeDefaultVideoModel;
+  useEffect(() => {
+    if (!runtime.data?.capabilities?.videoModels?.length) return;
+    const currentModel = form.videoModel ?? "ltx-2.3";
+    if (longFormVideoModelAvailable(runtime.data, currentModel)) return;
+    const nextModel = defaultLongFormVideoModelForRuntime(runtime.data);
+    if (currentModel === nextModel) return;
+    setForm((current) => prepareLongFormVideoModelSwitch(current, nextModel));
+  }, [form.videoModel, runtime.data]);
   const changeVideoModel = async (videoModel: LongFormVideoModel) => {
-    if ((form.videoModel ?? "ltx-2.3") === videoModel) return;
+    if (selectedVideoModel === videoModel) return;
     const copy = prepareLongFormVideoModelSwitch(form, videoModel);
     const hasRenderedVideo = longFormProjectHasRenderedVideo(form);
     if (!hasRenderedVideo) {
@@ -1469,7 +1506,7 @@ export default function LongFormStoryboardStudio({
             <select
               aria-label="Video model"
               disabled={!sessionReady}
-              value={form.videoModel ?? "ltx-2.3"}
+              value={selectedVideoModel}
               onChange={(event) =>
                 void changeVideoModel(event.target.value as LongFormVideoModel)
               }
@@ -1480,6 +1517,7 @@ export default function LongFormStoryboardStudio({
                 </option>
               ))}
             </select>
+            <small>Submitting {selectedVideoModel}</small>
           </IconField>
           <IconField icon="T" label="On-screen text">
             <span className="lf-static-setting">Disabled</span>
@@ -1536,9 +1574,9 @@ export default function LongFormStoryboardStudio({
             aria-label="Video length"
             disabled={!sessionReady || creatorLengthLocked}
             min={1}
-            max={creatorMaxScenes * 8}
+            max={creatorMaxScenes * 4}
             step={1}
-            value={Math.min(totalSeconds, creatorMaxScenes * 8)}
+            value={Math.min(totalSeconds, creatorMaxScenes * 4)}
             onChange={(event) => {
               const value = Number(event.target.value);
               setForm((current) => ({
@@ -1864,7 +1902,7 @@ export default function LongFormStoryboardStudio({
                 >
                   <select
                     aria-label="Video model"
-                    value={form.videoModel ?? "ltx-2.3"}
+                    value={selectedVideoModel}
                     onChange={(event) =>
                       void changeVideoModel(event.target.value as LongFormVideoModel)
                     }
@@ -1875,9 +1913,10 @@ export default function LongFormStoryboardStudio({
                       </option>
                     ))}
                   </select>
-                  {videoModels.find((model) => model.id === (form.videoModel ?? "ltx-2.3"))?.reason && (
-                    <small>{videoModels.find((model) => model.id === (form.videoModel ?? "ltx-2.3"))?.reason}</small>
+                  {videoModels.find((model) => model.id === selectedVideoModel)?.reason && (
+                    <small>{videoModels.find((model) => model.id === selectedVideoModel)?.reason}</small>
                   )}
+                  <small>Submitting {selectedVideoModel}</small>
                 </Field>
                 <Field
                   label="Sound behaviour"
@@ -2503,16 +2542,7 @@ export default function LongFormStoryboardStudio({
             generation={currentGeneration}
             loading={isRendering}
             submissionError={mutation.error?.message}
-            canGenerate={
-              sessionReady &&
-              Boolean(projectId) &&
-              !invalid &&
-              (!isClassic || creatorPreviewReady) &&
-              !mutation.isPending &&
-              !enhancement.isPending &&
-              !classicBriefEnhancement.isPending &&
-              !directorRepair.isPending
-            }
+            canGenerate={canGenerateNow}
             generateLabel={
               mutation.isPending
                 ? "◌ Generating video…"

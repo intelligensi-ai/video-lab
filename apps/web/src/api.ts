@@ -697,6 +697,10 @@ function runtimeAudioIntent(scene: StoryboardScenePayload) {
   };
 }
 
+function selectedLongFormVideoModel(payload: LongFormGenerationPayload): LongFormVideoModel {
+  return payload.videoModel === "ltx-2.5" ? "ltx-2.5" : "ltx-2.3";
+}
+
 export async function generateLongFormVideo(
   payload: LongFormGenerationPayload,
   projectId: string,
@@ -750,6 +754,7 @@ export async function generateLongFormVideo(
     (total, scene) => total + scene.duration,
     0,
   );
+  const videoModel = selectedLongFormVideoModel(payload);
   const generation = await api<Generation>("/v1/generations", {
     method: "POST",
     headers: { "Idempotency-Key": crypto.randomUUID() },
@@ -757,7 +762,8 @@ export async function generateLongFormVideo(
       prompt: payload.overallGoal,
       settings: {
         runtime: "longform-ltx-storyboard-studio",
-        videoModel: payload.videoModel ?? "ltx-2.3",
+        videoModel,
+        video_model: videoModel,
         aspectRatio:
           payload.resolution.startsWith("576x") ||
           payload.resolution.startsWith("720x1280")
@@ -856,7 +862,7 @@ export function storyboardEnhancementRequest(
     audioPolicy: payload.audioPolicy,
     generatedTextPolicy: payload.generatedTextPolicy,
     requestedCandidateCount: payload.candidateCount,
-    videoModel: payload.videoModel ?? "ltx-2.3",
+    videoModel: selectedLongFormVideoModel(payload),
     shots: payload.scenes.map((scene, index) => ({
       shotNumber: index + 1,
       title: clean(scene.title),
@@ -939,6 +945,7 @@ export async function generateStoryboardFrame(
       carryPreviousFrame: scene.carryPreviousFrame,
     },
   ];
+  const videoModel = selectedLongFormVideoModel(payload);
   return api<Generation>("/v1/generations", {
     method: "POST",
     headers: { "Idempotency-Key": crypto.randomUUID() },
@@ -946,7 +953,8 @@ export async function generateStoryboardFrame(
       prompt: payload.overallGoal,
       settings: {
         runtime: "longform-ltx-storyboard-studio",
-        videoModel: payload.videoModel ?? "ltx-2.3",
+        videoModel,
+        video_model: videoModel,
         aspectRatio: payload.resolution.includes("x1280")
           ? "9:16"
           : payload.resolution.includes("1080x1080")
@@ -999,6 +1007,7 @@ export async function generateStoryboardScene(
       continuityOverrides: scene.continuityOverrides,
     },
   ];
+  const videoModel = selectedLongFormVideoModel(payload);
   return api<Generation>("/v1/generations", {
     method: "POST",
     headers: { "Idempotency-Key": crypto.randomUUID() },
@@ -1006,7 +1015,8 @@ export async function generateStoryboardScene(
       prompt: scene.prompt,
       settings: {
         runtime: "longform-ltx-storyboard-studio",
-        videoModel: payload.videoModel ?? "ltx-2.3",
+        videoModel,
+        video_model: videoModel,
         aspectRatio: payload.resolution.includes("x1280")
           ? "9:16"
           : payload.resolution.includes("1080x1080")
@@ -1052,6 +1062,7 @@ export async function assembleStoryboardFilm(
     throw new Error(
       "Render and accept one clip for every scene before assembly.",
     );
+  const videoModel = selectedLongFormVideoModel(payload);
   return api<Generation>("/v1/generations", {
     method: "POST",
     headers: { "Idempotency-Key": crypto.randomUUID() },
@@ -1059,7 +1070,8 @@ export async function assembleStoryboardFilm(
       prompt: payload.overallGoal,
       settings: {
         runtime: "longform-ltx-storyboard-studio",
-        videoModel: payload.videoModel ?? "ltx-2.3",
+        videoModel,
+        video_model: videoModel,
         aspectRatio: payload.resolution.includes("x1280")
           ? "9:16"
           : payload.resolution.includes("1080x1080")

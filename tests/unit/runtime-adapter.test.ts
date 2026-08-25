@@ -816,6 +816,7 @@ describe("SulphurLtxRuntimeAdapter", () => {
 
     expect(health.provider).toBe("longform-ltx-storyboard-studio");
     expect(JSON.parse(String(calls[1].init?.body))).toMatchObject({
+      videoModel: "ltx-2.5",
       video_model: "ltx-2.5",
       overall_goal: "Keep the monolith visually consistent",
       negative_prompt: "flicker",
@@ -870,6 +871,82 @@ describe("SulphurLtxRuntimeAdapter", () => {
       featureStatus: {
         referencePlanning: "supported",
         referenceConditioning: "supported",
+      },
+    });
+  });
+
+  it("includes both model spellings for LTX 2.3 LongForm jobs", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return Response.json({ id: "ltx23-job", status: "queued" }, { status: 202 });
+      }),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "http://runtime.test",
+      payloadMode: "deploy-studio",
+    });
+    await adapter.submitGeneration({
+      prompt: "A continuous cinematic story",
+      settings: {
+        runtime: "longform-ltx-storyboard-studio",
+        videoModel: "ltx-2.3",
+        aspectRatio: "16:9",
+        durationSeconds: 8,
+        quality: "draft",
+        storyboard: [{
+          id: "scene-1",
+          title: "Reveal",
+          prompt: "A temple at dawn.",
+          duration: 8,
+          trimStart: 0,
+          trimEnd: 8,
+          seed: 1337,
+          transition: "cut",
+          transitionDuration: 0.75,
+          carryPreviousFrame: false,
+        }],
+      },
+    });
+
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({
+      videoModel: "ltx-2.3",
+      video_model: "ltx-2.3",
+    });
+  });
+
+  it("infers LTX 2.5 from Intelligensi runtime metadata", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({
+        ok: true,
+        ready: true,
+        status: "ready",
+        runtimeId: "longform-ltx-storyboard-studio",
+        title: "LongForm LTX 2.5 Preview",
+        defaultEnv: { LONGFORM_VIDEO_MODEL: "ltx-2.5" },
+        features: {
+          maxScenes: 24,
+          workflowModes: ["text", "start"],
+        },
+      })),
+    );
+    const adapter = new SulphurLtxRuntimeAdapter({
+      baseUrl: "https://api.intelligensi.ai",
+      token: "server-only-key",
+      runtimeId: "longform-ltx-storyboard-studio",
+      payloadMode: "intelligensi-api",
+    });
+
+    await expect(adapter.healthCheck()).resolves.toMatchObject({
+      capabilities: {
+        defaultVideoModel: "ltx-2.5",
+        videoModels: [
+          { id: "ltx-2.3", available: false },
+          { id: "ltx-2.5", available: true },
+        ],
       },
     });
   });

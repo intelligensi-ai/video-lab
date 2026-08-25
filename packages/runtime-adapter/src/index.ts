@@ -182,6 +182,7 @@ export interface RuntimeVideoSettings {
   seed?: number;
   runtime?: string;
   videoModel?: LongFormVideoModel;
+  video_model?: LongFormVideoModel;
   resolution?: string;
   outputFormat?: string;
   negativePrompt?: string;
@@ -614,6 +615,39 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
     return `/v1/runtimes/${encodeURIComponent(this.runtimeId())}${suffix}`;
   }
 
+  private defaultVideoModelFromMetadata(value: unknown): LongFormVideoModel | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const source = value as Record<string, unknown>;
+    const defaultEnv = source.defaultEnv && typeof source.defaultEnv === "object" && !Array.isArray(source.defaultEnv)
+      ? source.defaultEnv as Record<string, unknown>
+      : undefined;
+    const envModel = String(defaultEnv?.LONGFORM_VIDEO_MODEL ?? "").trim().toLowerCase();
+    if (envModel === "ltx-2.5") return "ltx-2.5";
+    if (envModel === "ltx-2.3") return "ltx-2.3";
+    const label = [
+      source.title,
+      source.name,
+      source.runtimeTitle,
+      source.runtimeName,
+      source.image,
+      source.imageVariant,
+      source.buildVariant,
+      source.variant,
+      source.runtimeId,
+      source.id,
+    ]
+      .map((entry) => String(entry ?? "").toLowerCase())
+      .join(" ");
+    if (/\bltx[\s_-]*2\.5\b/.test(label) || /\bltx25\b/.test(label)) return "ltx-2.5";
+    if (/\bltx[\s_-]*2\.3\b/.test(label) || /\bltx23\b/.test(label)) return "ltx-2.3";
+    return undefined;
+  }
+
+  private selectedVideoModel(settings: RuntimeVideoSettings): LongFormVideoModel {
+    const value = settings.videoModel ?? settings.video_model;
+    return value === "ltx-2.5" ? "ltx-2.5" : "ltx-2.3";
+  }
+
   private defaultPath(kind: "submit" | "status" | "cancel" | "output") {
     if (this.cfg.payloadMode === "intelligensi-api") {
       return {
@@ -757,9 +791,11 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
               },
             ];
 
+        const videoModel = this.selectedVideoModel(settings);
         return {
           project_id: settings.projectId,
-          video_model: settings.videoModel ?? "ltx-2.3",
+          videoModel,
+          video_model: videoModel,
           operation_scope: settings.operationScope ?? "project",
           operation_scene_id: settings.operationSceneId,
           frame_prompt: sanitizePrompt(settings.framePrompt),
@@ -881,6 +917,13 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
       ready?: boolean;
       worker?: string;
       error?: string | null;
+      defaultEnv?: Record<string, unknown>;
+      title?: unknown;
+      name?: unknown;
+      image?: unknown;
+      imageVariant?: unknown;
+      buildVariant?: unknown;
+      variant?: unknown;
       capabilities?: {
         workflow_modes?: unknown;
         default_video_model?: unknown;
@@ -904,6 +947,9 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
         post_process?: unknown;
       };
       runtimeId?: string;
+      id?: string;
+      runtimeTitle?: unknown;
+      runtimeName?: unknown;
       status?: string;
       features?: RuntimeHealth["capabilities"];
     } = {};
@@ -919,13 +965,41 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
         : undefined);
     const ready = body.ready ?? body.ok ?? res.ok;
     if (this.cfg.payloadMode === "intelligensi-api") {
-      const features = body.features;
+      const features = (body.features ?? {}) as Partial<RuntimeHealth["capabilities"]>;
+      const inferredDefault =
+        this.defaultVideoModelFromMetadata(body) ??
+        (features.defaultVideoModel === "ltx-2.5" ? "ltx-2.5" : features.defaultVideoModel === "ltx-2.3" ? "ltx-2.3" : undefined);
+      const videoModels: LongFormVideoModelCapability[] | undefined = features.videoModels?.length
+        ? features.videoModels
+        : inferredDefault === "ltx-2.5"
+          ? [
+              { id: "ltx-2.3" as const, label: "LTX 2.3", status: "unavailable" as const, available: false, recommended: false, workflowModes: [] },
+              { id: "ltx-2.5" as const, label: "LTX 2.5", status: "preview" as const, available: true, recommended: true, workflowModes: features.workflowModes ?? ["text", "start", "start_end"] },
+            ]
+          : features.videoModels;
       return {
         ok: res.ok && ready === true && body.status === "ready",
         provider: body.runtimeId ?? this.runtimeId(),
         worker: body.runtimeId ?? this.runtimeId(),
         ready,
-        capabilities: features,
+        capabilities: {
+          maxScenes: features.maxScenes ?? 24,
+          maxSceneDurationSeconds: features.maxSceneDurationSeconds ?? 8,
+          workflowModes: features.workflowModes ?? ["text", "start", "start_end"],
+          operationScopes: features.operationScopes ?? ["project", "scene", "start_frame", "end_frame", "assembly"],
+          postProcess: features.postProcess ?? ["none"],
+          startFrame: features.startFrame ?? true,
+          endFrame: features.endFrame ?? true,
+          generatedOpeningFrame: features.generatedOpeningFrame ?? true,
+          previousFrameContinuity: features.previousFrameContinuity ?? true,
+          sceneAssembly: features.sceneAssembly ?? true,
+          audioPreservation: features.audioPreservation ?? true,
+          styleReference: features.styleReference ?? false,
+          subjectReference: features.subjectReference ?? false,
+          ...features,
+          ...(inferredDefault ? { defaultVideoModel: inferredDefault } : {}),
+          ...(videoModels ? { videoModels } : {}),
+        },
         message:
           res.ok && ready === true
             ? "healthy"
@@ -986,7 +1060,9 @@ export class SulphurLtxRuntimeAdapter implements VideoRuntimeAdapter {
           workflowModes,
         }];
     const requestedDefaultVideoModel = String(
-      body.capabilities?.default_video_model ?? "ltx-2.3",
+      body.capabilities?.default_video_model ??
+      this.defaultVideoModelFromMetadata(body) ??
+      "ltx-2.3",
     );
     const defaultVideoModel: LongFormVideoModel =
       requestedDefaultVideoModel === "ltx-2.5" &&

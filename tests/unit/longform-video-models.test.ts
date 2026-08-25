@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  defaultLongFormVideoModelForRuntime,
   fallbackLongFormVideoModels,
+  longFormVideoModelAvailable,
   longFormVideoModelLabel,
   longFormVideoModelsForRuntime,
   longFormProjectHasRenderedVideo,
@@ -35,6 +37,8 @@ describe("LongForm video model catalogue", () => {
 
     expect(longFormVideoModelsForRuntime(runtime)).toBe(videoModels);
     expect(longFormVideoModelLabel(videoModels[0])).toBe("LTX 2.5 - Preview");
+    expect(defaultLongFormVideoModelForRuntime(runtime)).toBe("ltx-2.5");
+    expect(longFormVideoModelAvailable(runtime, "ltx-2.3")).toBe(false);
   });
 
   it("normalizes legacy and unexpected values to the proven LTX 2.3 path", () => {

@@ -31,6 +31,23 @@ export function longFormVideoModelsForRuntime(runtime?: RuntimeStatus) {
     : fallbackLongFormVideoModels;
 }
 
+export function defaultLongFormVideoModelForRuntime(runtime?: RuntimeStatus): LongFormVideoModel {
+  const models = longFormVideoModelsForRuntime(runtime);
+  const runtimeDefault = runtime?.capabilities?.defaultVideoModel;
+  if (runtimeDefault && models.some((model) => model.id === runtimeDefault && model.available)) {
+    return runtimeDefault;
+  }
+  return models.find((model) => model.recommended && model.available)?.id ??
+    models.find((model) => model.available)?.id ??
+    "ltx-2.3";
+}
+
+export function longFormVideoModelAvailable(runtime: RuntimeStatus | undefined, videoModel: LongFormVideoModel) {
+  return longFormVideoModelsForRuntime(runtime).some(
+    (model) => model.id === videoModel && model.available,
+  );
+}
+
 export function longFormVideoModelLabel(model: LongFormVideoModelCapability) {
   const status = model.status === "proven"
     ? "Proven"

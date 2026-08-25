@@ -40,6 +40,8 @@ import {
   saveStoryboardSession,
 } from "./storyboardSession.js";
 import {
+  defaultLongFormVideoModelForRuntime,
+  longFormVideoModelAvailable,
   longFormProjectHasRenderedVideo,
   prepareLongFormVideoModelSwitch,
 } from "./longFormVideoModels.js";
@@ -244,6 +246,15 @@ export function useDirectorWorkspace() {
   useEffect(() => {
     projectTitleRef.current = projectTitle;
   }, [projectTitle]);
+  useEffect(() => {
+    if (!runtime?.capabilities?.videoModels?.length) return;
+    const currentModel = form.videoModel ?? "ltx-2.3";
+    if (longFormVideoModelAvailable(runtime, currentModel)) return;
+    const nextModel = defaultLongFormVideoModelForRuntime(runtime);
+    if (currentModel === nextModel) return;
+    setForm((current) => prepareLongFormVideoModelSwitch(current, nextModel));
+    setNotice(`The active runtime uses ${nextModel === "ltx-2.5" ? "LTX 2.5 Preview" : "LTX 2.3"}; this project was updated to match.`);
+  }, [form.videoModel, runtime]);
 
   const refreshRuntime = useCallback(async () => {
     try {
@@ -334,8 +345,28 @@ export function useDirectorWorkspace() {
     const timer = window.setInterval(() => {
       void getGeneration(activeGeneration.id)
         .then((generation) => setActiveGeneration(generation))
-        .catch(() => undefined);
+        .catch((error) => {
+          const errorMessage = error instanceof Error ? error.message : "";
+          if (!/unauthori[sz]ed|forbidden|401|403/i.test(errorMessage)) return;
+          setActiveGeneration((current) => current && !terminal(current)
+            ? {
+                ...current,
+                status: "failed",
+                safeErrorMessage: "Render status could not be refreshed through the authenticated backend. Retry the render from the current project.",
+                updatedAt: new Date().toISOString(),
+              }
+            : current);
+        });
     }, 2_000);
+    const updatedAt = Date.parse(activeGeneration.updatedAt);
+    if (Number.isFinite(updatedAt) && Date.now() - updatedAt > 20 * 60_000) {
+      setActiveGeneration({
+        ...activeGeneration,
+        status: "failed",
+        safeErrorMessage: "This render did not report progress for too long and was cleared from the active preview. Retry the render from the current project.",
+        updatedAt: new Date().toISOString(),
+      });
+    }
     return () => window.clearInterval(timer);
   }, [activeGeneration]);
 
