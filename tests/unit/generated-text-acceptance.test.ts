@@ -7,13 +7,13 @@ const generation = {
 };
 
 describe("generated-text output acceptance", () => {
-  it("accepts output when the runtime did not return validation evidence", () => {
+  it("fails closed when the runtime did not return validation evidence", () => {
     expect(() =>
       requireGeneratedTextAcceptance(generation as never, undefined),
-    ).not.toThrow();
+    ).toThrow("could not verify");
   });
 
-  it("accepts media when OCR or stream validation did not pass", () => {
+  it("rejects media when OCR or stream validation did not pass", () => {
     expect(() =>
       requireGeneratedTextAcceptance(generation as never, {
         version: "generated-text-qc-v1",
@@ -29,7 +29,7 @@ describe("generated-text output acceptance", () => {
           },
         ],
       }),
-    ).not.toThrow();
+    ).toThrow("may contain captions or readable text");
   });
 
   it("accepts forbidden-text output only with an explicit passing check", () => {
@@ -47,6 +47,18 @@ describe("generated-text output acceptance", () => {
           },
         ],
       }),
+    ).not.toThrow();
+  });
+
+  it("allows the explicit administrator-only generated-text QC bypass", () => {
+    expect(() =>
+      requireGeneratedTextAcceptance({
+        ...generation,
+        settings: {
+          ...generation.settings,
+          generatedTextQualityControlDisabled: true,
+        },
+      } as never, undefined),
     ).not.toThrow();
   });
 });

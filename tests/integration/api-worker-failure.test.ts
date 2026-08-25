@@ -152,7 +152,7 @@ describe('generation worker failure handling', () => {
     expect(JSON.stringify(generation.body)).not.toMatch(/runtime\.test|private validation/i);
   }, 15_000);
 
-  it('keeps generated-text policy issues advisory after a completed render', async () => {
+  it('fails closed when a completed render lacks passing generated-text evidence', async () => {
     vi.stubEnv('VIDEO_RUNTIME_PROVIDER', 'sulphur-ltx');
     vi.stubEnv('VIDEO_RUNTIME_BASE_URL', 'http://runtime.test');
     vi.stubEnv('VIDEO_RUNTIME_PAYLOAD_MODE', 'deploy-studio');
@@ -203,11 +203,13 @@ describe('generation worker failure handling', () => {
         auth: { authorization: 'Bearer missing-text-evidence-user' },
         idempotencyKey: 'missing-text-evidence-key',
         expectedCheckStatus: undefined,
+        expectedFailureCode: 'generated_text_validation_missing',
       },
       {
         auth: { authorization: 'Bearer rejected-text-evidence-user' },
         idempotencyKey: 'rejected-text-evidence-key',
         expectedCheckStatus: 'failed',
+        expectedFailureCode: 'generated_text_policy_failed',
       },
     ];
 
@@ -227,10 +229,10 @@ describe('generation worker failure handling', () => {
         .get(`/v1/generations/${submitted.body.id}`)
         .set(testCase.auth)
         .expect(200);
-      expect(generation.body.status).toBe('completed');
-      expect(generation.body.failureCode).toBeUndefined();
-      expect(generation.body.safeErrorMessage).toBeUndefined();
-      expect(generation.body.output?.kind).toBe('video');
+      expect(generation.body.status).toBe('failed');
+      expect(generation.body.failureCode).toBe(testCase.expectedFailureCode);
+      expect(generation.body.safeErrorMessage).toMatch(/previous successful work remains available/i);
+      expect(generation.body.output).toBeUndefined();
       const generatedTextCheck = generation.body.qualityAssessment?.checks?.find(
         (check: { id: string }) => check.id === 'generated_text_policy',
       );

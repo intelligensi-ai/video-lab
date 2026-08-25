@@ -2291,22 +2291,35 @@ export function requireGeneratedTextAcceptance(
   if (!policy || policy.mode !== "forbidden") return;
   const check = qualityAssessment?.checks.find((candidate) => candidate.id === "generated_text_policy");
   if (!check) {
-    log("generation_generated_text_policy_advisory", {
+    log("generation_generated_text_policy_rejected", {
       generationId: generation.id,
       reason: "validation_missing",
     });
-    return;
+    const error = new Error(
+      "The runtime could not verify that this output follows the project's no-caption policy. Your previous successful work remains available.",
+    ) as Error & { code?: string };
+    error.name = "GeneratedTextValidationError";
+    error.code = "generated_text_validation_missing";
+    throw error;
   }
   if (check.status !== "passed") {
-    log("generation_generated_text_policy_advisory", {
+    log("generation_generated_text_policy_rejected", {
       generationId: generation.id,
       reason: "policy_not_passed",
       status: check.status,
     });
+    const error = new Error(
+      "The generated output may contain captions or readable text forbidden by this project. Your previous successful work remains available; adjust the prompt and retry.",
+    ) as Error & { code?: string };
+    error.name = "GeneratedTextPolicyError";
+    error.code = check.status === "not_evaluated"
+      ? "generated_text_validation_missing"
+      : "generated_text_policy_failed";
+    throw error;
   }
 }
 
-function isGeneratedTextAdvisoryFailure(failureCode: string) {
+function isGeneratedTextPolicyFailure(failureCode: string) {
   return (
     failureCode === "runtime_generated_text_policy_failed" ||
     failureCode === "runtime_generated_text_validation_missing" ||
@@ -2318,7 +2331,7 @@ function isGeneratedTextAdvisoryFailure(failureCode: string) {
 function generatedTextFailureCode(error: unknown) {
   if (!error || typeof error !== "object" || !("code" in error)) return undefined;
   const code = String((error as { code?: unknown }).code ?? "");
-  return isGeneratedTextAdvisoryFailure(code) ? code : undefined;
+  return isGeneratedTextPolicyFailure(code) ? code : undefined;
 }
 
 async function completeGenerationFromRuntime(
@@ -7143,6 +7156,7 @@ async function processQueueItem(workerId = "local-worker") {
   }
   let finishClaim = true;
   let jobDeadline: number;
+  let terminalQualityAssessment: Generation["qualityAssessment"] | undefined;
   try {
     if (g.runtimeJobId) {
       jobDeadline = Date.now() + runtimeOutputRecoveryWindowMs();
@@ -7273,6 +7287,7 @@ async function processQueueItem(workerId = "local-worker") {
         g.settings.operationScope !== "assembly",
       );
     }
+    terminalQualityAssessment = st.qualityAssessment;
     if (gens.get(g.id)?.status === "cancelled" || st.state === "cancelled") {
       const cancelled: StoredGeneration = {
         ...gens.get(g.id)!,
@@ -7294,7 +7309,7 @@ async function processQueueItem(workerId = "local-worker") {
       );
     } else if (
       g.settings.generatedTextQualityControlDisabled === true &&
-      isGeneratedTextAdvisoryFailure(st.failureCode ?? "")
+      isGeneratedTextPolicyFailure(st.failureCode ?? "")
     ) {
       log("generation_generated_text_qc_bypass_recovery", {
         generationId: g.id,
@@ -7396,6 +7411,9 @@ async function processQueueItem(workerId = "local-worker") {
         "released",
       ),
       failureCode,
+      ...(terminalQualityAssessment
+        ? { qualityAssessment: terminalQualityAssessment }
+        : {}),
       safeErrorMessage: `${
         generatedTextFailureCode(e)
           ? (e instanceof Error && e.message) ||
