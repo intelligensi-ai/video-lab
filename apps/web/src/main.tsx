@@ -47,6 +47,9 @@ const LongFormStoryboardStudio = React.lazy(
 const DirectorWorkspace = React.lazy(
   () => import("./DirectorWorkspace.js"),
 );
+const MinimalUI = React.lazy(
+  () => import("./MinimalUI.js"),
+);
 const DEMO_GENERATIONS_KEY = "vl_demo_generations";
 const ENABLE_DEMO_API =
   import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_API === "true";
@@ -468,8 +471,11 @@ function Shell() {
     navigate("/login", { replace: true });
   };
 
+  const isMinimal = location.pathname.startsWith("/minimal");
+
   return (
     <>
+      {!isMinimal && (
       <nav
         className={`site-nav${signedIn ? " logged-in" : ""}`}
         aria-label="Primary navigation"
@@ -527,6 +533,7 @@ function Shell() {
           )}
         </div>
       </nav>
+      )}
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<AuthEntry mode="login" />} />
@@ -603,6 +610,18 @@ function Shell() {
         <Route
           path="/admin"
           element={<ProtectedRoute element={<AdminRoute />} />}
+        />
+        <Route
+          path="/minimal"
+          element={
+            <ProtectedRoute
+              element={
+                <React.Suspense fallback={<p>Loading Minimal UI...</p>}>
+                  <MinimalUI />
+                </React.Suspense>
+              }
+            />
+          }
         />
       </Routes>
     </>
