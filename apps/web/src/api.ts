@@ -1160,6 +1160,11 @@ export async function resumePendingDirectorProposal(
   ) as Promise<DirectorProposal>;
 }
 
+export function clearPendingStoryboardProjectJobs(projectId: string) {
+  clearPendingStoryboardJob(pendingStoryboardStorageKey("director", projectId));
+  clearPendingStoryboardJob(pendingStoryboardStorageKey("enhancement", projectId));
+}
+
 export const cancelStoryboardEnhancementJob = (jobId: string) =>
   api<StoryboardEnhancementJob>(
     `/v1/storyboard-enhancements/${encodeURIComponent(jobId)}/cancel`,

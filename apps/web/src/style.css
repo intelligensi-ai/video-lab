@@ -5396,7 +5396,8 @@ body:not(:has(.home)) textarea:focus::placeholder {
   background: transparent;
   box-shadow: none;
 }
-.lf-help-toggle {
+.lf-help-toggle,
+.lf-reset-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5411,6 +5412,15 @@ body:not(:has(.home)) textarea:focus::placeholder {
   letter-spacing: 0.12em !important;
   line-height: 1 !important;
   text-transform: uppercase !important;
+}
+.lf-reset-button {
+  border-color: #d0483f44 !important;
+  background: #fff4f2 !important;
+  color: #9b2924 !important;
+}
+.lf-reset-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
 }
 .lf-help-toggle[aria-pressed="true"] {
   border-color: #111 !important;
@@ -5656,7 +5666,8 @@ body:not(:has(.home)) textarea:focus::placeholder {
   gap: 0.45rem;
 }
 .lf-classic-tools .lf-session span,
-.lf-classic-tools .lf-help-toggle {
+.lf-classic-tools .lf-help-toggle,
+.lf-classic-tools .lf-reset-button {
   min-height: 30px !important;
   padding: 0.35rem 0.58rem !important;
   font-size: 0.54rem !important;

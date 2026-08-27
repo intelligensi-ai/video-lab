@@ -20,6 +20,7 @@ import {
   assembleStoryboardFilm,
   acceptDirectorProposal,
   cancelGeneration,
+  clearPendingStoryboardProjectJobs,
   createCreatorDirectorProposal,
   createDirectorProposal,
   createStoryboardProject,
@@ -502,6 +503,13 @@ const initialForm: LongFormGenerationPayload = {
 const freshInitialForm = (): LongFormGenerationPayload =>
   globalThis.structuredClone(initialForm);
 
+function factoryFormForStudioVariant(isClassic: boolean): LongFormGenerationPayload {
+  return {
+    ...freshInitialForm(),
+    scenes: seedScenes(isClassic),
+  };
+}
+
 function normalizePersistedForm(
   saved: LongFormGenerationPayload,
 ): LongFormGenerationPayload {
@@ -562,8 +570,17 @@ export function generationPayloadForStudioVariant(
   form: LongFormGenerationPayload,
   isClassic: boolean,
 ): LongFormGenerationPayload {
+  const scenePromptOverview = form.scenes
+    .map((scene) => scene.prompt.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  const overallGoal =
+    isClassic && !form.overallGoal.trim() && scenePromptOverview
+      ? scenePromptOverview
+      : form.overallGoal;
   return {
     ...form,
+    overallGoal,
     videoModel: isClassic ? "ltx-2.3" : form.videoModel,
     generatedTextPolicy: defaultGeneratedTextPolicy(),
     scenes: form.scenes.map((scene) => ({
@@ -684,10 +701,7 @@ export default function LongFormStoryboardStudio({
 }) {
   const isClassic = variant === "classic";
   const queryClient = useQueryClient();
-  const [form, setForm] = useState(() => ({
-    ...freshInitialForm(),
-    scenes: seedScenes(isClassic),
-  }));
+  const [form, setForm] = useState(() => factoryFormForStudioVariant(isClassic));
   const [history, setHistory] = useState<Generation[]>([]);
   const [selected, setSelected] = useState<Generation>();
   const [preservedGeneration, setPreservedGeneration] = useState<Generation>();
@@ -919,10 +933,7 @@ export default function LongFormStoryboardStudio({
           const normalized = formForStudioVariant(saved, isClassic);
           setForm(await hydrateGeneratedFrameFiles(normalized));
         } else {
-          setForm({
-            ...freshInitialForm(),
-            scenes: seedScenes(isClassic),
-          });
+          setForm(factoryFormForStudioVariant(isClassic));
         }
         setSessionReady(true);
         setSessionStatus("saved");
@@ -1042,10 +1053,7 @@ export default function LongFormStoryboardStudio({
       const saved = await loadStoryboardSession(sessionOwner, nextProjectId);
       const normalized = saved
         ? formForStudioVariant(saved, isClassic)
-        : {
-            ...freshInitialForm(),
-            scenes: seedScenes(isClassic),
-          };
+        : factoryFormForStudioVariant(isClassic);
       setForm(await hydrateGeneratedFrameFiles(normalized));
       setProjectId(nextProjectId);
       setProjectTitle(summary.title);
@@ -1067,10 +1075,7 @@ export default function LongFormStoryboardStudio({
   const createProject = async () => {
     setProjectBusy(true);
     setProjectError("");
-    const nextForm = {
-      ...freshInitialForm(),
-      scenes: seedScenes(isClassic),
-    };
+    const nextForm = factoryFormForStudioVariant(isClassic);
     try {
       const title = `Untitled film ${projects.length + 1}`;
       const created = await createStoryboardProject(
@@ -1339,7 +1344,10 @@ export default function LongFormStoryboardStudio({
         ? current
         : { ...current, scenes: current.scenes.filter((_, i) => i !== index) },
     );
-  const invalid = !form.overallGoal.trim() || !form.scenes.length;
+  const hasRenderablePrompt =
+    Boolean(form.overallGoal.trim()) ||
+    (isClassic && form.scenes.some((scene) => scene.prompt.trim()));
+  const invalid = !hasRenderablePrompt || !form.scenes.length;
   const runtimeMaxScenes = Math.min(
     MAX_STORYBOARD_SCENES,
     runtime.data?.capabilities?.maxScenes ?? MAX_STORYBOARD_SCENES,
@@ -1355,7 +1363,6 @@ export default function LongFormStoryboardStudio({
     sessionReady &&
     Boolean(projectId) &&
     !invalid &&
-    (!isClassic || creatorPreviewReady) &&
     !mutation.isPending &&
     !enhancement.isPending &&
     !classicBriefEnhancement.isPending &&
@@ -1410,6 +1417,42 @@ export default function LongFormStoryboardStudio({
       setProjectBusy(false);
     }
   };
+  const resetProjectToFactory = async () => {
+    if (!window.confirm("Reset this project to factory settings? This clears prompts, hidden Director context, frame anchors, references, settings and selected renders from the current project.")) {
+      return;
+    }
+    const nextForm = factoryFormForStudioVariant(isClassic);
+    setForm(nextForm);
+    setUndoForm(undefined);
+    setEnhancementProgress("");
+    setFrameStates({});
+    setSceneRenderStates({});
+    setPreviewBatchBusy(false);
+    setSelected(undefined);
+    setPreservedGeneration(undefined);
+    autoSelectedRef.current = false;
+    setProjectError("");
+    if (projectId) clearPendingStoryboardProjectJobs(projectId);
+    if (!sessionOwner || !projectId) return;
+    setSessionStatus("saving");
+    try {
+      await saveStoryboardSession(sessionOwner, projectId, projectTitle, nextForm);
+      setSessionStatus("saved");
+      setProjects((items) =>
+        items.map((project) =>
+          project.id === projectId
+            ? {
+                ...project,
+                sceneCount: nextForm.scenes.length,
+                updatedAt: new Date().toISOString(),
+              }
+            : project,
+        ),
+      );
+    } catch {
+      setSessionStatus("error");
+    }
+  };
   const allScenesAccepted =
     form.scenes.length > 0 &&
     form.scenes.every(
@@ -1425,6 +1468,15 @@ export default function LongFormStoryboardStudio({
         data-help="Turn contextual explanations off."
       >
         {helpMode ? "✦ Help on" : "? Help"}
+      </button>
+      <button
+        type="button"
+        className="lf-reset-button"
+        disabled={!sessionReady || isRendering}
+        onClick={() => void resetProjectToFactory()}
+        data-help="Reset every visible and hidden storyboard field to the factory defaults."
+      >
+        Reset
       </button>
       <span
         className={
@@ -1644,6 +1696,7 @@ export default function LongFormStoryboardStudio({
       )}
       <div className={`lf-layout ${isClassic ? "lf-layout-minimal" : ""}`}>
         <div className="lf-controls">
+          {!isClassic && (
           <section
             className={`lf-panel lf-goal ${isClassic ? "lf-minimal-director" : ""}`}
           >
@@ -1777,6 +1830,7 @@ export default function LongFormStoryboardStudio({
               </div>
             )}
           </section>
+          )}
           <>
               {!isClassic && <ProjectReferencePanel
                 references={form.projectReferences}
@@ -1825,7 +1879,7 @@ export default function LongFormStoryboardStudio({
                 <div className="lf-section-head">
                   <div>
                     <span className="lf-label">Timeline</span>
-                    <h2>{isClassic ? "Review your scenes" : "Storyboard scenes"}</h2>
+                    <h2>{isClassic ? "Create movie" : "Storyboard scenes"}</h2>
                   </div>
                   {!isClassic && (
                     <button
@@ -2573,17 +2627,7 @@ export default function LongFormStoryboardStudio({
                   ? "Generate video"
                   : "Generate complete film in one run"
             }
-            onGenerate={() => {
-              if (
-                acceptedGenerationRequiresConfirmation(currentGeneration) &&
-                !window.confirm(
-                  "Generate a new version? Your current finished video will stay available until the replacement succeeds.",
-                )
-              ) {
-                return;
-              }
-              mutation.mutate();
-            }}
+            onGenerate={() => mutation.mutate()}
             cancelling={cancellation.isPending}
             onCancel={() => cancellation.mutate()}
             cancelError={cancellation.error?.message}
