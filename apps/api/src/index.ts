@@ -1044,7 +1044,10 @@ export function localAuthEnabled(env: NodeJS.ProcessEnv = process.env) {
 }
 const localAuth = localAuthEnabled();
 const localAdminUid =
-  (process.env.VIDEO_LAB_LOCAL_ADMIN_UID ?? "")
+  (
+    process.env.VIDEO_LAB_LOCAL_ADMIN_UID ??
+    (process.env.NODE_ENV === "test" ? "local-admin" : "")
+  )
     .trim()
     .replace(/[^a-zA-Z0-9_-]/g, "") || undefined;
 const usesIntelligensiRuntimeApi =
