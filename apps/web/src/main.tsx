@@ -52,7 +52,7 @@ const ENABLE_DEMO_API =
   import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_API === "true";
 function readSessionValue(key: string, fallback: string) {
   try {
-    return window.sessionStorage.getItem(key) ?? window.localStorage.getItem(key) ?? fallback;
+    return window.sessionStorage.getItem(key) ?? fallback;
   } catch {
     return fallback;
   }
@@ -62,15 +62,11 @@ function writeSessionValue(key: string, value: string) {
   try {
     window.sessionStorage.setItem(key, value);
   } catch {
-    try {
-      window.localStorage.setItem(key, value);
-    } catch {
-      // If storage is unavailable, the app can still continue with in-memory state.
-    }
+    // If storage is unavailable, the app can still continue with in-memory state.
   }
 }
 
-const token = () => readSessionValue("vl_token", "demo-user");
+const token = () => "demo-user";
 
 type GenerationRequest = {
   prompt: string;
@@ -175,7 +171,7 @@ async function demoApi<T>(path: string, init: RequestInit = {}) {
       uid: token(),
       email: `${token()}@example.test`,
       status: "active",
-      roles: token() === "admin-token" ? ["admin"] : [],
+      roles: [],
       termsVersion: "2026-07",
       trialGrantedAt: nowIso(),
     } as T;

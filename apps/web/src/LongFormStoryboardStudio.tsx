@@ -894,9 +894,7 @@ export default function LongFormStoryboardStudio({
     let active = true;
     const restore = async () => {
       try {
-        const owner = isProductionFirebase
-          ? (await getFirebaseUser()).uid
-          : localStorage.getItem("vl_token") || "demo-user";
+        const owner = isProductionFirebase ? (await getFirebaseUser()).uid : "demo-user";
         const listed = await listStoryboardProjects();
         let available = listed.items;
         if (!available.length) {

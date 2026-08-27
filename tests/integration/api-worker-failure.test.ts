@@ -286,7 +286,7 @@ describe('generation worker failure handling', () => {
     const { app, processOne } = await import('../../apps/api/src/index.js');
     await request(app)
       .post('/v1/admin/runtime/generated-text-qc')
-      .set('authorization', 'Bearer admin-token')
+      .set('authorization', 'Bearer local-admin')
       .send({ disabled: true })
       .expect(200);
     const auth = { authorization: 'Bearer text-qc-bypass-owner' };

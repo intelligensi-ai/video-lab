@@ -32,7 +32,7 @@ describe("api integration", () => {
     );
     expect(response.body.provider).toBe("mock");
   });
-  it("accepts Firebase Hosting /api-prefixed routes and keeps discovery administrator-only", async () => {
+  it("accepts Firebase Hosting /api-prefixed routes and rejects magic admin tokens", async () => {
     const status = await request(app)
       .get("/api/v1/runtime/status")
       .set(auth)
@@ -46,7 +46,7 @@ describe("api integration", () => {
       .expect(403);
     await request(app)
       .post("/api/v1/admin/runtime/discover")
-      .set("authorization", "Bearer admin-token")
+      .set("authorization", "Bearer local-admin")
       .expect(200);
   });
   it("lets administrators manually health-check a runtime origin before connecting it", async () => {
@@ -57,9 +57,9 @@ describe("api integration", () => {
       .expect(403);
     await request(app)
       .post("/v1/admin/runtime/connect")
-      .set("authorization", "Bearer admin-token")
+      .set("authorization", "Bearer admin")
       .send({ baseUrl: "not a url" })
-      .expect(400);
+      .expect(403);
     const unhealthyRuntime = createServer((_req, res) => {
       res.writeHead(503, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: false, ready: false }));
@@ -73,7 +73,7 @@ describe("api integration", () => {
         throw new Error("Local health fixture did not bind a TCP port");
       const response = await request(app)
         .post("/v1/admin/runtime/connect")
-        .set("authorization", "Bearer admin-token")
+        .set("authorization", "Bearer local-admin")
         .send({ baseUrl: `http://127.0.0.1:${address.port}` })
         .expect(503);
       expect(response.body.code).toBe("runtime_health_failed");
@@ -154,11 +154,11 @@ describe("api integration", () => {
     await request(app).post("/v1/admin/runtime/pause").set(auth).expect(403);
     await request(app)
       .post("/v1/admin/runtime/pause")
-      .set("authorization", "Bearer admin-token")
+      .set("authorization", "Bearer local-admin")
       .expect(200);
     await request(app)
       .post("/v1/admin/runtime/resume")
-      .set("authorization", "Bearer admin-token")
+      .set("authorization", "Bearer local-admin")
       .expect(200);
   });
   it("validates asset ownership", async () => {

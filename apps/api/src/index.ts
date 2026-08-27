@@ -1039,9 +1039,14 @@ async function runtimeGeneration(
 }
 export function localAuthEnabled(env: NodeJS.ProcessEnv = process.env) {
   if (env.NODE_ENV === "production") return false;
-  return env.NODE_ENV === "test" || env.VIDEO_LAB_LOCAL_AUTH === "true";
+  if (env.NODE_ENV === "test") return true;
+  return env.VIDEO_LAB_LOCAL_AUTH === "true";
 }
 const localAuth = localAuthEnabled();
+const localAdminUid =
+  (process.env.VIDEO_LAB_LOCAL_ADMIN_UID ?? "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "") || undefined;
 const usesIntelligensiRuntimeApi =
   process.env.VIDEO_RUNTIME_PROVIDER === "intelligensi-api";
 function videoLabRuntimeApiKey() {
@@ -3012,12 +3017,11 @@ async function principal(req: express.Request): Promise<Principal> {
   if (!token)
     throw problem(401, "unauthenticated", "Missing Firebase bearer token");
   if (localAuth) {
-    if (token === "admin-token")
-      return { uid: "admin", email: "admin@example.test", admin: true };
+    const uid = token.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64) || "demo";
     return {
-      uid: token.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64) || "demo",
-      email: `${token}@example.test`,
-      admin: false,
+      uid,
+      email: `${uid}@example.test`,
+      admin: uid === localAdminUid,
     };
   }
   try {

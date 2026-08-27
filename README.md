@@ -61,9 +61,10 @@ Vite development server proxies `/api` to it. Stop all local processes with
 `Ctrl+C` in the terminal that is running `pnpm dev`.
 
 Local development does not require a Firebase sign-in. The API accepts a
-deterministic local bearer principal when `VIDEO_LAB_LOCAL_AUTH=true`;
-`admin-token` simulates the administrator claim for API tests. These shortcuts
-are disabled in production.
+deterministic local bearer principal when `VIDEO_LAB_LOCAL_AUTH=true`. If you
+need a local admin identity for tests, set `VIDEO_LAB_LOCAL_ADMIN_UID` to an
+explicit UID and send that exact bearer token. No magic `admin-token` bypass is
+allowed in production or in the default local configuration.
 
 ### Environment files
 
@@ -199,9 +200,9 @@ pnpm build
 
 Production verifies Firebase ID tokens with the Admin SDK. Run a privileged
 Admin SDK script or callable operation to set `{ admin: true }` on the Firebase
-user, then send that user's ID token as the bearer token. Local development and
-API tests may use `Authorization: Bearer admin-token`; this shortcut is disabled
-in production.
+user, then send that user's ID token as the bearer token. For local-only
+verification, set `VIDEO_LAB_LOCAL_ADMIN_UID` to a known UID and send that exact
+bearer token; the app does not accept a magic `admin-token` fallback.
 
 ## LongForm LTX runtime
 

@@ -111,11 +111,7 @@ export async function ensureAnonymousUser() {
 
 export async function getApiToken() {
   if (!isProductionFirebase) {
-    return (
-      browserSessionStorage()?.getItem("vl_token") ??
-      browserLocalStorage()?.getItem("vl_token") ??
-      "demo-user"
-    );
+    return "demo-user";
   }
   return (await ensureUser()).getIdToken();
 }

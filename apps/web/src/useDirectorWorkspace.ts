@@ -272,9 +272,7 @@ export function useDirectorWorkspace() {
     let active = true;
     const restore = async () => {
       try {
-        const owner = isProductionFirebase
-          ? (await getFirebaseUser()).uid
-          : localStorage.getItem("vl_token") || "demo-user";
+        const owner = isProductionFirebase ? (await getFirebaseUser()).uid : "demo-user";
         let available = (await listStoryboardProjects()).items;
         if (!available.length) {
           const created = await createStoryboardProject("Untitled film", freshDirectorForm() as unknown as Record<string, unknown>);
