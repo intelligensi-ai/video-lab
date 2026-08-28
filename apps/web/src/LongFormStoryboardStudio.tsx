@@ -570,21 +570,16 @@ export function generationPayloadForStudioVariant(
   form: LongFormGenerationPayload,
   isClassic: boolean,
 ): LongFormGenerationPayload {
-  const scenePromptOverview = form.scenes
-    .map((scene) => scene.prompt.trim())
-    .filter(Boolean)
-    .join("\n\n");
-  const overallGoal =
-    isClassic && !form.overallGoal.trim() && scenePromptOverview
-      ? scenePromptOverview
-      : form.overallGoal;
+  const overallGoal = form.overallGoal;
+  const creatorPrompt = overallGoal.trim();
   return {
     ...form,
     overallGoal,
     videoModel: isClassic ? "ltx-2.3" : form.videoModel,
     generatedTextPolicy: defaultGeneratedTextPolicy(),
-    scenes: form.scenes.map((scene) => ({
+    scenes: form.scenes.map((scene, index) => ({
       ...scene,
+      prompt: isClassic && index === 0 ? creatorPrompt : scene.prompt,
       generatedTextIntent: {
         mode: "none",
         visibleText: [],
@@ -1143,6 +1138,10 @@ export default function LongFormStoryboardStudio({
     }));
   const regenerateFrame = async (index: number, edge: "start" | "end") => {
     const scene = form.scenes[index];
+    const renderScene =
+      isClassic && index === 0
+        ? { ...scene, prompt: form.overallGoal.trim() }
+        : scene;
     const stateKey = `${scene.id}:${edge}`;
     setFrameStates((current) => ({
       ...current,
@@ -1153,7 +1152,7 @@ export default function LongFormStoryboardStudio({
         throw new Error("Choose a project before generating frames.");
       const submitted = await generateStoryboardFrame(
         form,
-        scene,
+        renderScene,
         edge,
         projectId,
       );
@@ -1344,9 +1343,7 @@ export default function LongFormStoryboardStudio({
         ? current
         : { ...current, scenes: current.scenes.filter((_, i) => i !== index) },
     );
-  const hasRenderablePrompt =
-    Boolean(form.overallGoal.trim()) ||
-    (isClassic && form.scenes.some((scene) => scene.prompt.trim()));
+  const hasRenderablePrompt = Boolean(form.overallGoal.trim());
   const invalid = !hasRenderablePrompt || !form.scenes.length;
   const runtimeMaxScenes = Math.min(
     MAX_STORYBOARD_SCENES,
@@ -1904,6 +1901,7 @@ export default function LongFormStoryboardStudio({
                   <SceneCard
                     key={scene.id}
                     scene={scene}
+                    creatorPrompt={isClassic && index === 0 ? form.overallGoal : undefined}
                     index={index}
                     count={form.scenes.length}
                     previewGate={
@@ -1919,6 +1917,35 @@ export default function LongFormStoryboardStudio({
                       ) : undefined
                     }
                     onChange={(patch) => updateScene(index, patch)}
+                    onCreatorPromptChange={
+                      isClassic && index === 0
+                        ? (overallGoal) =>
+                            setForm((current) =>
+                              markAcceptedClipsStale(
+                                {
+                                  ...current,
+                                  overallGoal,
+                                  scenes: current.scenes.map((candidate, sceneIndex) =>
+                                    sceneIndex === 0
+                                      ? {
+                                          ...candidate,
+                                          prompt: "",
+                                          promptOrigin: "user",
+                                          staleReason:
+                                            candidate.startFrame ||
+                                            candidate.endFrame ||
+                                            candidate.acceptedVideoGenerationId
+                                              ? "This direction changed after its frame anchors were created. Review or regenerate them before rendering."
+                                              : candidate.staleReason,
+                                        }
+                                      : candidate,
+                                  ),
+                                },
+                                "The creator prompt changed after this clip was accepted. Generate the film again to use it.",
+                              ),
+                            )
+                        : undefined
+                    }
                     onMove={(direction) => moveScene(index, direction)}
                     onRemove={() => removeScene(index)}
                     frameState={{
@@ -3400,9 +3427,11 @@ function ReferenceCard({
 
 function SceneCard({
   scene,
+  creatorPrompt,
   index,
   count,
   onChange,
+  onCreatorPromptChange,
   onMove,
   onRemove,
   frameState,
@@ -3422,9 +3451,11 @@ function SceneCard({
   previewGate,
 }: {
   scene: StoryboardScenePayload;
+  creatorPrompt?: string;
   index: number;
   count: number;
   onChange: (patch: Partial<StoryboardScenePayload>) => void;
+  onCreatorPromptChange?: (value: string) => void;
   onMove: (direction: -1 | 1) => void;
   onRemove: () => void;
   frameState: { start: FrameState; end: FrameState };
@@ -3459,6 +3490,7 @@ function SceneCard({
       ? "Wide street-level tracking shot. The founder notices a thin teal reflection moving through puddles. Keep the face and trench coat consistent; slow handheld pursuit; cool rain and warm shop windows."
       : "Begin from the previous final frame. The signal climbs a bridge rail as the camera arcs around the founder, revealing the skyline. Preserve direction of travel, identity, wet materials and the restrained teal-and-amber palette.";
   const activeSound = sceneSoundTabs.find((tab) => tab.key === activeSoundTab) ?? sceneSoundTabs[0];
+  const visiblePrompt = classic ? (creatorPrompt ?? "") : scene.prompt;
   const updateSoundIntent = (key: SceneSoundTabKey, value: string) => {
     const nextIntent = {
       mode: scene.audioIntent?.mode ?? "silent",
@@ -3568,7 +3600,7 @@ function SceneCard({
             }
           >
             <div className="prompt-field-heading">
-              <span className="lf-label">Scene direction</span>
+              <span className="lf-label">{classic ? "Video prompt" : "Scene direction"}</span>
               {!classic && (
                 <small>
                   {scene.promptOrigin === "agent"
@@ -3578,10 +3610,18 @@ function SceneCard({
               )}
             </div>
             <textarea
-              aria-label={`Scene ${index + 1} direction`}
-              value={scene.prompt}
-              placeholder="Describe one clear action, camera movement, lighting beat and final composition…"
-              onChange={(event) =>
+              aria-label={classic ? "Video prompt" : `Scene ${index + 1} direction`}
+              value={visiblePrompt}
+              placeholder={
+                classic
+                  ? "Describe the video you want to create..."
+                  : "Describe one clear action, camera movement, lighting beat and final composition..."
+              }
+              onChange={(event) => {
+                if (classic && onCreatorPromptChange) {
+                  onCreatorPromptChange(event.target.value);
+                  return;
+                }
                 onChange({
                   prompt: event.target.value,
                   promptOrigin: "user",
@@ -3591,8 +3631,8 @@ function SceneCard({
                     scene.acceptedVideoGenerationId
                       ? "This direction changed after its frame anchors were created. Review or regenerate them before rendering."
                       : scene.staleReason,
-                })
-              }
+                });
+              }}
             />
             {!classic && (
               <div className="lf-scene-copy-grid">
@@ -3973,9 +4013,9 @@ function SceneCard({
           className="lf-scene-collapsed-summary"
           onClick={() => setExpanded(true)}
         >
-          {scene.prompt.trim() ||
+          {visiblePrompt.trim() ||
             (classic
-              ? "Open this scene to add direction and frame anchors."
+              ? "Open this prompt to describe the video and add frame anchors."
               : "Open this scene to add direction, timing and render controls.")}
         </button>
       )}

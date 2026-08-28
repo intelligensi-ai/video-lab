@@ -110,10 +110,11 @@ describe("minimal VideoLab project safety", () => {
     }
   });
 
-  it("preserves and submits the Director's complete minimal storyboard", () => {
+  it("submits the Creator master prompt as the minimal storyboard direction", () => {
     const original = projectForm();
     original.videoModel = "ltx-2.5";
     const restored = formForStudioVariant(original, true);
+    restored.scenes[0].prompt = "Legacy scene prompt that should not drive Creator mode.";
     const submitted = generationPayloadForStudioVariant(restored, true);
 
     expect(restored.scenes.map((item) => item.id)).toEqual([
@@ -125,7 +126,20 @@ describe("minimal VideoLab project safety", () => {
       "scene-2",
     ]);
     expect(original.scenes).toHaveLength(2);
-    expect(submitted).toEqual(restored);
+    expect(submitted).toEqual({
+      ...restored,
+      scenes: restored.scenes.map((scene, index) => ({
+        ...scene,
+        prompt: index === 0 ? restored.overallGoal : scene.prompt,
+        generatedTextIntent: {
+          mode: "none",
+          visibleText: [],
+          reason:
+            "Visible generated text is disabled for the Creator launch workflow.",
+        },
+      })),
+      generatedTextPolicy: defaultGeneratedTextPolicy(),
+    });
     expect(restored.videoModel).toBe("ltx-2.3");
     expect(submitted.videoModel).toBe("ltx-2.3");
   });
