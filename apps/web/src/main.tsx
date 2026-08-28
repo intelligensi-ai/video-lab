@@ -453,7 +453,6 @@ function Shell() {
   const isLanding = location.pathname === "/";
   const navItems = [
     { to: "/creator", label: "Creator" },
-    { to: "/filmmaker", label: "Filmmaker" },
     { to: "/gallery", label: "Gallery" },
     ...(me.data?.roles.includes("admin")
       ? [{ to: "/admin", label: "Admin" }]

@@ -7023,6 +7023,9 @@ body:not(:has(.home)) textarea:focus::placeholder {
   .lf-layout-minimal .lf-preview-col {
     grid-row: 2;
   }
+  .lf-layout-minimal .lf-stats {
+    display: none;
+  }
   .lf-brand-lockup {
     align-items: flex-start;
     flex-direction: column;

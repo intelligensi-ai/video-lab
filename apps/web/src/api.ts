@@ -701,6 +701,20 @@ function selectedLongFormVideoModel(payload: LongFormGenerationPayload): LongFor
   return payload.videoModel === "ltx-2.5" ? "ltx-2.5" : "ltx-2.3";
 }
 
+// The top-level prompt submitted with every generation. Prefers the film
+// brief (overallGoal), but the Creator flow's single-scene UI can leave it
+// empty while the real content lives in the scene's own direction -- fall
+// back to that (and beyond it, any other scene with a direction) so a
+// generation is never submitted with a prompt too short to pass validation.
+function effectiveOverallPrompt(payload: LongFormGenerationPayload): string {
+  if (payload.overallGoal.trim()) return payload.overallGoal;
+  const sceneOverview = payload.scenes
+    .map((scene) => scene.prompt.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  return sceneOverview || payload.overallGoal;
+}
+
 export async function generateLongFormVideo(
   payload: LongFormGenerationPayload,
   projectId: string,
@@ -759,7 +773,7 @@ export async function generateLongFormVideo(
     method: "POST",
     headers: { "Idempotency-Key": crypto.randomUUID() },
     body: JSON.stringify({
-      prompt: payload.overallGoal,
+      prompt: effectiveOverallPrompt(payload),
       settings: {
         runtime: "longform-ltx-storyboard-studio",
         videoModel,
@@ -950,7 +964,7 @@ export async function generateStoryboardFrame(
     method: "POST",
     headers: { "Idempotency-Key": crypto.randomUUID() },
     body: JSON.stringify({
-      prompt: payload.overallGoal,
+      prompt: effectiveOverallPrompt(payload),
       settings: {
         runtime: "longform-ltx-storyboard-studio",
         videoModel,
@@ -1067,7 +1081,7 @@ export async function assembleStoryboardFilm(
     method: "POST",
     headers: { "Idempotency-Key": crypto.randomUUID() },
     body: JSON.stringify({
-      prompt: payload.overallGoal,
+      prompt: effectiveOverallPrompt(payload),
       settings: {
         runtime: "longform-ltx-storyboard-studio",
         videoModel,

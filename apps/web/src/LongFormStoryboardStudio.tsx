@@ -489,8 +489,8 @@ const initialForm: LongFormGenerationPayload = {
   audioPolicy: {
     mode: "intent_only",
     dialogue: "prompted_only",
-    soundEffects: "intent_only",
-    ambience: "intent_only",
+    soundEffects: "on",
+    ambience: "on",
     music: "prompted_or_unambiguous_performance",
     preserveSourceAudio: false,
   },
