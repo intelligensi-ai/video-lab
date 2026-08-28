@@ -459,8 +459,11 @@ function Shell() {
       : []),
   ];
   const pageTitle =
-    navItems.find((item) => location.pathname === item.to)?.label ??
+    (location.pathname === "/creator"
+      ? "VideoLab.creator"
+      : navItems.find((item) => location.pathname === item.to)?.label) ??
     (location.pathname.startsWith("/generations/") ? "Details" : "");
+  const pageTitleHasStop = pageTitle.includes(".");
   const logout = async () => {
     await signOutUser();
     navigate("/login", { replace: true });
@@ -479,7 +482,7 @@ function Shell() {
           {signedIn && pageTitle && (
             <span className="site-page-title" aria-current="page">
               {pageTitle}
-              <span>.</span>
+              {!pageTitleHasStop && <span>.</span>}
             </span>
           )}
           {!isLanding && !signedIn && (
@@ -1724,6 +1727,7 @@ function Detail() {
   const queryClient = useQueryClient();
   const [editorOpen, setEditorOpen] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
+  const [upscaledGeneration, setUpscaledGeneration] = useState<Generation>();
   const q = useQuery({
     queryKey: ["gen", id],
     queryFn: () => api<Generation>(`/v1/generations/${id}`),
@@ -1746,6 +1750,17 @@ function Detail() {
       if (id) localStorage.removeItem(`vl_thumbnail_${id}`);
       void queryClient.invalidateQueries({ queryKey: ["gallery"] });
       navigate("/gallery", { replace: true });
+    },
+  });
+  const upscale = useMutation({
+    mutationFn: () =>
+      api<Generation>(`/v1/generations/${id}/upscale`, {
+        method: "POST",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+      }),
+    onSuccess: (generation) => {
+      setUpscaledGeneration(generation);
+      void queryClient.invalidateQueries({ queryKey: ["gallery"] });
     },
   });
   const requestDelete = () => {
@@ -1820,6 +1835,14 @@ function Detail() {
               {media.error && (
                 <p className="error">Output retrieval failed: {media.error}</p>
               )}
+              {upscaledGeneration && (
+                <Link
+                  className="generation-detail-view-upscale"
+                  to={`/generations/${upscaledGeneration.id}`}
+                >
+                  View upscale
+                </Link>
+              )}
             </div>
             <aside className="generation-detail-sidebar">
               <div className="generation-detail-metrics">
@@ -1881,6 +1904,21 @@ function Detail() {
                     <span>Download</span>
                   </a>
                 )}
+                {isVideo && (
+                  <button
+                    type="button"
+                    className="gradient-action"
+                    disabled={upscale.isPending || g.status !== "completed"}
+                    onClick={() => upscale.mutate()}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 3v18" />
+                      <path d="m5 10 7-7 7 7" />
+                      <path d="M5 21h14" />
+                    </svg>
+                    <span>{upscale.isPending ? "Upscaling…" : "Upscale"}</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   className="gradient-action"
@@ -1938,6 +1976,11 @@ function Detail() {
               {deletion.error && (
                 <p className="error" role="alert">
                   Delete failed: {deletion.error.message}
+                </p>
+              )}
+              {upscale.error && (
+                <p className="error" role="alert">
+                  Upscale failed: {upscale.error.message}
                 </p>
               )}
               <dl className="generation-detail-record">

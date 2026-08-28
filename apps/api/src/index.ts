@@ -963,6 +963,7 @@ async function runtimeGeneration(
     acceptedSceneGenerationIds?: unknown;
     assemblyJobIds?: string[];
     assemblySources?: PortableAssemblySource[];
+    upscaleSourceGenerationId?: string;
   };
   const referenceConditioning = await hydrateGenerationReferences(g);
   settings.referenceConditioning = referenceConditioning;
@@ -981,6 +982,54 @@ async function runtimeGeneration(
     })) as typeof settings.storyboard;
   }
   if (settings.operationScope === "assembly") {
+    const upscaleSourceGenerationId =
+      typeof settings.upscaleSourceGenerationId === "string"
+        ? settings.upscaleSourceGenerationId
+        : "";
+    if (upscaleSourceGenerationId) {
+      const source = await findGeneration(upscaleSourceGenerationId);
+      if (
+        !source ||
+        source.uid !== g.uid ||
+        source.status !== "completed" ||
+        source.output?.kind !== "video"
+      ) {
+        throw new Error("invalid_assembly_sources");
+      }
+      const duration = Number(
+        source.output?.durationSeconds ??
+          source.settings.durationSeconds ??
+          settings.durationSeconds,
+      );
+      const normalizedDuration =
+        Number.isFinite(duration) && duration > 0 ? duration : 4;
+      settings.assemblySources = [await portableAssemblySource(source)];
+      settings.storyboard = [
+        {
+          id: "upscale-source",
+          title: "Upscale source",
+          prompt: g.prompt,
+          duration: normalizedDuration,
+          trimStart: 0,
+          trimEnd: normalizedDuration,
+          seed: Number(settings.baseSeed ?? settings.seed ?? 1337),
+          seedOverride: false,
+          transition: "cut",
+          transitionDuration: 0,
+          carryPreviousFrame: false,
+        },
+      ];
+      settings.durationSeconds = normalizedDuration;
+      delete settings.assemblyJobIds;
+      delete settings.acceptedSceneGenerationIds;
+      delete settings.upscaleSourceGenerationId;
+      return {
+        prompt: g.prompt,
+        settings,
+        inputAssetUrls: [],
+        idempotencyKey: `video-lab:${g.id}:upscale:${source.id}`,
+      };
+    }
     const acceptedIds = settings.acceptedSceneGenerationIds;
     const storyboard = Array.isArray(settings.storyboard)
       ? settings.storyboard
@@ -6647,6 +6696,141 @@ app.post(
     }
   },
 );
+app.post("/v1/generations/:id/upscale", auth, async (req, res, next) => {
+  try {
+    const p = res.locals.principal as Principal;
+    const sourceId = String(req.params.id ?? "");
+    const source = await findGeneration(sourceId);
+    if (!source || source.uid !== p.uid)
+      throw problem(404, "not_found", "Generation not found");
+    if (source.status !== "completed" || source.output?.kind !== "video")
+      throw problem(
+        409,
+        "generation_not_upscalable",
+        "Only completed videos can be upscaled",
+      );
+    if (
+      runtimeState.provider !== "mock" &&
+      runtimeState.capabilities?.postProcess &&
+      !runtimeState.capabilities.postProcess.includes("upscale")
+    ) {
+      throw problem(
+        409,
+        "capability_unavailable",
+        "The connected runtime does not advertise upscale",
+      );
+    }
+    const entitlement = await requireCreatorEntitlement(p, "video_generation");
+    const prompt = String(source.prompt ?? "").trim();
+    const rawDurationSeconds = Number(
+      source.output?.durationSeconds ?? source.settings.durationSeconds ?? 4,
+    );
+    const durationSeconds =
+      Number.isFinite(rawDurationSeconds) && rawDurationSeconds > 0
+        ? rawDurationSeconds
+        : 4;
+    const requestedVideoModel = String(
+      source.settings.videoModel ??
+        (source.settings as { video_model?: unknown }).video_model ??
+        runtimeState.capabilities?.defaultVideoModel ??
+        "ltx-2.3",
+    );
+    const videoModel = (longFormVideoModels as readonly string[]).includes(
+      requestedVideoModel,
+    )
+      ? requestedVideoModel
+      : "ltx-2.3";
+    const createdAt = nowIso();
+    const id = nanoid();
+    const settings: Generation["settings"] = {
+      ...((stripEmbeddedMedia(source.settings) as Generation["settings"]) ?? {}),
+      runtime: "longform-ltx-storyboard-studio",
+      videoModel: videoModel as Generation["settings"]["videoModel"],
+      video_model: videoModel,
+      aspectRatio: source.settings.aspectRatio ?? "16:9",
+      durationSeconds,
+      quality: "high",
+      operationScope: "assembly",
+      outputFormat: "mp4",
+      postProcess: "upscale",
+      upscaleSourceGenerationId: source.id,
+      storyboard: [
+        {
+          id: "upscale-source",
+          title: "Upscale source",
+          prompt,
+          duration: durationSeconds,
+          trimStart: 0,
+          trimEnd: durationSeconds,
+          seed: Number(source.settings.baseSeed ?? source.settings.seed ?? 1337),
+          seedOverride: false,
+          transition: "cut",
+          transitionDuration: 0,
+          carryPreviousFrame: false,
+        },
+      ],
+    };
+    delete (settings as { assemblySources?: unknown }).assemblySources;
+    delete (settings as { assemblyJobIds?: unknown }).assemblyJobIds;
+    delete (settings as { acceptedSceneGenerationIds?: unknown })
+      .acceptedSceneGenerationIds;
+    const generation: StoredGeneration = {
+      id,
+      uid: p.uid,
+      creatorAuthorization: reserveCreatorAuthorization(entitlement, id),
+      prompt,
+      title: `Upscaled ${source.title || deriveFallbackTitle(prompt)}`,
+      sceneSummary: source.sceneSummary || deriveFallbackSceneSummary(prompt),
+      settings,
+      inputAssets: [],
+      status: "queued",
+      creditCost: 0,
+      createdAt,
+      updatedAt: createdAt,
+      queuePosition: queue.length + 1,
+    };
+    const globalQueueLimit = boundedInteger(
+      process.env.VIDEO_RUNTIME_GLOBAL_QUEUE_LIMIT,
+      100,
+      1,
+      10_000,
+    );
+    const requestedKey = String(req.get("idempotency-key") ?? "");
+    const key = /^[A-Za-z0-9:_-]{6,128}$/.test(requestedKey)
+      ? requestedKey
+      : `upscale_${source.id}_${id}`;
+    const queued = await enqueueGeneration(generation, key, globalQueueLimit);
+    if (!queued.created) return res.json(publicGeneration(queued.generation));
+    if (process.env.NODE_ENV === "production" || process.env.K_SERVICE) {
+      await scheduleVideoLabWork();
+    }
+    runtimeState = {
+      ...runtimeState,
+      queueDepth: Math.max(1, runtimeState.queueDepth),
+      updatedAt: nowIso(),
+    };
+    log("generation_upscale_submitted", {
+      uid: p.uid,
+      sourceGenerationId: source.id,
+      generationId: id,
+    });
+    res.status(201).json(publicGeneration(generation));
+    void refreshQueueDepth().catch((error) =>
+      log("runtime_capacity_refresh_failed", {
+        errorCode: operationalErrorCode(error),
+      }),
+    );
+    if (
+      process.env.NODE_ENV !== "test" &&
+      process.env.NODE_ENV !== "production" &&
+      !process.env.FUNCTION_TARGET &&
+      !process.env.K_SERVICE
+    )
+      void processOne("local-auto-worker");
+  } catch (e) {
+    next(e);
+  }
+});
 app.get(
   "/v1/generations/:id",
   auth,

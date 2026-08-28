@@ -205,6 +205,7 @@ export interface RuntimeVideoSettings {
     sizeBytes: number;
     sha256: string;
   }>;
+  upscaleSourceGenerationId?: string;
   overallGoal?: string;
   originalMasterPrompt?: string;
   audioPolicy?: Record<string, unknown>;

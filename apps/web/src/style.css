@@ -2665,6 +2665,7 @@ body:not(:has(.home)) .thumb {
   align-items: start;
 }
 .generation-detail-media {
+  position: relative;
   overflow: hidden;
   border: 1px solid #1112;
   border-radius: 0.9rem;
@@ -2691,6 +2692,25 @@ body:not(:has(.home)) .thumb {
   position: absolute;
   inset: 0;
   background: #05070799;
+}
+.generation-detail-view-upscale {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border-radius: 999px;
+  background: #f9faf7;
+  color: #031714;
+  padding: 0.65rem 0.95rem;
+  box-shadow: 0 14px 34px #0005;
+  font-size: 0.74rem;
+  font-weight: 900;
+  line-height: 1;
+  text-decoration: none;
 }
 .generation-detail-sidebar {
   display: grid;

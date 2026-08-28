@@ -120,6 +120,42 @@ describe("api integration", () => {
       true,
     );
   });
+  it("creates an upscaled gallery generation from a completed video", async () => {
+    const auth = { authorization: "Bearer upscale-user" };
+    const source = await request(app)
+      .post("/v1/generations")
+      .set(auth)
+      .set("Idempotency-Key", "upscale-source-123")
+      .send({
+        prompt: "A cinematic glass tower reflecting the sunrise",
+        settings: { aspectRatio: "16:9", durationSeconds: 4, quality: "draft" },
+      })
+      .expect(201);
+    await processOne("upscale-source-worker");
+    const upscaled = await request(app)
+      .post(`/v1/generations/${source.body.id}/upscale`)
+      .set(auth)
+      .set("Idempotency-Key", "upscale-target-123")
+      .expect(201);
+    expect(upscaled.body).toMatchObject({
+      prompt: source.body.prompt,
+      status: "queued",
+      settings: {
+        operationScope: "assembly",
+        postProcess: "upscale",
+        upscaleSourceGenerationId: source.body.id,
+      },
+    });
+    await processOne("upscale-worker");
+    const completed = await request(app)
+      .get(`/v1/generations/${upscaled.body.id}`)
+      .set(auth)
+      .expect(200);
+    expect(completed.body).toMatchObject({
+      status: "completed",
+      output: { kind: "video", contentType: "video/mp4" },
+    });
+  });
   it("bounds gallery queries before they reach persistence", async () => {
     for (const query of ["limit=0", "limit=-1", "limit=51", "limit=NaN", "limit=1.5", "status=unknown"]) {
       const response = await request(app)
