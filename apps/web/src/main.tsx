@@ -1132,6 +1132,30 @@ function Gallery() {
       void queryClient.invalidateQueries({ queryKey: ["gallery"] });
     },
   });
+  const setLiked = (id: string, liked: boolean) =>
+    queryClient.setQueryData<{ items: Generation[] }>(
+      ["gallery"],
+      (current) => ({
+        items: (current?.items ?? []).map((item) =>
+          item.id === id ? { ...item, liked } : item,
+        ),
+      }),
+    );
+  const like = useMutation({
+    mutationFn: ({ id, liked }: { id: string; liked: boolean }) =>
+      api<Generation>(`/v1/generations/${id}/like`, {
+        method: "POST",
+        body: JSON.stringify({ liked }),
+      }),
+    onMutate: ({ id, liked }) => {
+      const previous = q.data;
+      setLiked(id, liked);
+      return { previous };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previous) queryClient.setQueryData(["gallery"], context.previous);
+    },
+  });
   return (
     <main className="gallery-page">
       <header className="gallery-toolbar">
@@ -1158,6 +1182,7 @@ function Gallery() {
               key={g.id}
               deleting={deletion.variables === g.id && deletion.isPending}
               onDelete={(id) => deletion.mutate(id)}
+              onToggleLike={(id, liked) => like.mutate({ id, liked })}
               onOpenEditor={setEditingGeneration}
             />
           ))
@@ -1182,15 +1207,18 @@ function GalleryCard({
   generation,
   deleting,
   onDelete,
+  onToggleLike,
   onOpenEditor,
 }: {
   generation: Generation;
   deleting: boolean;
   onDelete: (id: string) => void;
+  onToggleLike: (id: string, liked: boolean) => void;
   onOpenEditor: (generation: Generation) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const promptNeedsToggle = generation.prompt.length > 190;
+  const liked = generation.liked === true;
   const requestDelete = () => {
     const confirmed = window.confirm(
       "Delete this video from your gallery and Firebase Storage?",
@@ -1203,6 +1231,17 @@ function GalleryCard({
         generation={generation}
         onOpen={() => onOpenEditor(generation)}
       />
+      <button
+        className={liked ? "gallery-like liked" : "gallery-like"}
+        type="button"
+        aria-label={liked ? "Unlike video" : "Like video"}
+        aria-pressed={liked}
+        onClick={() => onToggleLike(generation.id, !liked)}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 20.6s-7.4-4.6-9.8-9.1C.6 8.3 1.9 5 5 4.1c2-.6 4 .2 5 2 1-1.8 3-2.6 5-2 3.1.9 4.4 4.2 2.8 7.4-2.4 4.5-9.8 9.1-9.8 9.1Z" />
+        </svg>
+      </button>
       <button
         className="gallery-delete"
         type="button"

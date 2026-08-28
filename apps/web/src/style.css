@@ -2314,6 +2314,44 @@ body:not(:has(.home)) .thumb {
   border-color: #ffb7a8 !important;
   background: #8f2e22 !important;
 }
+.gallery-like {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  border: 1px solid #ffffff66 !important;
+  border-radius: 999px;
+  background: #111c !important;
+  color: #fff !important;
+  padding: 0 !important;
+  box-shadow: 0 12px 30px #0004;
+  backdrop-filter: blur(10px);
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+.gallery-like svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: currentColor;
+  stroke: none;
+}
+.gallery-like:hover {
+  border-color: #ff9fb3 !important;
+  color: #ff6b85 !important;
+  transform: scale(1.06);
+}
+.gallery-like.liked {
+  border-color: #ff4d6d99 !important;
+  background: #ff4d6d1a !important;
+  color: #ff4d6d !important;
+}
 .gallery-delete:disabled {
   cursor: wait;
   opacity: 0.55;

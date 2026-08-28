@@ -186,7 +186,7 @@ async function requestDirectorTitle(
 }
 async function patchGenerationFields(
   id: string,
-  patch: { title?: string; sceneSummary?: string },
+  patch: { title?: string; sceneSummary?: string; liked?: boolean },
 ) {
   if (localAuth) {
     const current = gens.get(id);
@@ -7109,6 +7109,23 @@ app.post("/v1/generations/:id/cancel", auth, async (req, res, next) => {
     await refreshQueueDepth();
     log("generation_cancelled", { uid: g.uid, generationId: g.id });
     res.json(publicGeneration(persisted));
+  } catch (e) {
+    next(e);
+  }
+});
+app.post("/v1/generations/:id/like", auth, async (req, res, next) => {
+  try {
+    const id = String(req.params.id ?? "");
+    const g = await findGeneration(id);
+    if (!g || g.uid !== res.locals.principal.uid)
+      throw problem(404, "not_found", "Generation not found");
+    const liked = (req.body as { liked?: unknown } | undefined)?.liked;
+    if (typeof liked !== "boolean")
+      throw problem(400, "invalid_liked", "liked must be a boolean");
+    const updated: StoredGeneration = { ...g, liked, updatedAt: nowIso() };
+    gens.set(g.id, updated);
+    await patchGenerationFields(g.id, { liked });
+    res.json(publicGeneration(updated));
   } catch (e) {
     next(e);
   }

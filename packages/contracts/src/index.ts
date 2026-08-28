@@ -34,6 +34,7 @@ export interface Generation {
   prompt: string;
   title?: string;
   sceneSummary?: string;
+  liked?: boolean;
   settings: VideoSettings;
   inputAssets?: unknown[];
   status: GenerationStatus;
