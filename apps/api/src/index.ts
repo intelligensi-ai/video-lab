@@ -6745,17 +6745,23 @@ app.post("/v1/generations/:id/upscale", auth, async (req, res, next) => {
     const requestHash = createHash("sha256")
       .update(`upscale:${source.id}:${prompt}:${durationSeconds}`)
       .digest("hex");
+    const sourceSettings =
+      (stripEmbeddedMedia(source.settings) as Generation["settings"]) ?? {};
     const settings: Generation["settings"] = {
-      ...((stripEmbeddedMedia(source.settings) as Generation["settings"]) ?? {}),
+      ...sourceSettings,
       runtime: "longform-ltx-storyboard-studio",
       videoModel: videoModel as Generation["settings"]["videoModel"],
       video_model: videoModel,
       aspectRatio: source.settings.aspectRatio ?? "16:9",
       durationSeconds,
       quality: "high",
+      overallGoal: prompt,
+      originalMasterPrompt: prompt,
+      filmBible: {},
       operationScope: "assembly",
       outputFormat: "mp4",
       postProcess: "upscale",
+      generatedTextQualityControlDisabled: true,
       upscaleSourceGenerationId: source.id,
       storyboard: [
         {
@@ -6777,6 +6783,16 @@ app.post("/v1/generations/:id/upscale", auth, async (req, res, next) => {
     delete (settings as { assemblyJobIds?: unknown }).assemblyJobIds;
     delete (settings as { acceptedSceneGenerationIds?: unknown })
       .acceptedSceneGenerationIds;
+    delete (settings as { negativePrompt?: unknown }).negativePrompt;
+    delete (settings as { framePrompt?: unknown }).framePrompt;
+    delete (settings as { operationFrameBase64?: unknown }).operationFrameBase64;
+    delete (settings as { operationSceneId?: unknown }).operationSceneId;
+    delete (settings as { referenceConditioning?: unknown }).referenceConditioning;
+    delete (settings as { referenceImageBase64?: unknown }).referenceImageBase64;
+    delete (settings as { seedFrameBase64?: unknown }).seedFrameBase64;
+    delete (settings as { endFrameBase64?: unknown }).endFrameBase64;
+    delete (settings as { globalVisualAnchorBase64?: unknown })
+      .globalVisualAnchorBase64;
     const generation: StoredGeneration = {
       id,
       uid: p.uid,
@@ -7629,6 +7645,7 @@ async function processQueueItem(workerId = "local-worker") {
       generationId: g.id,
       errorCode: operationalErrorCode(e),
       failureCode,
+      errorMessage: e instanceof Error ? e.message.slice(0, 500) : undefined,
       runtimeFailureCode:
         e && typeof e === "object" && "code" in e
           ? String((e as { code?: unknown }).code ?? "")
