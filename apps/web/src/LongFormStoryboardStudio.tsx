@@ -4735,6 +4735,29 @@ function Preview({
                   {directorBusy ? "Director is working…" : "Ask Director to fix"}
                 </button>
               )}
+              {!failureMessage && loading && generation && (
+                <button
+                  type="button"
+                  className="lf-cancel lf-cancel-overlay"
+                  data-help="Ask the generation service to stop the currently active storyboard render."
+                  disabled={cancelling}
+                  onClick={onCancel}
+                >
+                  <span className="lf-button-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <rect
+                        x="7"
+                        y="7"
+                        width="10"
+                        height="10"
+                        rx="2"
+                        fill="currentColor"
+                      />
+                    </svg>
+                  </span>
+                  <span>{cancelling ? "Cancelling…" : "Cancel active render"}</span>
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -4776,29 +4799,6 @@ function Preview({
           </span>
           <span>{generateLabel}</span>
         </button>
-        {loading && generation && (
-          <button
-            type="button"
-            className="lf-cancel"
-            data-help="Ask the generation service to stop the currently active storyboard render."
-            disabled={cancelling}
-            onClick={onCancel}
-          >
-            <span className="lf-button-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none">
-                <rect
-                  x="7"
-                  y="7"
-                  width="10"
-                  height="10"
-                  rx="2"
-                  fill="currentColor"
-                />
-              </svg>
-            </span>
-            <span>{cancelling ? "Cancelling…" : "Cancel active render"}</span>
-          </button>
-        )}
         {video.objectUrl && (
           <a
             className="lf-download"
