@@ -1458,8 +1458,32 @@ export default function LongFormStoryboardStudio({
     form.scenes.every(
       (scene) => scene.acceptedVideoGenerationId && !scene.staleReason,
     );
+  const runtimeConnected = runtime.data?.status === "healthy";
   const sessionControls = (
     <div className="lf-session">
+      <button
+        type="button"
+        className={`lf-status-toggle ${
+          runtime.isLoading
+            ? "lf-status-pending"
+            : runtimeConnected
+              ? "lf-status-ok"
+              : "lf-status-down"
+        }`}
+        disabled={runtime.isLoading || runtimeConnected}
+        onClick={() => void runtime.refetch()}
+        data-help={
+          runtimeConnected
+            ? "Shows whether the remote video-generation runtime is available."
+            : "The runtime could not be reached. Select to retry the connection."
+        }
+      >
+        {runtime.isLoading
+          ? "Checking generator"
+          : runtimeConnected
+            ? "Generator connected"
+            : "Try again"}
+      </button>
       <button
         type="button"
         className="lf-help-toggle"
@@ -1478,22 +1502,6 @@ export default function LongFormStoryboardStudio({
       >
         Reset
       </button>
-      <span
-        className={
-          runtime.isLoading
-            ? "lf-status-pending"
-            : runtime.data?.status === "healthy"
-              ? "lf-status-ok"
-              : "lf-status-down"
-        }
-        data-help="Shows whether the remote video-generation runtime is available."
-      >
-        {runtime.isLoading
-          ? "Checking generator"
-          : runtime.data?.status === "healthy"
-            ? "Generator connected"
-            : "Generator unavailable"}
-      </span>
       {sessionStatus === "error" && (
         <span
           className="lf-session-save error"
@@ -4652,7 +4660,6 @@ function Preview({
       <header data-help="This panel tracks the currently selected generation, including active render progress, playback and download once complete.">
         <div>{!minimal && <span className="lf-label">Your creation</span>}</div>
         <div className="lf-preview-header-actions">
-          {headerControls}
           {video.objectUrl && (
             <a
               className="lf-header-download"
@@ -4668,6 +4675,7 @@ function Preview({
               <span>Download</span>
             </a>
           )}
+          {headerControls}
         </div>
       </header>
       {!minimal && (
@@ -4799,22 +4807,6 @@ function Preview({
           </span>
           <span>{generateLabel}</span>
         </button>
-        {video.objectUrl && (
-          <a
-            className="lf-download"
-            aria-label="Download video"
-            title="Download video"
-            data-help="Save the completed film file to your device."
-            href={video.objectUrl}
-            download={`${mediaGeneration?.id ?? "video"}.mp4`}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-          </a>
-        )}
       </div>
       {cancelError && <p className="lf-error">{cancelError}</p>}
       {video.error && (

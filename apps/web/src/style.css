@@ -5623,21 +5623,27 @@ body:not(:has(.home)) textarea:focus::placeholder {
   padding: 0;
   text-align: left;
 }
-.lf-session span {
+.lf-session span,
+.lf-session .lf-status-toggle {
   display: inline-flex;
   align-items: center;
-  min-height: 36px;
-  border: 1px solid #159d9144;
-  border-radius: 999px;
-  background: #e3f1ed;
-  padding: 0.45rem 0.72rem;
+  min-height: 36px !important;
+  border: 1px solid #159d9144 !important;
+  border-radius: 999px !important;
+  background: #e3f1ed !important;
+  padding: 0.45rem 0.72rem !important;
   color: #087f76 !important;
-  font-size: 0.6rem;
-  font-weight: 850;
+  font-size: 0.6rem !important;
+  font-weight: 850 !important;
   text-decoration: none;
   white-space: nowrap;
+  cursor: default;
 }
-.lf-session span:before {
+.lf-status-toggle:not(:disabled) {
+  cursor: pointer;
+}
+.lf-session span:before,
+.lf-session .lf-status-toggle:before {
   content: "";
   width: 7px;
   height: 7px;
@@ -5646,21 +5652,21 @@ body:not(:has(.home)) textarea:focus::placeholder {
   background: #17aa9c;
   box-shadow: 0 0 0 4px #17aa9c18;
 }
-.lf-session span.lf-status-ok:before {
+.lf-session .lf-status-ok:before {
   background: #17aa9c;
   box-shadow: 0 0 0 4px #17aa9c18;
 }
-.lf-session span.lf-status-down {
-  border-color: #d0483f3a;
+.lf-session .lf-status-down {
+  border-color: #d0483f3a !important;
 }
-.lf-session span.lf-status-down:before {
+.lf-session .lf-status-down:before {
   background: #d0483f;
   box-shadow: 0 0 0 4px #d0483f18;
 }
-.lf-session span.lf-status-pending {
-  border-color: #c8a13d3a;
+.lf-session .lf-status-pending {
+  border-color: #c8a13d3a !important;
 }
-.lf-session span.lf-status-pending:before {
+.lf-session .lf-status-pending:before {
   background: #c8a13d;
   box-shadow: 0 0 0 4px #c8a13d18;
 }
@@ -6383,12 +6389,6 @@ body:not(:has(.home)) textarea:focus::placeholder {
   line-height: 1;
   white-space: nowrap;
 }
-.lf-preview-actions > .lf-download {
-  position: absolute;
-  right: 1rem;
-  top: 50%;
-  transform: translateY(-50%);
-}
 .lf-button-icon {
   display: inline-grid;
   flex: 0 0 auto;
@@ -6525,7 +6525,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
   object-fit: cover;
 }
 .lf-screen.lf-screen-minimal video {
-  object-fit: contain;
+  object-fit: cover;
 }
 .lf-rendering {
   border-radius: 0.75rem;
