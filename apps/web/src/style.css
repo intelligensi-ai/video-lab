@@ -449,23 +449,53 @@ body:has(.lf-page) {
   line-height: 1;
   transform: translateY(-1px);
 }
-.site-logout {
-  margin-left: 1rem;
-  border: 1px solid #1112 !important;
-  border-radius: 999px !important;
-  background: #fff !important;
-  color: #333 !important;
-  padding: 0.55rem 0.85rem !important;
-  font-size: 0.68rem !important;
-  font-weight: 850 !important;
+.site-nav-links .site-logout {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: #8c9b99;
+  padding: 0;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
+  cursor: pointer;
 }
-.site-logout:hover {
-  border-color: #159d9155 !important;
-  color: #008f83 !important;
-  transform: translateY(-1px);
+.site-nav-links .site-logout:hover {
+  background: none;
+  color: #35ddce;
+}
+.site-avatar {
+  display: grid;
+  place-items: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  flex: 0 0 auto;
+  margin-left: 0.75rem;
+  border: 1px solid #35ddce33;
+  border-radius: 999px;
+  color: #8c9b99;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background 150ms ease;
+}
+.site-avatar svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+.site-avatar:hover,
+.site-avatar.active {
+  border-color: #35ddce88;
+  color: #35ddce;
+  background: #35ddce14;
 }
 body:has(.home) .site-nav.logged-in .site-nav-inner {
   max-width: calc(1380px + 2.5rem);
@@ -1987,12 +2017,24 @@ body:not(:has(.home)) .site-nav {
   background: #f0eee9e8;
   backdrop-filter: blur(18px);
 }
-body:not(:has(.home)) .site-nav a {
+body:not(:has(.home)) .site-nav a,
+body:not(:has(.home)) .site-logout {
   color: #333;
 }
 body:not(:has(.home)) .site-nav a:hover,
-body:not(:has(.home)) .site-nav a.active {
+body:not(:has(.home)) .site-nav a.active,
+body:not(:has(.home)) .site-logout:hover {
   color: #008f83;
+}
+body:not(:has(.home)) .site-avatar {
+  border-color: #1112;
+  color: #333;
+}
+body:not(:has(.home)) .site-avatar:hover,
+body:not(:has(.home)) .site-avatar.active {
+  border-color: #159d9155;
+  color: #008f83;
+  background: #159d9114;
 }
 body:not(:has(.home)) .site-brand {
   color: #111;
@@ -2945,6 +2987,46 @@ body:not(:has(.home)) .error-panel {
   font-weight: 800;
   text-align: center;
   text-transform: capitalize;
+}
+.detail-carousel-arrow {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid #159d9140;
+  border-radius: 999px;
+  background: #fbfbf8;
+  color: #087f76;
+  box-shadow: 0 10px 26px #173e3728;
+  transform: translateY(-50%);
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+.detail-carousel-arrow:hover {
+  background: #087f76;
+  color: #fff;
+  box-shadow: 0 14px 32px #173e3740;
+  transform: translateY(-50%) scale(1.06);
+}
+.detail-carousel-arrow svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.25;
+}
+.detail-carousel-arrow-left {
+  left: 0.6rem;
+}
+.detail-carousel-arrow-right {
+  right: 0.6rem;
 }
 @media (max-width: 560px) {
   .detail-carousel-item {
@@ -4615,6 +4697,9 @@ body:not(:has(.home)) textarea:focus::placeholder {
 }
 .lf-scene .scene-prompt-field textarea {
   min-height: 125px;
+}
+.lf-scenes-panel .scene-prompt-field textarea {
+  min-height: 420px;
   margin: 0;
   border-radius: 1rem;
   background: #fff;
@@ -6331,7 +6416,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
 }
 .lf-screen {
   margin: 0;
-  border-color: #1112;
+  border: none;
   border-radius: 1.15rem;
   background: #111;
   padding: 0;

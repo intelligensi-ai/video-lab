@@ -1878,7 +1878,6 @@ export default function LongFormStoryboardStudio({
               >
                 <div className="lf-section-head">
                   <div>
-                    <span className="lf-label">Timeline</span>
                     <h2>{isClassic ? "Create movie" : "Storyboard scenes"}</h2>
                   </div>
                   {!isClassic && (

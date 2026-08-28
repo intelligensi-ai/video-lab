@@ -452,10 +452,9 @@ function Shell() {
   });
   const isLanding = location.pathname === "/";
   const navItems = [
-    { to: "/videolab", label: "VideoLab" },
-    { to: "/storyboard/advanced", label: "Advanced" },
+    { to: "/creator", label: "Creator" },
+    { to: "/filmmaker", label: "Filmmaker" },
     { to: "/gallery", label: "Gallery" },
-    { to: "/account", label: "Account" },
     ...(me.data?.roles.includes("admin")
       ? [{ to: "/admin", label: "Admin" }]
       : []),
@@ -482,9 +481,6 @@ function Shell() {
             <span className="site-page-title" aria-current="page">
               {pageTitle}
               <span>.</span>
-              {location.pathname === "/videolab" && (
-                <span className="site-page-title-suffix">creator</span>
-              )}
             </span>
           )}
           {!isLanding && !signedIn && (
@@ -510,12 +506,25 @@ function Shell() {
                   {item.label}
                 </NavLink>
               ))}
+              <button className="nav-link site-logout" type="button" onClick={logout}>
+                Log out
+              </button>
             </div>
           )}
           {signedIn && (
-            <button className="site-logout" type="button" onClick={logout}>
-              Log out
-            </button>
+            <NavLink
+              to="/account"
+              className={({ isActive }) =>
+                isActive ? "site-avatar active" : "site-avatar"
+              }
+              aria-label="Account"
+              title="Account"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="8" r="4" />
+                <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
+              </svg>
+            </NavLink>
           )}
           {authReady && !signedIn && (
             <div className="site-auth-links">
@@ -532,14 +541,14 @@ function Shell() {
         <Route path="/login" element={<AuthEntry mode="login" />} />
         <Route path="/register" element={<AuthEntry mode="register" />} />
         <Route
-          path="/videolab"
+          path="/creator"
           element={
             <ProtectedRoute
               element={
                 <React.Suspense
                   fallback={
                     <main className="auth-page">
-                      <p>Opening VideoLab…</p>
+                      <p>Opening Creator…</p>
                     </main>
                   }
                 >
@@ -550,14 +559,14 @@ function Shell() {
           }
         />
         <Route
-          path="/storyboard/advanced"
+          path="/filmmaker"
           element={
             <ProtectedRoute
               element={
                 <React.Suspense
                   fallback={
                     <main className="auth-page">
-                      <p>Opening your storyboard…</p>
+                      <p>Opening Filmmaker…</p>
                     </main>
                   }
                 >
@@ -568,21 +577,29 @@ function Shell() {
           }
         />
         <Route
+          path="/videolab"
+          element={<Navigate to="/creator" replace />}
+        />
+        <Route
+          path="/storyboard/advanced"
+          element={<Navigate to="/filmmaker" replace />}
+        />
+        <Route
           path="/storyboard"
-          element={<Navigate to="/videolab" replace />}
+          element={<Navigate to="/creator" replace />}
         />
         <Route
           path="/storyboard/classic"
-          element={<Navigate to="/videolab" replace />}
+          element={<Navigate to="/creator" replace />}
         />
         <Route
           path="/experimental/director-workspace"
-          element={<Navigate to="/storyboard/advanced" replace />}
+          element={<Navigate to="/filmmaker" replace />}
         />
-        <Route path="/studio" element={<Navigate to="/videolab" replace />} />
+        <Route path="/studio" element={<Navigate to="/creator" replace />} />
         <Route
           path="/sulphur"
-          element={<Navigate to="/videolab" replace />}
+          element={<Navigate to="/creator" replace />}
         />
         <Route
           path="/gallery"
@@ -621,7 +638,7 @@ function AdminRoute() {
       </main>
     );
   if (!me.data?.roles.includes("admin"))
-    return <Navigate to="/videolab" replace />;
+    return <Navigate to="/creator" replace />;
   return <Admin />;
 }
 
@@ -671,7 +688,7 @@ function AuthEntry({ mode }: { mode: "login" | "register" }) {
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const requestedPath = (location.state as { from?: string } | null)?.from;
   const destination =
-    mode === "register" ? "/onboarding" : requestedPath || "/videolab";
+    mode === "register" ? "/onboarding" : requestedPath || "/creator";
   useEffect(
     () =>
       observeAuth((user) => {
@@ -969,7 +986,7 @@ function Landing() {
             and transition—then carry visual continuity across the whole film.
           </p>
           <div className="home-actions">
-            <Link className="home-primary" to="/videolab">
+            <Link className="home-primary" to="/creator">
               Start creating <span>↗</span>
             </Link>
             <Link className="home-secondary" to="/gallery">
@@ -1071,7 +1088,7 @@ function Landing() {
           <span>Make the film only you can imagine.</span>
           <h2>Ready when you are.</h2>
         </div>
-        <Link className="home-primary" to="/videolab">
+        <Link className="home-primary" to="/creator">
           Open Storyboard <span>↗</span>
         </Link>
       </section>
@@ -1115,7 +1132,7 @@ function Gallery() {
           <span className="gallery-eyebrow">Private video library</span>
           <h1>Recent generations</h1>
         </div>
-        <Link className="gallery-create-link" to="/videolab">
+        <Link className="gallery-create-link" to="/creator">
           Create new video
         </Link>
       </header>
@@ -1223,19 +1240,16 @@ function GalleryCard({
     </article>
   );
 }
-function GalleryArtifact({
-  generation,
-  onOpen,
-}: {
-  generation: Generation;
-  onOpen: () => void;
-}) {
+// Best-effort video thumbnail: samples several frame positions from the
+// authenticated video and caches the sharpest, best-exposed one to
+// localStorage under `vl_thumbnail_${id}`, shared across the gallery cards,
+// the detail page hero and the detail page's bottom carousel.
+function useVideoThumbnail(generation: Generation | undefined) {
   const isVideo = isVideoOutput(generation);
-  const isFrame = isFrameOutput(generation);
-  const media = useAuthenticatedVideo(generation.output?.downloadUrl);
-  const storageKey = `vl_thumbnail_${generation.id}`;
+  const media = useAuthenticatedVideo(generation?.output?.downloadUrl);
+  const storageKey = generation ? `vl_thumbnail_${generation.id}` : "";
   const [thumbnail, setThumbnail] = useState(
-    () => localStorage.getItem(storageKey) ?? "",
+    () => (storageKey ? localStorage.getItem(storageKey) : "") ?? "",
   );
 
   useEffect(() => {
@@ -1328,6 +1342,20 @@ function GalleryArtifact({
       source.load();
     };
   }, [isVideo, storageKey, thumbnail, media.objectUrl]);
+
+  return { thumbnail, media };
+}
+
+function GalleryArtifact({
+  generation,
+  onOpen,
+}: {
+  generation: Generation;
+  onOpen: () => void;
+}) {
+  const isVideo = isVideoOutput(generation);
+  const isFrame = isFrameOutput(generation);
+  const { thumbnail, media } = useVideoThumbnail(generation);
 
   if (isFrame && media.objectUrl) {
     return (
@@ -1860,7 +1888,7 @@ function Detail() {
                   </svg>
                   <span>Copy prompt</span>
                 </button>
-                <Link className="button gradient-action" to="/videolab">
+                <Link className="button gradient-action" to="/creator">
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <polyline points="23 4 23 10 17 10" />
                     <polyline points="1 20 1 14 7 14" />
@@ -1939,36 +1967,98 @@ function DetailCarousel({ currentId }: { currentId: string }) {
     queryKey: ["gallery"],
     queryFn: () => api<{ items: Generation[] }>("/v1/gallery"),
   });
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+  const updateScrollState = () => {
+    const track = trackRef.current;
+    if (!track) return;
+    setCanScrollLeft(track.scrollLeft > 4);
+    setCanScrollRight(
+      track.scrollLeft + track.clientWidth < track.scrollWidth - 4,
+    );
+  };
+  useEffect(() => {
+    updateScrollState();
+  });
+  const scrollByAmount = (direction: 1 | -1) => {
+    const track = trackRef.current;
+    if (!track) return;
+    track.scrollBy({
+      left: direction * Math.max(240, track.clientWidth * 0.8),
+      behavior: "smooth",
+    });
+  };
   const items = q.data?.items ?? [];
   if (!items.length) return null;
   return (
     <nav className="detail-carousel" aria-label="Gallery">
-      <div className="detail-carousel-track">
-        {items.map((item) => {
-          const thumbnail = localStorage.getItem(`vl_thumbnail_${item.id}`);
-          return (
-            <Link
-              key={item.id}
-              to={`/generations/${item.id}`}
-              className={
-                item.id === currentId
-                  ? "detail-carousel-item active"
-                  : "detail-carousel-item"
-              }
-              title={item.title || item.prompt}
-            >
-              {thumbnail ? (
-                <img src={thumbnail} alt="" />
-              ) : (
-                <span className="detail-carousel-fallback">
-                  {isFrameOutput(item) ? "Frame" : item.status}
-                </span>
-              )}
-            </Link>
-          );
-        })}
+      {canScrollLeft && (
+        <button
+          type="button"
+          className="detail-carousel-arrow detail-carousel-arrow-left"
+          aria-label="Scroll to earlier videos"
+          onClick={() => scrollByAmount(-1)}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+      )}
+      <div
+        className="detail-carousel-track"
+        ref={trackRef}
+        onScroll={updateScrollState}
+      >
+        {items.map((item) => (
+          <DetailCarouselItem
+            key={item.id}
+            item={item}
+            active={item.id === currentId}
+          />
+        ))}
       </div>
+      {canScrollRight && (
+        <button
+          type="button"
+          className="detail-carousel-arrow detail-carousel-arrow-right"
+          aria-label="Scroll to later videos"
+          onClick={() => scrollByAmount(1)}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+        </button>
+      )}
     </nav>
+  );
+}
+function DetailCarouselItem({
+  item,
+  active,
+}: {
+  item: Generation;
+  active: boolean;
+}) {
+  const isFrame = isFrameOutput(item);
+  const { thumbnail, media } = useVideoThumbnail(item);
+  const image = isFrame ? media.objectUrl : thumbnail;
+  return (
+    <Link
+      to={`/generations/${item.id}`}
+      className={
+        active ? "detail-carousel-item active" : "detail-carousel-item"
+      }
+      title={item.title || item.prompt}
+    >
+      {image ? (
+        <img src={image} alt="" />
+      ) : (
+        <span className="detail-carousel-fallback">
+          {isFrame ? "Frame" : item.status}
+        </span>
+      )}
+    </Link>
   );
 }
 type RegistrationProfile = {
@@ -2040,7 +2130,7 @@ function Registration() {
       await saveRegistrationProfile(completed);
       setProfile(completed);
       setSaved(true);
-      navigate("/videolab", { replace: true });
+      navigate("/creator", { replace: true });
     } catch (error) {
       setSaveError(
         error instanceof Error ? error.message : "Could not save registration",
