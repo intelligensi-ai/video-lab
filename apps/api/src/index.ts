@@ -6742,6 +6742,9 @@ app.post("/v1/generations/:id/upscale", auth, async (req, res, next) => {
       : "ltx-2.3";
     const createdAt = nowIso();
     const id = nanoid();
+    const requestHash = createHash("sha256")
+      .update(`upscale:${source.id}:${prompt}:${durationSeconds}`)
+      .digest("hex");
     const settings: Generation["settings"] = {
       ...((stripEmbeddedMedia(source.settings) as Generation["settings"]) ?? {}),
       runtime: "longform-ltx-storyboard-studio",
@@ -6777,6 +6780,7 @@ app.post("/v1/generations/:id/upscale", auth, async (req, res, next) => {
     const generation: StoredGeneration = {
       id,
       uid: p.uid,
+      requestHash,
       creatorAuthorization: reserveCreatorAuthorization(entitlement, id),
       prompt,
       title: `Upscaled ${source.title || deriveFallbackTitle(prompt)}`,
@@ -7734,6 +7738,7 @@ app.use(
         method: req.method,
         path: req.path,
         errorClass: err instanceof Error ? err.name : "unknown",
+        errorMessage: err instanceof Error ? err.message.slice(0, 300) : undefined,
         requestId: res.locals.requestId,
       });
     const parseFailure =
