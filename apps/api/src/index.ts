@@ -944,12 +944,26 @@ async function portableAssemblySource(
     generation.outputSha256 = sha256;
     await persistGeneration(generation);
   }
-  const [url] = await file.getSignedUrl({
-    version: "v4",
-    action: "read",
-    expires: Date.now() + 15 * 60_000,
-  });
-  return { url, contentType, sizeBytes, sha256 };
+  try {
+    const [url] = await file.getSignedUrl({
+      version: "v4",
+      action: "read",
+      expires: Date.now() + 15 * 60_000,
+    });
+    return { url, contentType, sizeBytes, sha256 };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!/signBlob/i.test(message)) throw error;
+    const [bytes] = await file.download();
+    if (bytes.byteLength !== sizeBytes || bytes.byteLength > maximumBytes)
+      throw new Error("invalid_assembly_sources");
+    return {
+      url: `data:${contentType};base64,${Buffer.from(bytes).toString("base64")}`,
+      contentType,
+      sizeBytes,
+      sha256,
+    };
+  }
 }
 
 async function runtimeGeneration(
