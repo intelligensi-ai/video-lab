@@ -4699,7 +4699,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
   min-height: 125px;
 }
 .lf-scenes-panel .scene-prompt-field textarea {
-  min-height: 420px;
+  min-height: 429px;
   margin: 0;
   border-radius: 1rem;
   background: #fff;
@@ -5502,6 +5502,40 @@ body:not(:has(.home)) textarea:focus::placeholder {
   border-color: #d0483f44 !important;
   background: #fff4f2 !important;
   color: #9b2924 !important;
+}
+.lf-header-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 36px;
+  border: 1px solid #159d9144;
+  border-radius: 999px;
+  background: #e3f1ed;
+  color: #087f76;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-decoration: none;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
+}
+.lf-header-download svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.25;
+}
+.lf-header-download:hover {
+  background: #087f76;
+  color: #fff;
 }
 .lf-reset-button:disabled {
   cursor: not-allowed;
