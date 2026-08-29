@@ -4900,6 +4900,15 @@ body:not(:has(.home)) textarea:focus::placeholder {
   border-radius: 0.9rem;
   font-size: 0.82rem;
 }
+.lf-generated-text-lock {
+  margin-bottom: 0.75rem;
+  color: #171717;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+.lf-generated-text-lock input {
+  cursor: default;
+}
 .studio-check {
   display: flex !important;
   align-items: center;

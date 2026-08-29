@@ -2598,7 +2598,7 @@ export default function LongFormStoryboardStudio({
                   data-help="List unwanted artefacts or visual behaviour once here; it will be applied consistently to every scene."
                 >
                   <div className="prompt-field-heading">
-                    <span className="lf-label">Shared negative prompt</span>
+                    <span className="lf-label">Negative prompt</span>
                     <PromptSuggestion
                       value={form.negativePrompt}
                       suggestion="Avoid low quality, blurry frames, jittery motion, warped anatomy, duplicate subjects, identity drift, discontinuous lighting, unreadable text, watermarks and abrupt cuts."
@@ -3836,8 +3836,18 @@ function SceneCard({
           </details>
           {classic && (
             <details className="lf-frame-details lf-negative-details">
-              <summary>Project negative prompt</summary>
+              <summary>Negative prompt</summary>
               <div className="lf-negative-panel">
+                <label className="lf-toggle lf-generated-text-lock">
+                  <input
+                    type="checkbox"
+                    checked
+                    readOnly
+                    aria-label="Stop captions and readable text"
+                  />
+                  <span />
+                  Stop captions and readable text
+                </label>
                 <textarea
                   className="lf-negative"
                   aria-label="Shared negative prompt"
