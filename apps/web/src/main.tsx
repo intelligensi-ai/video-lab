@@ -38,7 +38,6 @@ import {
   signOutUser,
 } from "./auth.js";
 import type { User } from "firebase/auth";
-import homeMarkUrl from "../../../public/fav-icon.png";
 import "./style.css";
 const API = import.meta.env.VITE_API_BASE_URL ?? "/api";
 const LongFormStoryboardStudio = React.lazy(
@@ -432,7 +431,6 @@ async function api<T>(path: string, init: RequestInit = {}) {
 }
 function Shell() {
   const location = useLocation();
-  const navigate = useNavigate();
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(!isProductionFirebase);
   useEffect(
@@ -460,14 +458,10 @@ function Shell() {
   ];
   const pageTitle =
     (location.pathname === "/creator"
-      ? "VideoLab.creator"
+      ? ""
       : navItems.find((item) => location.pathname === item.to)?.label) ??
     (location.pathname.startsWith("/generations/") ? "Details" : "");
   const pageTitleHasStop = pageTitle.includes(".");
-  const logout = async () => {
-    await signOutUser();
-    navigate("/login", { replace: true });
-  };
 
   return (
     <>
@@ -476,9 +470,6 @@ function Shell() {
         aria-label="Primary navigation"
       >
         <div className="site-nav-inner">
-          <Link className="site-home-mark" to="/" aria-label="Video Lab home">
-            <img src={homeMarkUrl} alt="" />
-          </Link>
           {signedIn && pageTitle && (
             <span className="site-page-title" aria-current="page">
               {pageTitle}
@@ -494,45 +485,6 @@ function Shell() {
               intelligensi<span>.ai</span> <b>Video Lab</b>
             </Link>
           )}
-          {signedIn && (
-            <div className="site-nav-links">
-              {navItems.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className={({ isActive }) =>
-                    isActive ? "nav-link active" : "nav-link"
-                  }
-                  end={item.to === "/"}
-                >
-                  {item.label}
-                </NavLink>
-              ))}
-              <button className="nav-link site-logout" type="button" onClick={logout}>
-                Log out
-              </button>
-            </div>
-          )}
-          {signedIn && (
-            <NavLink
-              to="/account"
-              className={({ isActive }) =>
-                isActive ? "site-avatar active" : "site-avatar"
-              }
-              aria-label="Account"
-              title="Account"
-            >
-              {firebaseUser?.photoURL ? (
-                <img src={firebaseUser.photoURL} alt="" referrerPolicy="no-referrer" />
-              ) : (
-                <span className="site-avatar-initials">
-                  {(firebaseUser?.displayName ?? firebaseUser?.email ?? "VL")
-                    .slice(0, 2)
-                    .toUpperCase()}
-                </span>
-              )}
-            </NavLink>
-          )}
           {authReady && !signedIn && (
             <div className="site-auth-links">
               <NavLink to="/login">Log in</NavLink>
@@ -543,6 +495,45 @@ function Shell() {
           )}
         </div>
       </nav>
+      {signedIn && !isLanding && (
+        <div className="site-dock">
+          <div className="site-dock-orb" aria-hidden="true">
+            <span className="site-dock-ring site-dock-ring-1" />
+            <span className="site-dock-ring site-dock-ring-2" />
+            <span className="site-dock-ring site-dock-ring-3" />
+            <span className="site-dock-node" />
+          </div>
+          <Link
+            to="/"
+            className="site-dock-brand"
+            aria-label="Intelligensi.ai Video Lab home"
+          >
+            <img src="/fav-icon.png" alt="" />
+          </Link>
+          <nav className="site-dock-nav" aria-label="Primary">
+            {navItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  isActive ? "site-dock-link active" : "site-dock-link"
+                }
+                end={item.to === "/"}
+              >
+                {item.label}
+              </NavLink>
+            ))}
+            <NavLink
+              to="/account"
+              className={({ isActive }) =>
+                isActive ? "site-dock-link active" : "site-dock-link"
+              }
+            >
+              Account
+            </NavLink>
+          </nav>
+        </div>
+      )}
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<AuthEntry mode="login" />} />
@@ -1013,8 +1004,13 @@ function Landing() {
           </div>
         </div>
         <div className="home-visual">
-          <div className="home-orbit home-orbit-one" />
-          <div className="home-orbit home-orbit-two" />
+          <div className="home-orbits" aria-hidden="true">
+            <span className="home-orbit home-orbit-one" />
+            <span className="home-orbit home-orbit-two" />
+            <span className="home-orbit home-orbit-three" />
+            <span className="home-orbit-spark" />
+            <span className="home-orbit-node" />
+          </div>
           <figure>
             <video
               autoPlay

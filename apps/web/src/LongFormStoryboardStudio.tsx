@@ -1534,8 +1534,48 @@ export default function LongFormStoryboardStudio({
     </div>
   );
 
+  const generateVideoAction = isClassic ? (
+    <div className="lf-preview-actions lf-generate-inline">
+      <button
+        type="button"
+        data-help="Send this Director-ready idea and the three chosen video settings to the private generation queue."
+        disabled={!canGenerateNow}
+        className="lf-primary lf-generate"
+        onClick={() => mutation.mutate()}
+      >
+        <span className="lf-button-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path
+              d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.2-6.2a1.1 1.1 0 0 0 0-1.8L9.6 4.9C8.9 4.5 8 5 8 5.8Z"
+              fill="currentColor"
+            />
+          </svg>
+        </span>
+        <span>
+          {mutation.isPending ? "◌ Generating video…" : "Generate video"}
+        </span>
+      </button>
+    </div>
+  ) : undefined;
+
   const videoSettingsPanel = isClassic ? (
-    <>
+    <details className="lf-frame-details lf-settings-drawer">
+    <summary>
+      <svg
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 15z" />
+      </svg>
+      Settings
+    </summary>
+    <div className="lf-video-settings-panel">
     <div className="lf-video-settings">
       <div className="lf-video-settings-row">
         <IconField icon="▦" label="Resolution">
@@ -1702,7 +1742,8 @@ export default function LongFormStoryboardStudio({
       )}
       </div>
     </div>
-    </>
+    </div>
+    </details>
   ) : undefined;
 
   return (
@@ -1907,7 +1948,16 @@ export default function LongFormStoryboardStudio({
               >
                 <div className="lf-section-head">
                   <div>
-                    <h2>{isClassic ? "Create movie" : "Storyboard scenes"}</h2>
+                    {isClassic ? (
+                      <div className="lf-section-brand">
+                        <span className="lf-section-brand-mark">
+                          <img src="/fav-icon.png" alt="" />
+                        </span>
+                        <span className="site-page-title">VideoLab.creator</span>
+                      </div>
+                    ) : (
+                      <h2>Storyboard scenes</h2>
+                    )}
                   </div>
                   {!isClassic && (
                     <button
@@ -1939,6 +1989,9 @@ export default function LongFormStoryboardStudio({
                           {previewBatchBusy ? "Generating…" : "Generate first/last"}
                         </button>
                       ) : undefined
+                    }
+                    generateAction={
+                      isClassic && index === 0 ? generateVideoAction : undefined
                     }
                     onChange={(patch) => updateScene(index, patch)}
                     onCreatorPromptChange={
@@ -3490,6 +3543,7 @@ function SceneCard({
   onStopGeneratedTextChange,
   onNegativePromptChange,
   previewGate,
+  generateAction,
 }: {
   scene: StoryboardScenePayload;
   creatorPrompt?: string;
@@ -3516,6 +3570,7 @@ function SceneCard({
   onStopGeneratedTextChange?: (enabled: boolean) => void;
   onNegativePromptChange?: (value: string) => void;
   previewGate?: React.ReactNode;
+  generateAction?: React.ReactNode;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState(index === 0);
@@ -3651,6 +3706,16 @@ function SceneCard({
                     : "Your direction"}
                 </small>
               )}
+              {classic && (
+                <button
+                  type="button"
+                  className="lf-outline lf-regenerate-shot"
+                  disabled={promptBusy}
+                  onClick={onRegeneratePrompt}
+                >
+                  Regenerate scene
+                </button>
+              )}
             </div>
             <textarea
               aria-label={classic ? "Video prompt" : `Scene ${index + 1} direction`}
@@ -3709,18 +3774,7 @@ function SceneCard({
               </div>
             )}
           </div>
-          {classic && (
-            <div className="lf-polish-brief-footer">
-              <button
-                type="button"
-                className="lf-outline lf-regenerate-shot"
-                disabled={promptBusy}
-                onClick={onRegeneratePrompt}
-              >
-                Regenerate scene
-              </button>
-            </div>
-          )}
+          {classic && generateAction}
           {!classic && (
             <div className="lf-scene-fields">
               <NumberField
@@ -3833,6 +3887,9 @@ function SceneCard({
               </details>
             </details>
           )}
+          {(() => {
+            const advancedInner = (
+              <>
           <details className="lf-frame-details">
             <summary>First frame / last frame</summary>
             <div className="lf-frames">
@@ -3967,6 +4024,17 @@ function SceneCard({
               </div>
             </details>
           )}
+              </>
+            );
+            return classic ? (
+              <details className="lf-frame-details lf-advanced-options">
+                <summary>Advanced options</summary>
+                {advancedInner}
+              </details>
+            ) : (
+              advancedInner
+            );
+          })()}
           {!classic && (
             <label className="lf-continuity-note">
               <span>Continuity notes</span>
@@ -4750,7 +4818,7 @@ function Preview({
       ? `${progress}%`
       : undefined;
 
-  return (
+  const panel = (
     <section className="lf-preview lf-panel">
       <header data-help="This panel tracks the currently selected generation, including active render progress, playback and download once complete.">
         <div>{!minimal && <span className="lf-label">Your creation</span>}</div>
@@ -4880,29 +4948,27 @@ function Preview({
           </div>
         )}
       </div>
-      <div className="lf-preview-actions">
-        <button
-          type="button"
-          data-help={
-            minimal
-              ? "Send this Director-ready idea and the three chosen video settings to the private generation queue."
-              : "Validate the brief and scenes, then submit the complete storyboard to the video-generation queue."
-          }
-          disabled={!canGenerate}
-          className="lf-primary lf-generate"
-          onClick={onGenerate}
-        >
-          <span className="lf-button-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none">
-              <path
-                d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.2-6.2a1.1 1.1 0 0 0 0-1.8L9.6 4.9C8.9 4.5 8 5 8 5.8Z"
-                fill="currentColor"
-              />
-            </svg>
-          </span>
-          <span>{generateLabel}</span>
-        </button>
-      </div>
+      {!minimal && (
+        <div className="lf-preview-actions">
+          <button
+            type="button"
+            data-help="Validate the brief and scenes, then submit the complete storyboard to the video-generation queue."
+            disabled={!canGenerate}
+            className="lf-primary lf-generate"
+            onClick={onGenerate}
+          >
+            <span className="lf-button-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.2-6.2a1.1 1.1 0 0 0 0-1.8L9.6 4.9C8.9 4.5 8 5 8 5.8Z"
+                  fill="currentColor"
+                />
+              </svg>
+            </span>
+            <span>{generateLabel}</span>
+          </button>
+        </div>
+      )}
       {cancelError && <p className="lf-error">{cancelError}</p>}
       {video.error && (
         <p className="error">Video retrieval failed: {video.error}</p>
@@ -4944,6 +5010,20 @@ function Preview({
         </div>
       )}
     </section>
+  );
+  if (!minimal) return panel;
+  return (
+    <div className="lf-preview-shell">
+      <div className="lf-preview-orb" aria-hidden="true">
+        <span className="lf-orb-disc" />
+        <span className="lf-orbit lf-orbit-one" />
+        <span className="lf-orbit lf-orbit-two" />
+        <span className="lf-orbit lf-orbit-three" />
+        <span className="lf-orbit-spark" />
+        <span className="lf-orbit-node" />
+      </div>
+      {panel}
+    </div>
   );
 }
 function History({

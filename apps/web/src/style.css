@@ -519,6 +519,205 @@ body:has(.admin-page) .site-nav.logged-in .site-nav-inner {
   max-width: 1304px;
   padding-inline: clamp(1rem, 2.5vw, 2rem);
 }
+
+/* Bottom-pinned teal hemisphere dock carrying the primary nav */
+.site-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: min(520px, 92vw);
+  height: 138px;
+  overflow: hidden;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+/* "i" mark badge sitting at the crown of the dock dome, links home */
+.site-dock-brand {
+  position: absolute;
+  left: 50%;
+  top: 30px;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  overflow: hidden;
+  border: 1px solid #ffffff5c;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #ffffff, #dff3ef);
+  box-shadow: 0 6px 18px #04413b45;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  transition:
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
+}
+.site-dock-brand:hover {
+  border-color: #ffffffcc;
+  box-shadow:
+    0 6px 18px #04413b45,
+    0 0 0 4px #b6f7ee40,
+    0 0 22px 6px #7fecdfb0;
+}
+.site-dock-brand img {
+  width: 57px;
+  height: 57px;
+  max-width: none;
+  transform: translate(-2px, -2px);
+}
+.site-dock-orb {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: min(520px, 92vw);
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+}
+.site-dock-orb::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 50% 46%,
+    #7fecdf 0%,
+    #3cccbc 24%,
+    #17a294 48%,
+    #0a6c65 78%
+  );
+  box-shadow: inset 0 22px 50px #b6f6ec33;
+}
+.site-dock-ring {
+  position: absolute;
+  aspect-ratio: 1;
+  border: 1px solid #10131322;
+  border-radius: 50%;
+}
+.site-dock-ring-1 {
+  width: 100%;
+  border-color: #1013131f;
+}
+.site-dock-ring-2 {
+  width: 78%;
+  border-style: dashed;
+  border-color: #0e6f6733;
+  animation: home-orbit-spin 60s linear infinite;
+}
+.site-dock-ring-3 {
+  width: 56%;
+  border-color: #1013132b;
+}
+.site-dock-node {
+  position: absolute;
+  width: 100%;
+  aspect-ratio: 1;
+  animation: home-orbit-spin 16s linear infinite;
+}
+.site-dock-node::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 50%;
+  background: #b6f7ee;
+  box-shadow:
+    0 0 0 4px #b6f7ee2e,
+    0 0 16px 5px #b6f7eeb5;
+}
+.site-dock-nav {
+  position: static;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: clamp(1rem, 3.5vw, 2.2rem);
+  margin: 0 0 18px;
+  padding: 0;
+  background: none;
+  backdrop-filter: none;
+  pointer-events: auto;
+}
+.site-dock-link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: #eafff9;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  opacity: 0.92;
+  text-shadow: 0 1px 5px #04413b4d;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
+}
+.site-dock-link::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-bottom: 9px;
+  border-radius: 50%;
+  background: #b6f7ee;
+  box-shadow:
+    0 0 0 4px #b6f7ee2e,
+    0 0 16px 4px #b6f7eeb5;
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+.site-dock-link:hover {
+  color: #ffffff;
+  opacity: 1;
+}
+.site-dock-link.active {
+  color: #ffffff;
+  opacity: 1;
+}
+.site-dock-link.active::before {
+  opacity: 1;
+  transform: scale(1);
+  animation: dock-dot-pulse 2.4s ease-in-out infinite;
+}
+@keyframes dock-dot-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 4px #b6f7ee2e,
+      0 0 16px 4px #b6f7eeb5;
+  }
+  50% {
+    box-shadow:
+      0 0 0 6px #b6f7ee1f,
+      0 0 22px 7px #b6f7eee0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .site-dock-ring-2,
+  .site-dock-node {
+    animation: none;
+  }
+  .site-dock-link.active::before {
+    animation: none;
+  }
+}
+body:has(.site-dock) .lf-page,
+body:has(.site-dock) .gallery-page,
+body:has(.site-dock) .account-page,
+body:has(.site-dock) .admin-page {
+  padding-bottom: 200px;
+}
 .lf-page {
   max-width: 1280px;
   padding: 1.5rem 1.25rem 6rem;
@@ -1693,6 +1892,7 @@ body:has(.home) .site-brand {
   display: grid;
   place-items: center;
   min-height: 630px;
+  --hv-orbit: min(42vw, 636px);
 }
 .home-visual:before {
   content: "";
@@ -1700,13 +1900,36 @@ body:has(.home) .site-brand {
   width: min(42vw, 630px);
   aspect-ratio: 1;
   border-radius: 50%;
-  background: #20bbaa;
+  background: radial-gradient(
+    circle at 32% 26%,
+    #82ede0 0%,
+    #35c9b9 34%,
+    #149c90 62%,
+    #0a6c65 100%
+  );
   box-shadow:
-    inset -90px -70px 130px #056e69aa,
-    0 70px 160px #0b887e3d;
+    inset -68px -58px 120px #04514da8,
+    inset 42px 36px 90px #aef5eb33,
+    0 60px 150px #0b887e42;
+}
+.home-orbits {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.home-orbits:before {
+  content: "";
+  position: absolute;
+  width: var(--hv-orbit);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, #2cc0af22 40%, transparent 70%);
 }
 .home-visual figure {
   position: relative;
+  z-index: 1;
   width: min(43vw, 670px);
   margin: 0;
   overflow: hidden;
@@ -1742,6 +1965,7 @@ body:has(.home) .site-brand {
 }
 .home-float {
   position: absolute;
+  z-index: 2;
   border: 1px solid #fff8;
   border-radius: 1rem;
   background: #f7f6f1d9;
@@ -1786,16 +2010,120 @@ body:has(.home) .site-brand {
 }
 .home-orbit {
   position: absolute;
-  border: 1px solid #1112;
+  border: 1px solid #10131322;
   border-radius: 50%;
 }
 .home-orbit-one {
-  width: 90%;
+  width: var(--hv-orbit);
   aspect-ratio: 1;
+  border-color: #1013131f;
 }
 .home-orbit-two {
-  width: 70%;
+  width: calc(var(--hv-orbit) * 0.78);
   aspect-ratio: 1;
+  border-style: dashed;
+  border-color: #0e6f6733;
+  animation: home-orbit-spin 60s linear infinite;
+}
+.home-orbit-three {
+  width: calc(var(--hv-orbit) * 0.56);
+  aspect-ratio: 1;
+  border-color: #1013132b;
+}
+/* ticked dial riding the outer ring */
+.home-orbit-one:before,
+.home-orbit-one:after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 50%;
+}
+.home-orbit-one:before {
+  background: repeating-conic-gradient(
+    from 0deg,
+    #1013132e 0deg 0.35deg,
+    transparent 0.35deg 15deg
+  );
+  -webkit-mask: radial-gradient(
+    circle,
+    transparent calc(50% - 9px),
+    #000 calc(50% - 9px)
+  );
+  mask: radial-gradient(
+    circle,
+    transparent calc(50% - 9px),
+    #000 calc(50% - 9px)
+  );
+}
+.home-orbit-one:after {
+  background: repeating-conic-gradient(
+    from 0deg,
+    #0e6f673d 0deg 0.7deg,
+    transparent 0.7deg 90deg
+  );
+  -webkit-mask: radial-gradient(
+    circle,
+    transparent calc(50% - 16px),
+    #000 calc(50% - 16px)
+  );
+  mask: radial-gradient(
+    circle,
+    transparent calc(50% - 16px),
+    #000 calc(50% - 16px)
+  );
+}
+/* glowing node tracking the mid orbit */
+.home-orbit-node {
+  position: absolute;
+  width: calc(var(--hv-orbit) * 0.78);
+  aspect-ratio: 1;
+  animation: home-orbit-spin 22s linear infinite;
+}
+.home-orbit-node:before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 50%;
+  background: #35d8c8;
+  box-shadow:
+    0 0 0 6px #35d8c826,
+    0 0 22px 4px #35d8c87a;
+}
+/* faint crosshair spokes */
+.home-orbit-spark {
+  position: absolute;
+  width: calc(var(--hv-orbit) * 0.56);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    linear-gradient(
+      #10131300 calc(50% - 0.5px),
+      #10131321 calc(50% - 0.5px) calc(50% + 0.5px),
+      #10131300 calc(50% + 0.5px)
+    ),
+    linear-gradient(
+      90deg,
+      #10131300 calc(50% - 0.5px),
+      #10131321 calc(50% - 0.5px) calc(50% + 0.5px),
+      #10131300 calc(50% + 0.5px)
+    );
+  -webkit-mask: radial-gradient(circle, #000 66%, transparent 70%);
+  mask: radial-gradient(circle, #000 66%, transparent 70%);
+}
+@keyframes home-orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-orbit-two,
+  .home-orbit-node {
+    animation: none;
+  }
 }
 .home-marquee {
   width: 110%;
@@ -1923,7 +2251,7 @@ body:has(.home) .site-brand {
     top: 0;
   }
   .home-visual:before,
-  .home-orbit,
+  .home-orbits,
   .home-float-bottom {
     transform: translateY(50px);
   }
@@ -1941,6 +2269,7 @@ body:has(.home) .site-brand {
   }
   .home-visual {
     min-height: 600px;
+    --hv-orbit: min(84vw, 620px);
   }
   .home-visual figure {
     width: min(80vw, 670px);
@@ -1974,6 +2303,7 @@ body:has(.home) .site-brand {
   }
   .home-visual {
     min-height: 440px;
+    --hv-orbit: min(96vw, 460px);
   }
   .home-visual figure {
     width: 92vw;
@@ -2025,9 +2355,9 @@ body:not(:has(.home)) {
   color: #141414;
 }
 body:not(:has(.home)) .site-nav {
-  border-bottom: 1px solid #1112;
-  background: #f0eee9e8;
-  backdrop-filter: blur(18px);
+  border-bottom: 0;
+  background: transparent;
+  backdrop-filter: none;
 }
 body:not(:has(.home)) .site-nav a,
 body:not(:has(.home)) .site-logout {
@@ -4769,7 +5099,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
   min-height: 125px;
 }
 .lf-scenes-panel .scene-prompt-field textarea {
-  min-height: 429px;
+  min-height: 200px;
   margin: 0;
   border-radius: 1rem;
   background: #fff;
@@ -5543,6 +5873,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
 /* Storyboard Studio — editorial long-form workbench. */
 .lf-page {
   max-width: 1560px;
+  margin-inline: auto;
   padding: 0.75rem clamp(1rem, 2.5vw, 2.75rem) 7rem;
   color: #171717;
 }
@@ -5851,6 +6182,39 @@ body:not(:has(.home)) textarea:focus::placeholder {
   grid-template-columns: minmax(360px, 0.82fr) minmax(520px, 1.18fr);
   align-items: start;
   gap: clamp(1rem, 1.9vw, 1.75rem);
+}
+@media (min-width: 981px) {
+  /* Centre the creator layout vertically; columns stay top-aligned to each other */
+  .lf-page:has(.lf-layout-minimal) {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: calc(100vh - 4.5rem);
+  }
+  /* Create movie panel: top + bottom aligned to the black video preview panel */
+  .lf-layout-minimal .lf-scenes-panel {
+    margin-top: 3.2rem;
+    /* keep the panel roughly level with the black video preview window */
+    height: calc(min(28.2vw, 440px) + 28px);
+    display: flex;
+    flex-direction: column;
+  }
+  .lf-layout-minimal .lf-scenes-panel > .lf-scene {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .lf-layout-minimal .lf-scenes-panel .scene-prompt-field {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .lf-layout-minimal .lf-scenes-panel .scene-prompt-field textarea {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
 }
 .lf-minimal-director {
   display: grid;
@@ -6456,6 +6820,14 @@ body:not(:has(.home)) textarea:focus::placeholder {
   line-height: 1;
   white-space: nowrap;
 }
+/* Generate button relocated directly under the Creator video-prompt field */
+.lf-generate-inline {
+  padding: 0.4rem 0 0.15rem;
+  margin-top: 0.55rem;
+}
+.lf-generate-inline > button {
+  max-width: none;
+}
 .lf-button-icon {
   display: inline-grid;
   flex: 0 0 auto;
@@ -6499,6 +6871,280 @@ body:not(:has(.home)) textarea:focus::placeholder {
   border-radius: 1.65rem;
   background: #f1f1ec;
   box-shadow: 0 32px 85px #17433d19;
+}
+/* continuity dial sitting behind the Creator preview panel */
+.lf-preview-shell {
+  position: relative;
+  isolation: isolate;
+}
+.lf-preview-shell > .lf-preview {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+/* fixed-height preview header so the left column can align to the video panel */
+.lf-preview-shell > .lf-preview > header {
+  min-height: 0;
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
+}
+.lf-preview-shell .lf-video-settings {
+  background: transparent;
+  border: none;
+}
+/* tighten the gap above the generate button and pull the controls panel up */
+.lf-preview-shell .lf-generate {
+  margin-top: calc(1rem - 9px);
+}
+.lf-preview-shell .lf-preview-actions {
+  padding-bottom: 0.4rem;
+}
+/* creator output controls collapse into the Settings drawer */
+.lf-preview-shell .lf-settings-drawer {
+  width: min(100%, 360px);
+  margin: 0.5rem auto 0 !important;
+  border-color: #d7d7d3;
+  background: #e8e8e5;
+  box-shadow: 0 20px 55px #17433d0f;
+}
+/* When open, the drawer lifts above the bottom nav dock (z-index: 40).
+   The shell has isolation:isolate, so raise the whole shell's stacking
+   context, not just the drawer inside it. */
+.lf-preview-shell:has(.lf-settings-drawer[open]) {
+  z-index: 50;
+}
+.lf-preview-shell .lf-settings-drawer[open] {
+  position: relative;
+  z-index: 1;
+}
+.lf-preview-shell .lf-settings-drawer > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.85rem 1rem;
+}
+.lf-preview-shell .lf-settings-drawer > summary svg {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+.lf-preview-shell .lf-settings-drawer > summary::after {
+  float: none;
+  margin-left: auto;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.lf-preview-shell .lf-video-settings-panel {
+  margin: 0;
+  padding: 0 0.75rem 0.85rem;
+}
+.lf-preview-shell .lf-video-settings-panel > .lf-video-settings,
+.lf-preview-shell .lf-video-settings-panel > .lf-preview-formats {
+  margin: 0;
+}
+.lf-preview-shell .lf-video-settings-panel > .lf-video-settings {
+  margin-bottom: 0.6rem;
+  padding: 0;
+}
+/* narrow drawer: stack the three settings rather than cramming a 3-up grid */
+.lf-preview-shell .lf-settings-drawer .lf-video-settings-row,
+.lf-preview-shell .lf-settings-drawer .lf-video-settings-row:not(:first-child) {
+  grid-template-columns: 1fr;
+  gap: 0.45rem;
+}
+.lf-preview-shell .lf-settings-drawer .lf-preview-formats-row > .lf-format-presets,
+.lf-preview-shell .lf-settings-drawer .lf-preview-formats-row > .lf-minimal-duration {
+  flex: 1 1 100%;
+}
+/* Create movie panel: i-mark + the header's VideoLab.creator wordmark */
+.lf-section-head .lf-section-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+.lf-section-head .lf-section-brand .site-page-title {
+  margin-right: 0;
+}
+.lf-section-brand-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 46px;
+  width: 46px;
+  height: 46px;
+  overflow: hidden;
+  border: 1px solid #159d9166;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #fff, #e5f2ef);
+  box-shadow: 0 8px 24px #087f7620;
+}
+.lf-section-brand-mark img {
+  width: 50px;
+  height: 50px;
+  max-width: none;
+  transform: translate(-2px, -2px);
+}
+/* keep the generate button fully solid over the dial, even when disabled */
+.lf-preview-shell .lf-generate:disabled {
+  opacity: 1;
+  filter: saturate(0.85) brightness(0.95);
+}
+.lf-preview-orb {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 0;
+  display: grid;
+  place-items: center;
+  /* scales with the preview column / video panel, not the viewport */
+  width: 106%;
+  aspect-ratio: 1;
+  transform: translate(-50%, calc(-50% + 32px));
+  pointer-events: none;
+}
+.lf-preview-orb:before {
+  content: "";
+  position: absolute;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, #2cc0af1f 40%, transparent 70%);
+}
+.lf-orb-disc {
+  position: absolute;
+  width: 96%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 32% 26%,
+    #82ede0 0%,
+    #35c9b9 34%,
+    #149c90 62%,
+    #0a6c65 100%
+  );
+  box-shadow:
+    inset -54px -46px 96px #04514d99,
+    inset 34px 28px 72px #aef5eb2e,
+    0 46px 120px #0b887e38;
+}
+.lf-preview-orb .lf-orbit {
+  position: absolute;
+  border: 1px solid #10131320;
+  border-radius: 50%;
+}
+.lf-preview-orb .lf-orbit-one {
+  width: 100%;
+  aspect-ratio: 1;
+  border-color: #1013131c;
+}
+.lf-preview-orb .lf-orbit-two {
+  width: 78%;
+  aspect-ratio: 1;
+  border-style: dashed;
+  border-color: #0e6f672e;
+  animation: home-orbit-spin 60s linear infinite;
+}
+.lf-preview-orb .lf-orbit-three {
+  width: 56%;
+  aspect-ratio: 1;
+  border-color: #10131326;
+}
+.lf-preview-orb .lf-orbit-one:before,
+.lf-preview-orb .lf-orbit-one:after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 50%;
+}
+.lf-preview-orb .lf-orbit-one:before {
+  background: repeating-conic-gradient(
+    from 0deg,
+    #10131329 0deg 0.35deg,
+    transparent 0.35deg 15deg
+  );
+  -webkit-mask: radial-gradient(
+    circle,
+    transparent calc(50% - 8px),
+    #000 calc(50% - 8px)
+  );
+  mask: radial-gradient(
+    circle,
+    transparent calc(50% - 8px),
+    #000 calc(50% - 8px)
+  );
+}
+.lf-preview-orb .lf-orbit-one:after {
+  background: repeating-conic-gradient(
+    from 0deg,
+    #0e6f6736 0deg 0.7deg,
+    transparent 0.7deg 90deg
+  );
+  -webkit-mask: radial-gradient(
+    circle,
+    transparent calc(50% - 14px),
+    #000 calc(50% - 14px)
+  );
+  mask: radial-gradient(
+    circle,
+    transparent calc(50% - 14px),
+    #000 calc(50% - 14px)
+  );
+}
+.lf-preview-orb .lf-orbit-spark {
+  position: absolute;
+  width: 56%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    linear-gradient(
+      #10131300 calc(50% - 0.5px),
+      #1013131e calc(50% - 0.5px) calc(50% + 0.5px),
+      #10131300 calc(50% + 0.5px)
+    ),
+    linear-gradient(
+      90deg,
+      #10131300 calc(50% - 0.5px),
+      #1013131e calc(50% - 0.5px) calc(50% + 0.5px),
+      #10131300 calc(50% + 0.5px)
+    );
+  -webkit-mask: radial-gradient(circle, #000 66%, transparent 70%);
+  mask: radial-gradient(circle, #000 66%, transparent 70%);
+}
+.lf-preview-orb .lf-orbit-node {
+  position: absolute;
+  /* ride the circumference of the teal disc (.lf-orb-disc is 96%) */
+  width: 96%;
+  aspect-ratio: 1;
+  animation: home-orbit-spin 22s linear infinite;
+}
+.lf-preview-orb .lf-orbit-node:before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  width: 11px;
+  height: 11px;
+  margin-left: -5.5px;
+  border-radius: 50%;
+  background: #35d8c8;
+  box-shadow:
+    0 0 0 6px #35d8c826,
+    0 0 20px 4px #35d8c877;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lf-preview-orb .lf-orbit-two,
+  .lf-preview-orb .lf-orbit-node {
+    animation: none;
+  }
+}
+/* On the 2-column creator layout, pull the dial in so the disc tracks the
+   video panel's width instead of overhanging it. Scales the disc, orbits and
+   glow together since they're all sized off .lf-preview-orb. */
+@media (min-width: 981px) {
+  .lf-preview-shell .lf-preview-orb {
+    width: 78%;
+  }
 }
 .lf-preview > header {
   align-items: center;
