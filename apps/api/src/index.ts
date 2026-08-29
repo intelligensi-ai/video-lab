@@ -2295,24 +2295,47 @@ function creatorGeneratedTextPolicy(value: unknown): StoryboardGeneratedTextPoli
     throw problem(400, "invalid_generated_text_policy", "Generated-text policy is invalid");
   }
   const source = value as Record<string, unknown>;
-  if (
-    Object.keys(source).length !== Object.keys(expected).length ||
-    Object.entries(expected).some(([key, expectedValue]) => source[key] !== expectedValue)
-  ) {
+  const keySet = Object.keys(expected);
+  const validShape =
+    Object.keys(source).length === keySet.length &&
+    ["forbidden", "allowed"].includes(String(source.mode)) &&
+    ["avoid_readable_text", "allowed"].includes(String(source.signage)) &&
+    keySet
+      .filter((key) => !["mode", "signage"].includes(key))
+      .every((key) => typeof source[key] === "boolean");
+  if (!validShape) {
+    throw problem(400, "invalid_generated_text_policy", "Generated-text policy is invalid");
+  }
+  if (source.mode === "forbidden") {
+    if (Object.entries(expected).some(([key, expectedValue]) => source[key] !== expectedValue)) {
+      throw problem(
+        400,
+        "generated_text_not_supported",
+        "Forbidden generated-text policy cannot enable visible text",
+      );
+    }
+    return expected;
+  }
+  if (source.mode !== "allowed" || source.signage !== "allowed") {
     throw problem(
       400,
       "generated_text_not_supported",
       "Visible generated text is not supported in the Creator launch workflow",
     );
   }
-  return expected;
+  return source as unknown as StoryboardGeneratedTextPolicy;
 }
 
-function creatorNegativePrompt(value: unknown) {
+function creatorNegativePrompt(value: unknown, generatedTextPolicy: StoryboardGeneratedTextPolicy) {
   const existing = typeof value === "string"
     ? value.trim().replace(/,+\s*$/, "").slice(0, 10_000)
     : "";
-  return [existing, forbiddenGeneratedTextNegativePrompt]
+  return [
+    existing,
+    generatedTextPolicy.mode === "forbidden"
+      ? forbiddenGeneratedTextNegativePrompt
+      : "",
+  ]
     .filter(Boolean)
     .join(", ");
 }
@@ -6361,12 +6384,16 @@ app.post(
         requestedSettings,
         p.uid,
       )) as Generation["settings"];
-      settings.generatedTextPolicy = creatorGeneratedTextPolicy(
+      const generatedTextPolicy = creatorGeneratedTextPolicy(
         settings.generatedTextPolicy,
       );
+      settings.generatedTextPolicy = generatedTextPolicy;
       settings.generatedTextQualityControlDisabled =
         runtimeState.generatedTextQualityControlDisabled === true;
-      settings.negativePrompt = creatorNegativePrompt(settings.negativePrompt);
+      settings.negativePrompt = creatorNegativePrompt(
+        settings.negativePrompt,
+        generatedTextPolicy,
+      );
       const requestedVideoModel = String(
         settings.videoModel ??
         (settings as { video_model?: unknown }).video_model ??

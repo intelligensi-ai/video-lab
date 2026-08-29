@@ -164,6 +164,47 @@ describe("minimal VideoLab project safety", () => {
     });
   });
 
+  it("preserves the Creator generated-text toggle in the submitted payload", () => {
+    const original = projectForm();
+    original.generatedTextPolicy = {
+      ...defaultGeneratedTextPolicy(),
+      mode: "allowed",
+      signage: "allowed",
+    };
+    original.scenes[0].generatedTextIntent = {
+      mode: "environmental",
+      visibleText: ["OPEN"],
+      reason: "The project text lock was switched off.",
+    };
+
+    const submitted = generationPayloadForStudioVariant(original, true);
+
+    expect(submitted.generatedTextPolicy).toEqual(original.generatedTextPolicy);
+    expect(submitted.scenes[0].generatedTextIntent).toEqual(
+      original.scenes[0].generatedTextIntent,
+    );
+  });
+
+  it("forces scene text intent off when the Creator no-text toggle is enabled", () => {
+    const original = projectForm();
+    original.generatedTextPolicy = defaultGeneratedTextPolicy();
+    original.scenes[0].generatedTextIntent = {
+      mode: "environmental",
+      visibleText: ["OPEN"],
+      reason: "Legacy scene text request.",
+    };
+
+    const submitted = generationPayloadForStudioVariant(original, true);
+
+    expect(submitted.generatedTextPolicy).toEqual(defaultGeneratedTextPolicy());
+    expect(submitted.scenes[0].generatedTextIntent).toEqual({
+      mode: "none",
+      visibleText: [],
+      reason:
+        "Visible generated text is disabled for the Creator launch workflow.",
+    });
+  });
+
   it("turns an exact Creator length into the smallest balanced valid storyboard", () => {
     const original = [scene("scene-1", 5)];
     const planned = creatorScenesForTotalDuration(original, 17, 4000);

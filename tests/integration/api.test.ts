@@ -120,6 +120,65 @@ describe("api integration", () => {
       true,
     );
   });
+  it("honours the Creator no-text toggle when storing generation settings", async () => {
+    const strict = await request(app)
+      .post("/v1/generations")
+      .set({ authorization: "Bearer no-text-toggle-user" })
+      .set("Idempotency-Key", "no-text-toggle-strict")
+      .send({
+        prompt: "A cinematic prompt with no readable text anywhere",
+        settings: {
+          aspectRatio: "16:9",
+          durationSeconds: 4,
+          quality: "draft",
+          generatedTextPolicy: {
+            mode: "forbidden",
+            captions: false,
+            subtitles: false,
+            closedCaptions: false,
+            titleCards: false,
+            textOverlays: false,
+            logos: false,
+            watermarks: false,
+            signage: "avoid_readable_text",
+          },
+        },
+      })
+      .expect(201);
+    expect(strict.body.settings.generatedTextPolicy.mode).toBe("forbidden");
+    expect(strict.body.settings.negativePrompt).toContain("captions");
+    expect(strict.body.settings.negativePrompt).toContain("readable signage");
+    await processOne("no-text-toggle-strict-worker");
+
+    const allowed = await request(app)
+      .post("/v1/generations")
+      .set({ authorization: "Bearer no-text-toggle-allowed-user" })
+      .set("Idempotency-Key", "no-text-toggle-allowed")
+      .send({
+        prompt: "A cinematic prompt where visible text may appear",
+        settings: {
+          aspectRatio: "16:9",
+          durationSeconds: 4,
+          quality: "draft",
+          negativePrompt: "blur",
+          generatedTextPolicy: {
+            mode: "allowed",
+            captions: false,
+            subtitles: false,
+            closedCaptions: false,
+            titleCards: false,
+            textOverlays: false,
+            logos: false,
+            watermarks: false,
+            signage: "allowed",
+          },
+        },
+      })
+      .expect(201);
+    expect(allowed.body.settings.generatedTextPolicy.mode).toBe("allowed");
+    expect(allowed.body.settings.negativePrompt).toBe("blur");
+    await processOne("no-text-toggle-allowed-worker");
+  });
   it("creates an upscaled gallery generation from a completed video", async () => {
     const auth = { authorization: "Bearer upscale-user" };
     const source = await request(app)

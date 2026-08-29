@@ -14,6 +14,7 @@ import type {
   DirectorProposalResult,
   Generation,
   LongFormVideoModel,
+  StoryboardGeneratedTextPolicy,
   StoryboardProjectSummary,
 } from "@video-lab/contracts";
 import {
@@ -503,6 +504,24 @@ const initialForm: LongFormGenerationPayload = {
 const freshInitialForm = (): LongFormGenerationPayload =>
   globalThis.structuredClone(initialForm);
 
+function generatedTextPolicyForNoText(
+  enabled: boolean,
+): StoryboardGeneratedTextPolicy {
+  return enabled
+    ? defaultGeneratedTextPolicy()
+    : {
+        mode: "allowed",
+        captions: false,
+        subtitles: false,
+        closedCaptions: false,
+        titleCards: false,
+        textOverlays: false,
+        logos: false,
+        watermarks: false,
+        signage: "allowed",
+      };
+}
+
 function factoryFormForStudioVariant(isClassic: boolean): LongFormGenerationPayload {
   return {
     ...freshInitialForm(),
@@ -572,20 +591,25 @@ export function generationPayloadForStudioVariant(
 ): LongFormGenerationPayload {
   const overallGoal = form.overallGoal;
   const creatorPrompt = overallGoal.trim();
+  const generatedTextPolicy =
+    form.generatedTextPolicy ?? defaultGeneratedTextPolicy();
   return {
     ...form,
     overallGoal,
     videoModel: isClassic ? "ltx-2.3" : form.videoModel,
-    generatedTextPolicy: defaultGeneratedTextPolicy(),
+    generatedTextPolicy,
     scenes: form.scenes.map((scene, index) => ({
       ...scene,
       prompt: isClassic && index === 0 ? creatorPrompt : scene.prompt,
-      generatedTextIntent: {
-        mode: "none",
-        visibleText: [],
-        reason:
-          "Visible generated text is disabled for the Creator launch workflow.",
-      },
+      generatedTextIntent:
+        generatedTextPolicy.mode === "forbidden"
+          ? {
+              mode: "none",
+              visibleText: [],
+              reason:
+                "Visible generated text is disabled for the Creator launch workflow.",
+            }
+          : scene.generatedTextIntent,
     })),
   };
 }
@@ -1987,6 +2011,21 @@ export default function LongFormStoryboardStudio({
                     seedPolicy={form.seedPolicy}
                     classic={isClassic}
                     negativePrompt={form.negativePrompt}
+                    stopGeneratedText={
+                      form.generatedTextPolicy.mode === "forbidden"
+                    }
+                    onStopGeneratedTextChange={(enabled) =>
+                      setForm((current) =>
+                        markAcceptedClipsStale(
+                          {
+                            ...current,
+                            generatedTextPolicy:
+                              generatedTextPolicyForNoText(enabled),
+                          },
+                          "The generated text policy changed after this clip was accepted. Render this scene again before assembly.",
+                        ),
+                      )
+                    }
                     onNegativePromptChange={(value) =>
                       setForm((current) =>
                         markAcceptedClipsStale(
@@ -3447,6 +3486,8 @@ function SceneCard({
   seedPolicy,
   classic,
   negativePrompt,
+  stopGeneratedText,
+  onStopGeneratedTextChange,
   onNegativePromptChange,
   previewGate,
 }: {
@@ -3471,6 +3512,8 @@ function SceneCard({
   seedPolicy: LongFormGenerationPayload["seedPolicy"];
   classic?: boolean;
   negativePrompt?: string;
+  stopGeneratedText?: boolean;
+  onStopGeneratedTextChange?: (enabled: boolean) => void;
   onNegativePromptChange?: (value: string) => void;
   previewGate?: React.ReactNode;
 }) {
@@ -3841,8 +3884,10 @@ function SceneCard({
                 <label className="lf-toggle lf-generated-text-lock">
                   <input
                     type="checkbox"
-                    checked
-                    readOnly
+                    checked={stopGeneratedText ?? true}
+                    onChange={(event) =>
+                      onStopGeneratedTextChange?.(event.target.checked)
+                    }
                     aria-label="Stop captions and readable text"
                   />
                   <span />
