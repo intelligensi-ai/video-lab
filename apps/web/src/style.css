@@ -1177,6 +1177,25 @@ body:has(.site-dock) .generation-detail-page {
   justify-content: flex-end;
   gap: 0.65rem;
 }
+/* top-left of the preview header: Director status / error line */
+.lf-preview-header-lead {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  padding-right: 0.75rem;
+}
+.lf-preview-status-note {
+  margin: 0;
+  color: #0c8074;
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+.lf-preview-status-note.is-error {
+  color: #b5342b;
+}
 .lf-preview-header-actions .lf-session {
   flex-direction: row;
   flex-wrap: wrap;

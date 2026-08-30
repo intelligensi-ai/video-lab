@@ -1534,6 +1534,23 @@ export default function LongFormStoryboardStudio({
     </div>
   );
 
+  const directorErrorMessage =
+    enhancement.error?.message ??
+    classicBriefEnhancement.error?.message ??
+    directorRepair.error?.message;
+  const directorStatusNote =
+    isClassic && (directorErrorMessage || enhancementProgress) ? (
+      <p
+        className={`lf-preview-status-note${
+          directorErrorMessage ? " is-error" : ""
+        }`}
+        role={directorErrorMessage ? "alert" : "status"}
+        aria-live="polite"
+      >
+        {directorErrorMessage || enhancementProgress}
+      </p>
+    ) : undefined;
+
   const generateVideoAction = isClassic ? (
     <div className="lf-preview-actions lf-generate-inline">
       <button
@@ -2097,30 +2114,6 @@ export default function LongFormStoryboardStudio({
                     }
                   />
                 ))}
-                {isClassic && enhancementProgress && (
-                  <p
-                    className="lf-minimal-session-state"
-                    role="status"
-                    aria-live="polite"
-                  >
-                    {enhancementProgress}
-                  </p>
-                )}
-                {isClassic && classicBriefEnhancement.error && (
-                  <p className="lf-error" role="alert">
-                    {classicBriefEnhancement.error.message}
-                  </p>
-                )}
-                {isClassic && enhancement.error && (
-                  <p className="lf-error" role="alert">
-                    {enhancement.error.message}
-                  </p>
-                )}
-                {isClassic && directorRepair.error && (
-                  <p className="lf-error" role="alert">
-                    {directorRepair.error.message}
-                  </p>
-                )}
               </section>
           </>
         </div>
@@ -2802,6 +2795,7 @@ export default function LongFormStoryboardStudio({
             minimal={isClassic}
             aspectRatio={minimalAspectRatio(form.resolution)}
             headerControls={isClassic ? sessionControls : undefined}
+            statusNote={directorStatusNote}
             videoSettingsPanel={videoSettingsPanel}
           />
           {!isClassic && (
@@ -4767,6 +4761,7 @@ function Preview({
   minimal = false,
   aspectRatio = "16:9",
   headerControls,
+  statusNote,
   videoSettingsPanel,
 }: {
   generation?: Generation;
@@ -4784,6 +4779,7 @@ function Preview({
   minimal?: boolean;
   aspectRatio?: MinimalAspectRatio;
   headerControls?: React.ReactNode;
+  statusNote?: React.ReactNode;
   videoSettingsPanel?: React.ReactNode;
 }) {
   const mediaGeneration = preservedGeneration ?? generation;
@@ -4845,7 +4841,10 @@ function Preview({
   const panel = (
     <section className="lf-preview lf-panel">
       <header data-help="This panel tracks the currently selected generation, including active render progress, playback and download once complete.">
-        <div>{!minimal && <span className="lf-label">Your creation</span>}</div>
+        <div className="lf-preview-header-lead">
+          {!minimal && <span className="lf-label">Your creation</span>}
+          {statusNote}
+        </div>
         <div className="lf-preview-header-actions">
           {video.objectUrl && (
             <a
