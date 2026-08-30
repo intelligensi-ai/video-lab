@@ -446,12 +446,10 @@ function Shell() {
     enabled: signedIn,
   });
   const isLanding = location.pathname === "/";
+  const isAdmin = me.data?.roles.includes("admin") ?? false;
   const navItems = [
     { to: "/creator", label: "Creator" },
     { to: "/gallery", label: "Gallery" },
-    ...(me.data?.roles.includes("admin")
-      ? [{ to: "/admin", label: "Admin" }]
-      : []),
   ];
   const pageTitle =
     location.pathname === "/creator" || location.pathname === "/gallery"
@@ -466,6 +464,11 @@ function Shell() {
         aria-label="Primary navigation"
       >
         <div className="site-nav-inner">
+          {signedIn && isAdmin && (
+            <NavLink className="site-admin-link" to="/admin">
+              Admin
+            </NavLink>
+          )}
           {signedIn && pageTitle && (
             <span className="site-page-title" aria-current="page">
               {pageTitle}
@@ -1317,10 +1320,19 @@ function GalleryCard({
 // ---------------------------------------------------------------------------
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 const DOWNLOAD_PATH_RE =
-  /^\/v1\/generations\/[^/]+(?:\/edits\/[^/]+)?\/download$/;
+  /^\/v1\/generations\/[^/]+(?:\/edits\/[^/]+)?\/(?:download|thumbnail)$/;
 const POSTER_PREFIX = "vl_thumbnail_";
 const POSTER_ORDER_KEY = "vl_thumbnail_order";
 const posterMemo = new Map<string, string>();
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    reader.readAsDataURL(blob);
+  });
+}
 
 function readPoster(id: string): string {
   if (!id) return "";
@@ -1515,15 +1527,39 @@ function useVideoThumbnail(
   const isVideo = isVideoOutput(generation);
   const isFrame = isFrameOutput(generation);
   const generationId = generation?.id ?? "";
+  const serverThumbnailUrl = generation?.output?.thumbnailUrl;
   const [thumbnail, setThumbnail] = useState(() => readPoster(generationId));
   useEffect(() => {
     setThumbnail(readPoster(generationId));
   }, [generationId]);
-  // Only pull the (full) authenticated media when we actually need bytes:
-  // a frame image to display, or a video with no cached poster to sample.
-  // Otherwise every gallery card / carousel item would re-download whole
-  // MP4s on each visit just to (re)build a thumbnail that is already cached.
-  const needsMedia = isFrame || (isVideo && !thumbnail && generate);
+
+  // Preferred path: the API now ships a small server-rendered poster
+  // (`output.thumbnailUrl`, a ~20 KB JPEG). Fetch that through the shared
+  // queue, cache it as a data URL, and no MP4 ever reaches the client.
+  const wantsServerThumbnail = isVideo && !thumbnail && !!serverThumbnailUrl;
+  useEffect(() => {
+    if (!wantsServerThumbnail || !serverThumbnailUrl) return;
+    let active = true;
+    scheduleDownload(serverThumbnailUrl)
+      .then(blobToDataUrl)
+      .then((dataUrl) => {
+        if (!active) return;
+        writePoster(generationId, dataUrl);
+        setThumbnail(dataUrl);
+      })
+      .catch(() => {
+        /* fall back to client-side frame sampling below */
+      });
+    return () => {
+      active = false;
+    };
+  }, [wantsServerThumbnail, serverThumbnailUrl, generationId]);
+
+  // Fallback: only pull the full video when there is no cached poster AND no
+  // server poster to lean on (older generations, or poster generation failed).
+  const needsMedia =
+    isFrame ||
+    (isVideo && !thumbnail && !serverThumbnailUrl && generate);
   const media = useScheduledBlobUrl(
     needsMedia ? generation?.output?.downloadUrl : undefined,
   );

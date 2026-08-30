@@ -123,6 +123,11 @@ type StoredGeneration = Generation & {
   outputContentType?: string;
   outputObjectPath?: string;
   outputSha256?: string;
+  // Server-generated poster (JPEG). Path in Storage for hosted deploys;
+  // in-memory bytes for local auth. Serialised to the client only as
+  // `output.thumbnailUrl`.
+  outputThumbnailPath?: string;
+  outputThumbnailBytes?: Uint8Array;
 };
 // Used at creation time so title/sceneSummary are never empty, and as the
 // permanent fallback if the Director Agent title call below fails or times out.
@@ -403,6 +408,8 @@ function publicGeneration(g: StoredGeneration): Generation {
     outputContentType: _outputContentType,
     outputObjectPath: _outputObjectPath,
     outputSha256: _outputSha256,
+    outputThumbnailPath: _outputThumbnailPath,
+    outputThumbnailBytes: _outputThumbnailBytes,
     ...generation
   } = g;
   if (["completed", "failed", "cancelled"].includes(generation.status)) {
@@ -416,7 +423,11 @@ function publicGeneration(g: StoredGeneration): Generation {
   };
 }
 function storedGenerationRecord(g: StoredGeneration) {
-  const { outputBytes: _outputBytes, ...stored } = g;
+  const {
+    outputBytes: _outputBytes,
+    outputThumbnailBytes: _outputThumbnailBytes,
+    ...stored
+  } = g;
   return JSON.parse(JSON.stringify(stored));
 }
 function isOwnedUploadPath(value: string, uid: string) {
@@ -956,7 +967,7 @@ async function portableAssemblySource(
     if (!/signBlob/i.test(message)) throw error;
     const [bytes] = await file.download();
     if (bytes.byteLength !== sizeBytes || bytes.byteLength > maximumBytes)
-      throw new Error("invalid_assembly_sources");
+      throw new Error("invalid_assembly_sources", { cause: error });
     return {
       url: `data:${contentType};base64,${Buffer.from(bytes).toString("base64")}`,
       contentType,
@@ -2278,6 +2289,78 @@ async function createTrimmedMp4(
   }
 }
 
+// Best-effort JPEG poster for a video output. Never throws: a missing poster
+// just means clients fall back to their own frame sampling.
+async function createVideoPoster(
+  sourceBytes: Buffer | Uint8Array,
+): Promise<Buffer | undefined> {
+  const workDir = await fsp.mkdtemp(path.join(tmpdir(), "video-lab-poster-"));
+  const sourcePath = path.join(workDir, "source.mp4");
+  const outputPath = path.join(workDir, "poster.jpg");
+  const ffmpeg = process.env.FFMPEG_PATH || packagedFfmpeg.path || "ffmpeg";
+  const run = (seekSeconds: number) =>
+    execFileAsync(
+      ffmpeg,
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        ...(seekSeconds > 0 ? ["-ss", seekSeconds.toFixed(2)] : []),
+        "-i",
+        sourcePath,
+        "-frames:v",
+        "1",
+        "-vf",
+        "scale='min(640,iw)':-2",
+        "-q:v",
+        "4",
+        outputPath,
+      ],
+      { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 },
+    );
+  try {
+    await fsp.writeFile(sourcePath, Buffer.from(sourceBytes));
+    for (const seek of [1, 0]) {
+      try {
+        await run(seek);
+        const bytes = await fsp.readFile(outputPath).catch(() => Buffer.alloc(0));
+        if (bytes.length) return bytes;
+      } catch {
+        /* try the next seek position */
+      }
+    }
+    return undefined;
+  } catch (error) {
+    log("generation_poster_failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  } finally {
+    await fsp.rm(workDir, { recursive: true, force: true });
+  }
+}
+
+async function storeGenerationPoster(
+  uid: string,
+  generationId: string,
+  poster: Buffer,
+) {
+  const objectPath = `users/${uid}/outputs/${generationId}.thumb.jpg`;
+  if (!localAuth) {
+    adminApp();
+    await getStorage()
+      .bucket()
+      .file(objectPath)
+      .save(poster, {
+        resumable: false,
+        contentType: "image/jpeg",
+        metadata: { cacheControl: "private,max-age=31536000,immutable" },
+      });
+  }
+  return objectPath;
+}
+
 function idempotencyDocumentId(uid: string, key: string) {
   return createHash("sha256").update(`${uid}\0${key}`).digest("hex");
 }
@@ -2456,6 +2539,28 @@ async function completeGenerationFromRuntime(
         },
       });
   }
+  const isVideoOut = !out.contentType.startsWith("image/");
+  let outputThumbnailPath: string | undefined;
+  let outputThumbnailBytes: Buffer | undefined;
+  if (isVideoOut) {
+    const poster = await createVideoPoster(out.bytes);
+    if (poster) {
+      try {
+        outputThumbnailPath = await storeGenerationPoster(
+          generation.uid,
+          generation.id,
+          poster,
+        );
+        if (localAuth) outputThumbnailBytes = poster;
+      } catch (error) {
+        log("generation_poster_store_failed", {
+          generationId: generation.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        outputThumbnailPath = undefined;
+      }
+    }
+  }
   const completed: StoredGeneration = {
     ...generation,
     status: "completed",
@@ -2469,11 +2574,16 @@ async function completeGenerationFromRuntime(
     ...(qualityAssessment ? { qualityAssessment } : {}),
     output: {
       downloadUrl: `/api/v1/generations/${generation.id}/download`,
+      ...(outputThumbnailPath
+        ? { thumbnailUrl: `/api/v1/generations/${generation.id}/thumbnail` }
+        : {}),
       durationSeconds: out.durationSeconds,
       contentType: out.contentType,
       kind: out.contentType.startsWith("image/") ? "frame" : "video",
     },
     ...(localAuth ? { outputBytes: out.bytes } : {}),
+    ...(outputThumbnailPath ? { outputThumbnailPath } : {}),
+    ...(outputThumbnailBytes ? { outputThumbnailBytes } : {}),
     outputObjectPath,
     outputContentType: out.contentType,
     outputSha256,
@@ -6949,6 +7059,82 @@ app.get(
   } catch (e) {
     next(e);
   }
+  },
+);
+app.get(
+  "/v1/generations/:id/thumbnail",
+  auth,
+  distributedRateLimit({ name: "generation-thumbnail", limit: 300 }),
+  async (req, res, next) => {
+    try {
+      const id = String(req.params.id ?? "");
+      const g = await findGeneration(id);
+      if (!g || g.uid !== res.locals.principal.uid)
+        throw problem(404, "not_found", "Generation not found");
+
+      const sendPoster = (bytes: Buffer) =>
+        res
+          .type("image/jpeg")
+          .setHeader(
+            "Cache-Control",
+            "private,max-age=31536000,immutable",
+          )
+          .setHeader("Content-Length", bytes.length)
+          .send(bytes);
+
+      if (g.outputThumbnailBytes)
+        return sendPoster(Buffer.from(g.outputThumbnailBytes));
+
+      if (g.outputThumbnailPath) {
+        adminApp();
+        const file = getStorage().bucket().file(g.outputThumbnailPath);
+        const [exists] = await file.exists();
+        if (exists) {
+          res
+            .type("image/jpeg")
+            .setHeader("Cache-Control", "private,max-age=31536000,immutable");
+          return file.createReadStream().on("error", next).pipe(res);
+        }
+      }
+
+      // Backfill: older completed videos have no stored poster yet. Build one
+      // now from the stored output, cache it, and serve it.
+      const output = g.output;
+      if (g.status !== "completed" || !output || output.kind !== "video")
+        throw problem(
+          404,
+          "thumbnail_not_available",
+          "No thumbnail is available for this generation",
+        );
+      const sourceBytes = await readGenerationOutputBytes(g);
+      const poster = await createVideoPoster(sourceBytes);
+      if (!poster)
+        throw problem(
+          404,
+          "thumbnail_not_available",
+          "A thumbnail could not be generated for this generation",
+        );
+      try {
+        const objectPath = await storeGenerationPoster(g.uid, g.id, poster);
+        await persistTerminalGeneration({
+          ...g,
+          output: {
+            ...output,
+            thumbnailUrl: `/api/v1/generations/${g.id}/thumbnail`,
+          },
+          outputThumbnailPath: objectPath,
+          ...(localAuth ? { outputThumbnailBytes: poster } : {}),
+        });
+      } catch (error) {
+        log("generation_poster_backfill_persist_failed", {
+          generationId: g.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return sendPoster(poster);
+    } catch (e) {
+      next(e);
+    }
   },
 );
 app.post("/v1/generations/:id/edits", auth, async (req, res, next) => {

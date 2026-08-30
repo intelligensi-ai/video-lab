@@ -2372,6 +2372,27 @@ body:not(:has(.home)) .site-nav a.active,
 body:not(:has(.home)) .site-logout:hover {
   color: #008f83;
 }
+/* Admin entry point, moved out of the bottom dock to the top-left */
+.site-admin-link {
+  margin-right: auto;
+  align-self: center;
+  border: 1px solid #159d9155;
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  background: #ffffffcc;
+  color: #0c8074 !important;
+  font-size: 0.64rem;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+.site-admin-link:hover,
+.site-admin-link.active {
+  border-color: #0c8074;
+  background: #0c8074 !important;
+  color: #fff !important;
+}
 body:not(:has(.home)) .site-avatar {
   border-color: #159d9188;
   color: #333;
@@ -2450,9 +2471,9 @@ body:not(:has(.home)) .thumb {
   max-width: 1380px;
   padding-top: clamp(1.25rem, 3vw, 2.75rem) !important;
 }
-/* The gallery carries its own VideoLab.gallery wordmark, so the global top
-   bar is empty here — drop it and let the page rise into that space. */
-body:has(.gallery-page) .site-nav.logged-in {
+/* The gallery carries its own VideoLab.gallery wordmark, so when the global
+   top bar has nothing in it (non-admins) drop it and let the page rise. */
+body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
   display: none;
 }
 .gallery-toolbar {
