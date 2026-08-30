@@ -4050,7 +4050,7 @@ function SceneCard({
               />
             </label>
           )}
-          {scene.staleReason && (
+          {!classic && scene.staleReason && (
             <p className="lf-stale-note" role="status">
               {scene.staleReason}
             </p>
@@ -5002,7 +5002,7 @@ function Preview({
         </div>
       )}
       {videoSettingsPanel}
-      {generation && (
+      {!minimal && generation && (
         <div
           className="lf-progress"
           data-help="Approximate runtime progress indicator."

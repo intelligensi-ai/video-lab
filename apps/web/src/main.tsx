@@ -19,10 +19,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { Generation, RuntimeStatus, Me } from "@video-lab/contracts";
-import {
-  VideoRetrievalMark,
-  useAuthenticatedVideo,
-} from "./AuthenticatedVideo.js";
+import { VideoRetrievalMark } from "./AuthenticatedVideo.js";
 import {
   completeGoogleRedirectSignIn,
   getApiToken,
@@ -1117,7 +1114,7 @@ function Gallery() {
     mutationFn: (id: string) =>
       api<void>(`/v1/generations/${id}`, { method: "DELETE" }),
     onSuccess: (_result, id) => {
-      localStorage.removeItem(`vl_thumbnail_${id}`);
+      forgetPoster(id);
       queryClient.setQueryData<{ items: Generation[] }>(
         ["gallery"],
         (current) => ({
@@ -1214,6 +1211,30 @@ function GalleryCard({
   const [expanded, setExpanded] = useState(false);
   const promptNeedsToggle = generation.prompt.length > 190;
   const liked = generation.liked === true;
+  // Defer thumbnail generation (a full authenticated video download) until the
+  // card is near the viewport, so a large gallery doesn't fetch every clip up
+  // front. Cards with a cached poster still render it immediately.
+  const cardRef = useRef<HTMLElement>(null);
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    if (inView) return;
+    const el = cardRef.current;
+    if (!el || typeof window.IntersectionObserver === "undefined") {
+      setInView(true);
+      return;
+    }
+    const observer = new window.IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setInView(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "600px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [inView]);
   const requestDelete = () => {
     const confirmed = window.confirm(
       "Delete this video from your gallery and Firebase Storage?",
@@ -1221,10 +1242,11 @@ function GalleryCard({
     if (confirmed) onDelete(generation.id);
   };
   return (
-    <article className="card gallery-card">
+    <article className="card gallery-card" ref={cardRef}>
       <GalleryArtifact
         generation={generation}
         onOpen={() => onOpenEditor(generation)}
+        generate={inView}
       />
       <button
         className={liked ? "gallery-like liked" : "gallery-like"}
@@ -1281,16 +1303,229 @@ function GalleryCard({
     </article>
   );
 }
+// ---------------------------------------------------------------------------
+// Poster cache + throttled download scheduler
+//
+// Gallery / carousel / detail views can each want dozens of clips at once.
+// The authenticated download endpoint is rate limited (and shared across all
+// users), so blasting it produced "too many requests" failures. This layer:
+//   * caches generated posters in localStorage (LRU-trimmed on quota) and an
+//     in-memory map, so a poster is fetched at most once per device;
+//   * funnels every poster/media fetch through a small concurrency-limited
+//     queue with request de-duplication;
+//   * backs off and retries on 429/503 instead of surfacing an error.
+// ---------------------------------------------------------------------------
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
+const DOWNLOAD_PATH_RE =
+  /^\/v1\/generations\/[^/]+(?:\/edits\/[^/]+)?\/download$/;
+const POSTER_PREFIX = "vl_thumbnail_";
+const POSTER_ORDER_KEY = "vl_thumbnail_order";
+const posterMemo = new Map<string, string>();
+
+function readPoster(id: string): string {
+  if (!id) return "";
+  const cached = posterMemo.get(id);
+  if (cached !== undefined) return cached;
+  let value = "";
+  try {
+    value = localStorage.getItem(POSTER_PREFIX + id) ?? "";
+  } catch {
+    /* storage unavailable (private mode etc.) */
+  }
+  posterMemo.set(id, value);
+  return value;
+}
+
+function posterOrder(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(POSTER_ORDER_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePoster(id: string, dataUrl: string) {
+  if (!id) return;
+  posterMemo.set(id, dataUrl);
+  let order = posterOrder().filter((entry) => entry !== id);
+  order.push(id);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      localStorage.setItem(POSTER_PREFIX + id, dataUrl);
+      localStorage.setItem(POSTER_ORDER_KEY, JSON.stringify(order));
+      return;
+    } catch {
+      // Quota exceeded — evict the least-recently-written posters and retry.
+      const victim = order.shift();
+      if (!victim) return;
+      try {
+        localStorage.removeItem(POSTER_PREFIX + victim);
+      } catch {
+        return;
+      }
+      posterMemo.delete(victim);
+    }
+  }
+}
+
+function forgetPoster(id: string) {
+  if (!id) return;
+  posterMemo.delete(id);
+  try {
+    localStorage.removeItem(POSTER_PREFIX + id);
+    const order = posterOrder().filter((entry) => entry !== id);
+    localStorage.setItem(POSTER_ORDER_KEY, JSON.stringify(order));
+  } catch {
+    /* ignore */
+  }
+}
+
+const DOWNLOAD_CONCURRENCY = 2;
+const DOWNLOAD_GAP_MS = 120;
+const DOWNLOAD_MAX_ATTEMPTS = 5;
+let activeDownloads = 0;
+const downloadQueue: Array<() => void> = [];
+const downloadInflight = new Map<string, Promise<Blob>>();
+const downloadFailedAt = new Map<string, number>();
+
+function pumpDownloadQueue() {
+  while (activeDownloads < DOWNLOAD_CONCURRENCY && downloadQueue.length) {
+    const run = downloadQueue.shift();
+    if (!run) return;
+    activeDownloads += 1;
+    run();
+  }
+}
+
+async function runDownload(downloadUrl: string): Promise<Blob> {
+  const path = downloadUrl.startsWith("/api/")
+    ? downloadUrl.slice(4)
+    : downloadUrl;
+  if (!DOWNLOAD_PATH_RE.test(path)) {
+    throw new Error("The generation output address is not a Video Lab address.");
+  }
+  let delay = 1200;
+  for (let attempt = 1; ; attempt += 1) {
+    const token = await getApiToken();
+    const response = await fetch(`${API_BASE}${path}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (response.ok) {
+      const blob = await response.blob();
+      const contentType = response.headers.get("content-type") ?? "";
+      return blob.type || !contentType
+        ? blob
+        : new Blob([blob], { type: contentType });
+    }
+    const retryable =
+      response.status === 429 ||
+      response.status === 503 ||
+      response.status === 502;
+    if (!retryable || attempt >= DOWNLOAD_MAX_ATTEMPTS) {
+      const body = (await response.json().catch(() => ({}))) as {
+        detail?: string;
+        title?: string;
+      };
+      throw new Error(
+        body.detail ?? body.title ?? `Download failed (${response.status}).`,
+      );
+    }
+    const retryAfter = Number(response.headers.get("retry-after"));
+    const wait =
+      Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : delay;
+    await new Promise((resolve) =>
+      setTimeout(resolve, wait + Math.random() * 400),
+    );
+    delay = Math.min(delay * 2, 15000);
+  }
+}
+
+function scheduleDownload(downloadUrl: string): Promise<Blob> {
+  const existing = downloadInflight.get(downloadUrl);
+  if (existing) return existing;
+  const failedAt = downloadFailedAt.get(downloadUrl);
+  if (failedAt && Date.now() - failedAt < 60000) {
+    return Promise.reject(new Error("This clip could not be retrieved."));
+  }
+  const promise = new Promise<Blob>((resolve, reject) => {
+    downloadQueue.push(() => {
+      runDownload(downloadUrl)
+        .then(
+          (blob) => {
+            downloadFailedAt.delete(downloadUrl);
+            resolve(blob);
+          },
+          (error) => {
+            downloadFailedAt.set(downloadUrl, Date.now());
+            reject(error);
+          },
+        )
+        .finally(() => {
+          activeDownloads -= 1;
+          downloadInflight.delete(downloadUrl);
+          setTimeout(pumpDownloadQueue, DOWNLOAD_GAP_MS);
+        });
+    });
+    pumpDownloadQueue();
+  });
+  downloadInflight.set(downloadUrl, promise);
+  return promise;
+}
+
+// Object URL for an authenticated download, routed through the shared queue.
+function useScheduledBlobUrl(downloadUrl: string | undefined) {
+  const [objectUrl, setObjectUrl] = useState<string>();
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    if (!downloadUrl) {
+      setObjectUrl(undefined);
+      setError(undefined);
+      return;
+    }
+    let active = true;
+    let created: string | undefined;
+    setError(undefined);
+    scheduleDownload(downloadUrl)
+      .then((blob) => {
+        if (!active) return;
+        created = URL.createObjectURL(blob);
+        setObjectUrl(created);
+      })
+      .catch((cause: unknown) => {
+        if (!active) return;
+        setError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => {
+      active = false;
+      if (created) URL.revokeObjectURL(created);
+    };
+  }, [downloadUrl]);
+  return { objectUrl, error };
+}
+
 // Best-effort video thumbnail: samples several frame positions from the
 // authenticated video and caches the sharpest, best-exposed one to
 // localStorage under `vl_thumbnail_${id}`, shared across the gallery cards,
 // the detail page hero and the detail page's bottom carousel.
-function useVideoThumbnail(generation: Generation | undefined) {
+function useVideoThumbnail(
+  generation: Generation | undefined,
+  { generate = true }: { generate?: boolean } = {},
+) {
   const isVideo = isVideoOutput(generation);
-  const media = useAuthenticatedVideo(generation?.output?.downloadUrl);
-  const storageKey = generation ? `vl_thumbnail_${generation.id}` : "";
-  const [thumbnail, setThumbnail] = useState(
-    () => (storageKey ? localStorage.getItem(storageKey) : "") ?? "",
+  const isFrame = isFrameOutput(generation);
+  const generationId = generation?.id ?? "";
+  const [thumbnail, setThumbnail] = useState(() => readPoster(generationId));
+  useEffect(() => {
+    setThumbnail(readPoster(generationId));
+  }, [generationId]);
+  // Only pull the (full) authenticated media when we actually need bytes:
+  // a frame image to display, or a video with no cached poster to sample.
+  // Otherwise every gallery card / carousel item would re-download whole
+  // MP4s on each visit just to (re)build a thumbnail that is already cached.
+  const needsMedia = isFrame || (isVideo && !thumbnail && generate);
+  const media = useScheduledBlobUrl(
+    needsMedia ? generation?.output?.downloadUrl : undefined,
   );
 
   useEffect(() => {
@@ -1312,11 +1547,7 @@ function useVideoThumbnail(generation: Generation | undefined) {
 
     const finish = () => {
       if (cancelled || !best) return;
-      try {
-        localStorage.setItem(storageKey, best.image);
-      } catch {
-        /* Thumbnail cache is optional. */
-      }
+      writePoster(generationId, best.image);
       setThumbnail(best.image);
     };
     const sample = () => {
@@ -1382,7 +1613,7 @@ function useVideoThumbnail(generation: Generation | undefined) {
       source.removeAttribute("src");
       source.load();
     };
-  }, [isVideo, storageKey, thumbnail, media.objectUrl]);
+  }, [isVideo, generationId, thumbnail, media.objectUrl]);
 
   return { thumbnail, media };
 }
@@ -1390,13 +1621,15 @@ function useVideoThumbnail(generation: Generation | undefined) {
 function GalleryArtifact({
   generation,
   onOpen,
+  generate = true,
 }: {
   generation: Generation;
   onOpen: () => void;
+  generate?: boolean;
 }) {
   const isVideo = isVideoOutput(generation);
   const isFrame = isFrameOutput(generation);
-  const { thumbnail, media } = useVideoThumbnail(generation);
+  const { thumbnail, media } = useVideoThumbnail(generation, { generate });
 
   if (isFrame && media.objectUrl) {
     return (
@@ -1459,13 +1692,10 @@ function GalleryArtifact({
       </div>
     );
   }
-  if (media.error) {
-    return (
-      <div className="thumb error gallery-media">
-        Output unavailable: {media.error}
-      </div>
-    );
-  }
+  // A failed poster fetch (rate limiting, transient) shouldn't shout at the
+  // user from a grid tile — fall back to the neutral placeholder; the poster
+  // will be retried on a later visit and the clip still opens on its detail
+  // page.
   return (
     <Link
       className="thumb gallery-media"
@@ -1488,7 +1718,7 @@ function GalleryVideoEditor({
   generation: Generation;
   onClose: () => void;
 }) {
-  const video = useAuthenticatedVideo(generation.output?.downloadUrl);
+  const video = useScheduledBlobUrl(generation.output?.downloadUrl);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [duration, setDuration] = useState(0);
   const [trimStart, setTrimStart] = useState(0);
@@ -1781,7 +2011,7 @@ function Detail() {
   const deletion = useMutation({
     mutationFn: () => api<void>(`/v1/generations/${id}`, { method: "DELETE" }),
     onSuccess: () => {
-      if (id) localStorage.removeItem(`vl_thumbnail_${id}`);
+      if (id) forgetPoster(id);
       void queryClient.invalidateQueries({ queryKey: ["gallery"] });
       navigate("/gallery", { replace: true });
     },
@@ -1804,10 +2034,10 @@ function Detail() {
     if (confirmed) deletion.mutate();
   };
   const g = q.data;
-  const media = useAuthenticatedVideo(g?.output?.downloadUrl);
+  const media = useScheduledBlobUrl(g?.output?.downloadUrl);
   const isVideo = isVideoOutput(g);
   const isFrame = isFrameOutput(g);
-  const thumbnail = g ? localStorage.getItem(`vl_thumbnail_${g.id}`) : null;
+  const thumbnail = g ? readPoster(g.id) : "";
   const statusLabel = g?.status.replace("_", " ") ?? "";
   const createdLabel = g
     ? new Date(g.createdAt).toLocaleString(undefined, {
@@ -2122,7 +2352,10 @@ function DetailCarouselItem({
   active: boolean;
 }) {
   const isFrame = isFrameOutput(item);
-  const { thumbnail, media } = useVideoThumbnail(item);
+  // Cache-only: the carousel can list the whole gallery, so it must never
+  // trigger full-video downloads. Posters that the gallery already cached
+  // will show; anything else falls back to the status chip.
+  const { thumbnail, media } = useVideoThumbnail(item, { generate: false });
   const image = isFrame ? media.objectUrl : thumbnail;
   return (
     <Link
