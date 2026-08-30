@@ -2034,13 +2034,21 @@ export default function LongFormStoryboardStudio({
                     onGenerateFrame={(edge) =>
                       void regenerateFrame(index, edge)
                     }
-                    onRegeneratePrompt={() =>
-                      enhancement.mutate({
-                        apply: "shot",
-                        targetShotNumber: index + 1,
-                      })
+                    onRegeneratePrompt={
+                      isClassic
+                        ? () => classicBriefEnhancement.mutate()
+                        : () =>
+                            enhancement.mutate({
+                              apply: "shot",
+                              targetShotNumber: index + 1,
+                            })
                     }
-                    promptBusy={enhancement.isPending || directorRepair.isPending}
+                    promptBusy={
+                      !sessionReady ||
+                      enhancement.isPending ||
+                      directorRepair.isPending ||
+                      classicBriefEnhancement.isPending
+                    }
                     renderState={
                       sceneRenderStates[scene.id] ?? { status: "idle" }
                     }
@@ -2089,6 +2097,30 @@ export default function LongFormStoryboardStudio({
                     }
                   />
                 ))}
+                {isClassic && enhancementProgress && (
+                  <p
+                    className="lf-minimal-session-state"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {enhancementProgress}
+                  </p>
+                )}
+                {isClassic && classicBriefEnhancement.error && (
+                  <p className="lf-error" role="alert">
+                    {classicBriefEnhancement.error.message}
+                  </p>
+                )}
+                {isClassic && enhancement.error && (
+                  <p className="lf-error" role="alert">
+                    {enhancement.error.message}
+                  </p>
+                )}
+                {isClassic && directorRepair.error && (
+                  <p className="lf-error" role="alert">
+                    {directorRepair.error.message}
+                  </p>
+                )}
               </section>
           </>
         </div>
@@ -3715,7 +3747,7 @@ function SceneCard({
                   disabled={promptBusy}
                   onClick={onRegeneratePrompt}
                 >
-                  Regenerate scene
+                  {promptBusy ? "Working…" : "Regenerate scene"}
                 </button>
               )}
             </div>

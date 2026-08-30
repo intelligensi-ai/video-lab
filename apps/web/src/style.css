@@ -5141,7 +5141,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
   min-height: 125px;
 }
 .lf-scenes-panel .scene-prompt-field textarea {
-  min-height: 280px;
+  min-height: 295px;
   margin: 0;
   border-radius: 1rem;
   background: #fff;
@@ -6241,8 +6241,9 @@ body:not(:has(.home)) textarea:focus::placeholder {
   /* Create movie panel: top + bottom aligned to the black video preview panel */
   .lf-layout-minimal .lf-scenes-panel {
     margin-top: 3.2rem;
-    /* keep the panel roughly level with the black video preview window */
-    height: calc(min(28.2vw, 440px) + 28px);
+    /* roughly level with the black video preview window, plus a little
+       extra so the prompt field uses the space above the button */
+    height: calc(min(28.2vw, 440px) + 43px);
     display: flex;
     flex-direction: column;
   }
@@ -6261,6 +6262,30 @@ body:not(:has(.home)) textarea:focus::placeholder {
   .lf-layout-minimal .lf-scenes-panel .scene-prompt-field textarea {
     flex: 1 1 auto;
     min-height: 0;
+  }
+  /* When Advanced options is expanded the fields run past the video-aligned
+     height. Drop the fixed height, stop centring the layout, and give the
+     prompt a normal size so every field below stays reachable by scrolling. */
+  .lf-page:has(.lf-layout-minimal):has(.lf-advanced-options[open]) {
+    justify-content: flex-start;
+  }
+  .lf-layout-minimal .lf-scenes-panel:has(.lf-advanced-options[open]) {
+    height: auto;
+  }
+  .lf-layout-minimal
+    .lf-scenes-panel:has(.lf-advanced-options[open])
+    .scene-prompt-field,
+  .lf-layout-minimal
+    .lf-scenes-panel:has(.lf-advanced-options[open])
+    .scene-prompt-field
+    textarea {
+    flex: 0 0 auto;
+  }
+  .lf-layout-minimal
+    .lf-scenes-panel:has(.lf-advanced-options[open])
+    .scene-prompt-field
+    textarea {
+    min-height: 200px;
   }
 }
 .lf-minimal-director {
@@ -7824,6 +7849,17 @@ body:not(:has(.home)) textarea:focus::placeholder {
   .lf-layout-minimal .lf-stats {
     display: none;
   }
+  /* Mobile Creator: start hard against the top, edge-to-edge preview. */
+  body:has(.lf-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
+    display: none;
+  }
+  .lf-page {
+    padding-top: 0;
+    padding-inline: 1px;
+  }
+  .lf-layout-minimal .lf-screen.lf-screen-minimal {
+    margin-inline: 0;
+  }
   .lf-brand-lockup {
     align-items: flex-start;
     flex-direction: column;
@@ -7837,7 +7873,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
 }
 @media (max-width: 620px) {
   .lf-page {
-    padding: 0.9rem 0.75rem 5rem;
+    padding: 0 1px 5rem;
   }
   .lf-storyboard-title {
     font-size: 3.25rem;
