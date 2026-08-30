@@ -5140,8 +5140,11 @@ body:not(:has(.home)) textarea:focus::placeholder {
 .lf-scene .scene-prompt-field textarea {
   min-height: 125px;
 }
+.lf-scenes-panel .scene-prompt-field {
+  margin-bottom: 0;
+}
 .lf-scenes-panel .scene-prompt-field textarea {
-  min-height: 295px;
+  min-height: 320px;
   margin: 0;
   border-radius: 1rem;
   background: #fff;
@@ -6241,9 +6244,9 @@ body:not(:has(.home)) textarea:focus::placeholder {
   /* Create movie panel: top + bottom aligned to the black video preview panel */
   .lf-layout-minimal .lf-scenes-panel {
     margin-top: 3.2rem;
-    /* roughly level with the black video preview window, plus a little
-       extra so the prompt field uses the space above the button */
-    height: calc(min(28.2vw, 440px) + 43px);
+    /* roughly level with the black video preview window, plus extra so the
+       prompt field fills the space above the button */
+    height: calc(min(28.2vw, 440px) + 62px);
     display: flex;
     flex-direction: column;
   }
@@ -6922,8 +6925,8 @@ body:not(:has(.home)) textarea:focus::placeholder {
 }
 /* Generate button relocated directly under the Creator video-prompt field */
 .lf-generate-inline {
-  padding: 0.4rem 0 0.15rem;
-  margin-top: 0.55rem;
+  padding: 0 0 0.15rem;
+  margin-top: 0.15rem;
 }
 .lf-generate-inline > button {
   max-width: none;
