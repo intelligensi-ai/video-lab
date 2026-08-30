@@ -649,11 +649,14 @@ body:has(.admin-page) .site-nav.logged-in .site-nav-inner {
   display: flex;
   flex-direction: column;
   align-items: center;
+  /* equal-width items so the centre link sits dead-centre under the logo */
+  min-width: 5.75rem;
   color: #eafff9;
   font-size: 0.72rem;
   font-weight: 900;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  text-align: center;
   text-decoration: none;
   opacity: 0.92;
   text-shadow: 0 1px 5px #04413b4d;
@@ -665,7 +668,7 @@ body:has(.admin-page) .site-nav.logged-in .site-nav-inner {
   content: "";
   width: 8px;
   height: 8px;
-  margin-bottom: 9px;
+  margin-bottom: 12px;
   border-radius: 50%;
   background: #b6f7ee;
   box-shadow:
@@ -715,7 +718,8 @@ body:has(.admin-page) .site-nav.logged-in .site-nav-inner {
 body:has(.site-dock) .lf-page,
 body:has(.site-dock) .gallery-page,
 body:has(.site-dock) .account-page,
-body:has(.site-dock) .admin-page {
+body:has(.site-dock) .admin-page,
+body:has(.site-dock) .generation-detail-page {
   padding-bottom: 200px;
 }
 .lf-page {
@@ -2419,13 +2423,14 @@ body:not(:has(.home)) select {
 }
 body:not(:has(.home)) .button,
 body:not(:has(.home)) button {
-  border-color: #1112;
-  background: #111;
+  border: 0;
+  background: linear-gradient(110deg, #0a8d82, #20c6b5 60%, #64e0d4);
   color: #fff;
 }
 body:not(:has(.home)) .button:hover,
 body:not(:has(.home)) button:hover {
-  background: #07998d;
+  background: linear-gradient(110deg, #0a8d82, #20c6b5 55%, #64e0d4);
+  filter: brightness(1.05);
 }
 body:not(:has(.home)) .badge {
   background: #1ab3a5;
@@ -2443,7 +2448,12 @@ body:not(:has(.home)) .thumb {
 }
 .gallery-page {
   max-width: 1380px;
-  padding-top: clamp(1rem, 2vw, 1.8rem) !important;
+  padding-top: clamp(1.25rem, 3vw, 2.75rem) !important;
+}
+/* The gallery carries its own VideoLab.gallery wordmark, so the global top
+   bar is empty here — drop it and let the page rise into that space. */
+body:has(.gallery-page) .site-nav.logged-in {
+  display: none;
 }
 .gallery-toolbar {
   display: flex;
@@ -2470,19 +2480,30 @@ body:not(:has(.home)) .thumb {
   letter-spacing: -0.035em;
   line-height: 1;
 }
+.gallery-toolbar h1.gallery-wordmark {
+  color: #11a99b;
+  font-size: clamp(calc(1.7rem + 5px), calc(2.6vw + 5px), calc(2.65rem + 5px));
+  letter-spacing: -0.045em;
+}
 .gallery-create-link {
   flex: 0 0 auto;
-  border: 1px solid #1112;
+  border: 0;
   border-radius: 999px;
-  background: #101413;
-  color: #fff !important;
-  padding: 0.72rem 1rem;
+  background: linear-gradient(110deg, #0a8d82, #20c6b5 60%, #64e0d4);
+  color: #031714 !important;
+  padding: 0.72rem 1.15rem;
   font-size: 0.74rem;
-  font-weight: 850;
+  font-weight: 900;
   text-decoration: none;
+  box-shadow: 0 10px 26px #078b7e35;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .gallery-create-link:hover {
-  background: #087f76;
+  background: linear-gradient(110deg, #0a8d82, #20c6b5 60%, #64e0d4);
+  transform: translateY(-2px);
+  box-shadow: 0 14px 32px #078b7e50;
 }
 .gallery-empty {
   grid-column: 1 / -1;
@@ -2982,7 +3003,7 @@ body:not(:has(.home)) .thumb {
 .generation-detail-page {
   width: min(1380px, calc(100% - 2rem));
   margin: 0 auto;
-  padding: clamp(1rem, 2.5vw, 2rem) 0 calc(clamp(2rem, 5vw, 4rem) + 6.5rem);
+  padding: clamp(1rem, 2.5vw, 2rem) 0 clamp(2rem, 5vw, 4rem);
 }
 .generation-detail-hero {
   display: grid;
@@ -3334,16 +3355,13 @@ body:not(:has(.home)) .error-panel {
   }
 }
 .detail-carousel {
-  position: fixed;
-  top: auto;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 50;
-  border-top: 1px solid #1112;
-  background: #fbfbf8ee;
-  backdrop-filter: blur(14px);
-  box-shadow: 0 -18px 40px #173e3718;
+  position: relative;
+  overflow: hidden;
+  margin-bottom: clamp(1.1rem, 2.4vw, 1.9rem);
+  border: 1px solid #1112;
+  border-radius: 0.9rem;
+  background: #fbfbf8;
+  box-shadow: 0 14px 34px #173e3712;
 }
 .detail-carousel-track {
   display: flex;
@@ -4397,8 +4415,9 @@ body:has(.lf-page) .lf-page .lf-history {
   display: grid;
   gap: 0.7rem;
 }
-.account-security button {
-  background: #242827;
+.account-google-connect {
+  width: 100%;
+  margin-top: 1rem;
 }
 .account-registration-link {
   border: 1px solid #159d9133;
@@ -4485,8 +4504,10 @@ body:has(.lf-page) .lf-page .lf-history {
   justify-content: center;
   gap: 0.8rem;
   width: 100% !important;
-  margin-top: 0.5rem;
-  background: #111 !important;
+  margin-top: 0.9rem;
+  border: 0 !important;
+  background: linear-gradient(110deg, #0a8d82, #20c6b5 60%, #64e0d4) !important;
+  color: #fff !important;
   font-weight: 800;
 }
 .auth-google span {
@@ -4590,8 +4611,8 @@ body:has(.lf-page) .lf-page .lf-history {
   min-height: 50px;
   border: 0 !important;
   border-radius: 0.85rem !important;
-  background: linear-gradient(110deg, #0a8d82, #20c6b5) !important;
-  color: #041714 !important;
+  background: linear-gradient(110deg, #0a8d82, #20c6b5 60%, #64e0d4) !important;
+  color: #ffffff !important;
   font-weight: 900;
 }
 .auth-email-submit:hover:not(:disabled) {
@@ -5028,14 +5049,14 @@ body:not(:has(.home)) .prompt-suggestion-use {
   min-height: 32px !important;
   border: 0 !important;
   border-radius: 999px !important;
-  background: #111 !important;
+  background: linear-gradient(110deg, #0a8d82, #20c6b5 60%, #64e0d4) !important;
   color: #fff !important;
   padding: 0.45rem 0.7rem !important;
   font-size: 0.58rem !important;
   font-weight: 850 !important;
 }
 body:not(:has(.home)) .prompt-suggestion-use:hover {
-  background: #087f76 !important;
+  filter: brightness(1.05);
 }
 .lf-scene > header .prompt-suggestion-trigger,
 .lf-goal .prompt-suggestion-trigger {
@@ -5099,7 +5120,7 @@ body:not(:has(.home)) textarea:focus::placeholder {
   min-height: 125px;
 }
 .lf-scenes-panel .scene-prompt-field textarea {
-  min-height: 200px;
+  min-height: 280px;
   margin: 0;
   border-radius: 1rem;
   background: #fff;
@@ -6191,6 +6212,11 @@ body:not(:has(.home)) textarea:focus::placeholder {
     justify-content: center;
     min-height: calc(100vh - 4.5rem);
   }
+  /* nudge both columns down a touch */
+  .lf-layout-minimal .lf-controls,
+  .lf-layout-minimal .lf-preview-col {
+    margin-top: 15px;
+  }
   /* Create movie panel: top + bottom aligned to the black video preview panel */
   .lf-layout-minimal .lf-scenes-panel {
     margin-top: 3.2rem;
@@ -6498,6 +6524,9 @@ body:not(:has(.home)) textarea:focus::placeholder {
     box-shadow 0.15s ease,
     filter 0.15s ease;
 }
+.lf-outline.lf-regenerate-shot {
+  color: #ffffff !important;
+}
 .lf-outline.lf-polish-brief:hover:not(:disabled),
 .lf-outline.lf-regenerate-shot:hover:not(:disabled) {
   transform: translateY(-2px);
@@ -6566,6 +6595,32 @@ body:not(:has(.home)) textarea:focus::placeholder {
 .lf-scenes > .lf-section-head {
   margin-top: 0;
 }
+/* Light teal panel echoing the bottom-nav dome, dark green kept to the corner */
+.lf-scenes-panel {
+  background:
+    radial-gradient(
+      circle at 99% 115%,
+      #0a6c65 0%,
+      #147a70 24%,
+      transparent 44%
+    ),
+    radial-gradient(
+      circle at 18% 0%,
+      #45b3a6 0%,
+      #2f9c90 45%,
+      #2f9c90 80%,
+      #278a7f 100%
+    );
+  border-color: #2f9c9066;
+  box-shadow: 0 30px 78px -34px #0a6c6570;
+}
+.lf-scenes-panel .site-page-title,
+.lf-scenes-panel .site-page-title span {
+  color: #f2fffb;
+}
+.lf-scenes-panel .lf-section-brand-mark {
+  border-color: #ffffff55;
+}
 .lf-scenes-panel .lf-scene {
   background: #fff;
 }
@@ -6578,13 +6633,12 @@ body:not(:has(.home)) textarea:focus::placeholder {
 .lf-add {
   border: 0 !important;
   border-radius: 999px !important;
-  background: #111 !important;
+  background: linear-gradient(110deg, #0a8d82, #20c6b5 60%, #64e0d4) !important;
   color: #fff !important;
   padding: 0.65rem 1rem !important;
 }
 .lf-add:hover {
-  background: #159d91 !important;
-  color: #07110f !important;
+  filter: brightness(1.05);
 }
 .lf-scene {
   margin-bottom: 0.7rem;
@@ -6905,8 +6959,8 @@ body:not(:has(.home)) textarea:focus::placeholder {
 .lf-preview-shell .lf-settings-drawer {
   width: min(100%, 360px);
   margin: 0.5rem auto 0 !important;
-  border-color: #d7d7d3;
-  background: #e8e8e5;
+  border-color: #e0e0e2;
+  background: #f2f2f4;
   box-shadow: 0 20px 55px #17433d0f;
 }
 /* When open, the drawer lifts above the bottom nav dock (z-index: 40).
@@ -6997,8 +7051,10 @@ body:not(:has(.home)) textarea:focus::placeholder {
   z-index: 0;
   display: grid;
   place-items: center;
-  /* scales with the preview column / video panel, not the viewport */
-  width: 106%;
+  /* scales with the preview column / video panel, not the viewport.
+     Kept narrow so it frames rather than swamps the panel (esp. on mobile,
+     where the panel fills the column); see the >=981px rule below. */
+  width: 76%;
   aspect-ratio: 1;
   transform: translate(-50%, calc(-50% + 32px));
   pointer-events: none;
@@ -7730,11 +7786,19 @@ body:not(:has(.home)) textarea:focus::placeholder {
     grid-column: 1;
     grid-row: 1;
   }
+  /* Creator on mobile: preview on top, prompt panel below it.
+     position/z-index lifts the prompt panel above the preview dial, which
+     overflows its shell and would otherwise paint over this panel. */
   .lf-layout-minimal .lf-controls {
-    grid-row: 1;
+    position: relative;
+    z-index: 1;
+    grid-row: 2;
   }
   .lf-layout-minimal .lf-preview-col {
-    grid-row: 2;
+    grid-row: 1;
+  }
+  .lf-layout-minimal .lf-scenes-panel .scene-prompt-field textarea {
+    min-height: 140px;
   }
   .lf-layout-minimal .lf-stats {
     display: none;

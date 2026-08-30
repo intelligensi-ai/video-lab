@@ -3620,6 +3620,7 @@ function SceneCard({
   };
   return (
     <article className={expanded ? "lf-scene" : "lf-scene collapsed"}>
+      {!classic && (
       <header>
         <button
           type="button"
@@ -3687,6 +3688,7 @@ function SceneCard({
           </button>
         )}
       </header>
+      )}
       {expanded ? (
         <>
           <div

@@ -457,10 +457,9 @@ function Shell() {
       : []),
   ];
   const pageTitle =
-    (location.pathname === "/creator"
+    location.pathname === "/creator" || location.pathname === "/gallery"
       ? ""
-      : navItems.find((item) => location.pathname === item.to)?.label) ??
-    (location.pathname.startsWith("/generations/") ? "Details" : "");
+      : (navItems.find((item) => location.pathname === item.to)?.label ?? "");
   const pageTitleHasStop = pageTitle.includes(".");
 
   return (
@@ -1157,7 +1156,7 @@ function Gallery() {
       <header className="gallery-toolbar">
         <div>
           <span className="gallery-eyebrow">Private video library</span>
-          <h1>Recent generations</h1>
+          <h1 className="site-page-title gallery-wordmark">VideoLab.gallery</h1>
         </div>
         <Link className="gallery-create-link" to="/creator">
           Create new video
@@ -1827,6 +1826,7 @@ function Detail() {
     <main className="generation-detail-page">
       {g && (
         <>
+          <DetailCarousel currentId={g.id} />
           <header className="generation-detail-hero">
             <div>
               <span className="gallery-eyebrow">Generation details</span>
@@ -2038,7 +2038,6 @@ function Detail() {
               onClose={() => setEditorOpen(false)}
             />
           )}
-          <DetailCarousel currentId={g.id} />
         </>
       )}
     </main>
@@ -2525,6 +2524,7 @@ function Account() {
             </header>
             {!hasGoogleAccount && (
               <button
+                className="account-google-connect"
                 disabled={authBusy}
                 onClick={async () => {
                   setAuthBusy(true);
