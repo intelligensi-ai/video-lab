@@ -4983,7 +4983,7 @@ function Preview({
             : "Your generated film will appear here"}
         </p>
       )}
-      {generation && (
+      {!minimal && generation && (
         <div className="lf-stats lf-stats-reveal">
           <span data-help="Shows whether the selected film is waiting, rendering or complete.">
             <b>⌁ Status</b>

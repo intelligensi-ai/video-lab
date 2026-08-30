@@ -539,7 +539,7 @@ body:has(.admin-page) .site-nav.logged-in .site-nav-inner {
 .site-dock-brand {
   position: absolute;
   left: 50%;
-  top: 30px;
+  top: 17px;
   z-index: 3;
   display: grid;
   place-items: center;
