@@ -417,6 +417,21 @@ function publicGeneration(g: StoredGeneration): Generation {
     delete generation.runtimeProgress;
     generation.queuePosition = 0;
   }
+  // Advertise the poster endpoint for every completed video, even ones that
+  // predate server-side poster generation — the endpoint backfills on first
+  // request, so clients never fall back to downloading the full MP4.
+  if (
+    generation.status === "completed" &&
+    generation.output &&
+    generation.output.kind === "video" &&
+    generation.output.downloadUrl &&
+    !generation.output.thumbnailUrl
+  ) {
+    generation.output = {
+      ...generation.output,
+      thumbnailUrl: `/api/v1/generations/${generation.id}/thumbnail`,
+    };
+  }
   return {
     ...generation,
     settings: stripEmbeddedMedia(generation.settings) as Generation["settings"],

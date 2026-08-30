@@ -1529,14 +1529,18 @@ function useVideoThumbnail(
   const generationId = generation?.id ?? "";
   const serverThumbnailUrl = generation?.output?.thumbnailUrl;
   const [thumbnail, setThumbnail] = useState(() => readPoster(generationId));
+  const [serverThumbnailFailed, setServerThumbnailFailed] = useState(false);
   useEffect(() => {
     setThumbnail(readPoster(generationId));
+    setServerThumbnailFailed(false);
   }, [generationId]);
 
-  // Preferred path: the API now ships a small server-rendered poster
-  // (`output.thumbnailUrl`, a ~20 KB JPEG). Fetch that through the shared
-  // queue, cache it as a data URL, and no MP4 ever reaches the client.
-  const wantsServerThumbnail = isVideo && !thumbnail && !!serverThumbnailUrl;
+  // Preferred path: the API ships a small server-rendered poster
+  // (`output.thumbnailUrl`, a ~20 KB JPEG; backfilled on first request for
+  // older videos). Fetch it through the shared queue, cache it as a data
+  // URL, and no MP4 ever reaches the client.
+  const wantsServerThumbnail =
+    isVideo && !thumbnail && !!serverThumbnailUrl && !serverThumbnailFailed;
   useEffect(() => {
     if (!wantsServerThumbnail || !serverThumbnailUrl) return;
     let active = true;
@@ -1548,18 +1552,23 @@ function useVideoThumbnail(
         setThumbnail(dataUrl);
       })
       .catch(() => {
-        /* fall back to client-side frame sampling below */
+        // Poster genuinely unavailable — allow the client-side sampling
+        // fallback below to take over for this generation.
+        if (active) setServerThumbnailFailed(true);
       });
     return () => {
       active = false;
     };
   }, [wantsServerThumbnail, serverThumbnailUrl, generationId]);
 
-  // Fallback: only pull the full video when there is no cached poster AND no
-  // server poster to lean on (older generations, or poster generation failed).
+  // Fallback: pull the full video only when there is no cached poster and no
+  // usable server poster (endpoint failed, or none advertised at all).
   const needsMedia =
     isFrame ||
-    (isVideo && !thumbnail && !serverThumbnailUrl && generate);
+    (isVideo &&
+      !thumbnail &&
+      generate &&
+      (!serverThumbnailUrl || serverThumbnailFailed));
   const media = useScheduledBlobUrl(
     needsMedia ? generation?.output?.downloadUrl : undefined,
   );
