@@ -3740,16 +3740,6 @@ function SceneCard({
                     : "Your direction"}
                 </small>
               )}
-              {classic && (
-                <button
-                  type="button"
-                  className="lf-outline lf-regenerate-shot"
-                  disabled={promptBusy}
-                  onClick={onRegeneratePrompt}
-                >
-                  {promptBusy ? "Working…" : "Regenerate scene"}
-                </button>
-              )}
             </div>
             <textarea
               aria-label={classic ? "Video prompt" : `Scene ${index + 1} direction`}
