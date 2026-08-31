@@ -2558,10 +2558,10 @@ function Registration() {
       <form className="registration-form" onSubmit={submit}>
         <section className="panel registration-identity">
           <span className="registration-step">01 · Your account</span>
-          <h2>Google profile</h2>
-          <div className="registration-google">
+          <h2>Your profile</h2>
+          <div className="registration-profile">
             {firebaseUser?.photoURL ? (
-              <img src={firebaseUser.photoURL} alt="Google profile" />
+              <img src={firebaseUser.photoURL} alt="Your profile" />
             ) : (
               <span>
                 {(firebaseUser?.displayName ?? firebaseUser?.email ?? "VL")
@@ -2572,14 +2572,10 @@ function Registration() {
             <div>
               <strong>{firebaseUser?.displayName ?? "Guest creator"}</strong>
               <small>
-                {firebaseUser?.email ?? "Connect Google from your Account page"}
+                {firebaseUser?.email ?? "Update your details from your Account page"}
               </small>
             </div>
           </div>
-          <p>
-            Your authentication details come from Google and remain managed by
-            Firebase Auth.
-          </p>
         </section>
 
         <section className="panel registration-demographics">

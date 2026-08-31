@@ -4791,7 +4791,7 @@ body:has(.lf-page) .lf-page .lf-history {
   margin: 0.3rem 0 1rem;
   color: #171717;
 }
-.registration-google {
+.registration-profile {
   display: flex;
   align-items: center;
   gap: 0.8rem;
@@ -4800,8 +4800,8 @@ body:has(.lf-page) .lf-page .lf-history {
   background: #e8efec;
   padding: 0.8rem;
 }
-.registration-google img,
-.registration-google > span {
+.registration-profile img,
+.registration-profile > span {
   display: grid;
   place-items: center;
   width: 52px;
@@ -4812,11 +4812,11 @@ body:has(.lf-page) .lf-page .lf-history {
   object-fit: cover;
   font-weight: 900;
 }
-.registration-google div {
+.registration-profile div {
   display: grid;
   gap: 0.2rem;
 }
-.registration-google small {
+.registration-profile small {
   color: #606663;
 }
 .registration-fields {
