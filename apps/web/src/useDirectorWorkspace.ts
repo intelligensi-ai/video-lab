@@ -438,16 +438,50 @@ export function useDirectorWorkspace() {
     }));
   }, []);
 
+  const ensureSavedProject = useCallback(async () => {
+    const owner =
+      ownerId ||
+      (isProductionFirebase ? (await getFirebaseUser()).uid : "demo-user");
+    const current = formRef.current;
+    if (projectId) {
+      await saveStoryboardSession(owner, projectId, projectTitleRef.current, current);
+      if (!ownerId) setOwnerId(owner);
+      return projectId;
+    }
+    setSaveState("saving");
+    const title = projectTitleRef.current.trim() || "Untitled film";
+    const serializable = JSON.parse(
+      JSON.stringify(current, (_key, value) =>
+        value instanceof File ? undefined : value,
+      ),
+    ) as Record<string, unknown>;
+    const created = await createStoryboardProject(title, serializable);
+    await saveStoryboardSession(owner, created.id, created.title, current);
+    setOwnerId(owner);
+    setProjects((items) =>
+      items.some((project) => project.id === created.id)
+        ? items
+        : [created, ...items],
+    );
+    setProjectId(created.id);
+    setProjectTitle(created.title);
+    setReady(true);
+    setSaveState("saved");
+    setNotice("Private project connected.");
+    return created.id;
+  }, [ownerId, projectId]);
+
   const regenerateFrame = useCallback(
     async (sceneId: string, edge: "start" | "end") => {
       const current = formRef.current;
       const scene = current.scenes.find((candidate) => candidate.id === sceneId);
-      if (!scene || !projectId) return;
+      if (!scene) return;
       const key = `${sceneId}:${edge}`;
       setFrameStates((states) => ({ ...states, [key]: { status: "queued" } }));
       setNotice(`The current ${edge === "start" ? "opening" : "closing"} frame will remain visible while its replacement runs.`);
       try {
-        const submitted = await generateStoryboardFrame(current, scene, edge, projectId);
+        const scopedProjectId = await ensureSavedProject();
+        const submitted = await generateStoryboardFrame(current, scene, edge, scopedProjectId);
         setActiveGeneration(submitted);
         setFrameStates((states) => ({ ...states, [key]: { status: "generating" } }));
         const completed = await waitForGeneration(submitted.id);
@@ -479,14 +513,14 @@ export function useDirectorWorkspace() {
         setNotice("The replacement failed. The previous successful frame is unchanged.");
       }
     },
-    [projectId, updateScene],
+    [ensureSavedProject, updateScene],
   );
 
   const renderCandidates = useCallback(
     async (sceneId: string, requestedCount?: number) => {
       const current = formRef.current;
       const scene = current.scenes.find((candidate) => candidate.id === sceneId);
-      if (!scene || !projectId) return;
+      if (!scene) return;
       const candidateCount = Math.min(
         4,
         Math.max(1, Math.round(Number.isFinite(requestedCount) ? Number(requestedCount) : current.candidateCount)),
@@ -494,12 +528,13 @@ export function useDirectorWorkspace() {
       setSceneStates((states) => ({ ...states, [sceneId]: { status: "queued" } }));
       const successful = [...(scene.candidateGenerationIds ?? [])].slice(-24);
       try {
+        const scopedProjectId = await ensureSavedProject();
         for (let index = 0; index < candidateCount; index += 1) {
           const variation = scene.candidateVariations?.[index];
           const candidateScene = variation
             ? { ...scene, prompt: `${scene.prompt}\n\nControlled draft variation: ${variation}` }
             : scene;
-          const submitted = await generateStoryboardScene(current, candidateScene, projectId);
+          const submitted = await generateStoryboardScene(current, candidateScene, scopedProjectId);
           setActiveGeneration(submitted);
           setSceneStates((states) => ({ ...states, [sceneId]: { status: "generating" } }));
           const completed = await waitForGeneration(submitted.id);
@@ -523,7 +558,7 @@ export function useDirectorWorkspace() {
         setNotice("A draft failed. Every successful candidate remains available.");
       }
     },
-    [projectId, updateScene],
+    [ensureSavedProject, updateScene],
   );
 
   const acceptCandidate = useCallback(
@@ -538,15 +573,15 @@ export function useDirectorWorkspace() {
   );
 
   const assemble = useCallback(async () => {
-    if (!projectId) return;
     try {
-      const submitted = await assembleStoryboardFilm(formRef.current, projectId);
+      const scopedProjectId = await ensureSavedProject();
+      const submitted = await assembleStoryboardFilm(formRef.current, scopedProjectId);
       setActiveGeneration(submitted);
       setNotice("Accepted clips entered the authenticated assembly queue.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Assembly could not start.");
     }
-  }, [projectId]);
+  }, [ensureSavedProject]);
 
   const cancelActive = useCallback(async () => {
     if (!activeGeneration || terminal(activeGeneration)) {
@@ -761,7 +796,7 @@ export function useDirectorWorkspace() {
   const sendDirection = useCallback(
     async (message: string, selectedSceneId?: string) => {
       const trimmed = message.trim();
-      if (!trimmed || !projectId || !ownerId) return;
+      if (!trimmed) return;
       const userMessage: DirectorMessage = {
         id: crypto.randomUUID(),
         from: "user",
@@ -771,9 +806,9 @@ export function useDirectorWorkspace() {
       setDirectorBusy(true);
       setNotice("The Director is preparing a bounded proposal. Nothing has changed yet.");
       try {
-        await saveStoryboardSession(ownerId, projectId, projectTitleRef.current, formRef.current);
+        const scopedProjectId = await ensureSavedProject();
         const proposal = await createDirectorProposal(
-          { projectId, message: trimmed, selectedSceneId },
+          { projectId: scopedProjectId, message: trimmed, selectedSceneId },
           {
             onProgress: (job) =>
               setNotice(storyboardAsyncProgressMessage(job)),
@@ -799,7 +834,7 @@ export function useDirectorWorkspace() {
         setDirectorBusy(false);
       }
     },
-    [ownerId, projectId],
+    [ensureSavedProject],
   );
 
   useEffect(() => {

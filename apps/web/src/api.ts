@@ -610,6 +610,9 @@ export interface StoryboardProjectReference {
   assetId?: string;
   assetVersionIds: string[];
   version: number;
+  // Creator-flow influence hint (0-1). Persisted with the project; the runtime
+  // reference-conditioning contract does not consume it yet.
+  strength?: number;
 }
 
 export interface LongFormGenerationPayload {
@@ -717,7 +720,7 @@ function effectiveOverallPrompt(payload: LongFormGenerationPayload): string {
 
 export async function generateLongFormVideo(
   payload: LongFormGenerationPayload,
-  projectId: string,
+  projectId?: string,
 ) {
   if (payload.scenes.length > MAX_STORYBOARD_SCENES) {
     throw new Error(

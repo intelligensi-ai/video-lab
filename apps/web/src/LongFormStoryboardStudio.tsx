@@ -765,13 +765,56 @@ export default function LongFormStoryboardStudio({
         : [selected, ...items].slice(0, 8),
     );
   };
+  const ensureSavedProjectForScopedAction = async () => {
+    const owner =
+      sessionOwner ||
+      (isProductionFirebase ? (await getFirebaseUser()).uid : "demo-user");
+    if (projectId) {
+      await saveStoryboardSession(owner, projectId, projectTitle, form);
+      if (!sessionOwner) setSessionOwner(owner);
+      return projectId;
+    }
+    setProjectBusy(true);
+    setProjectError("");
+    setSessionStatus("saving");
+    try {
+      const title = projectTitle.trim() || "Untitled film";
+      const serializable = JSON.parse(
+        JSON.stringify(form, (_key, value) =>
+          value instanceof File ? undefined : value,
+        ),
+      ) as Record<string, unknown>;
+      const created = await createStoryboardProject(title, serializable);
+      await saveStoryboardSession(owner, created.id, created.title, form);
+      setSessionOwner(owner);
+      setProjects((items) =>
+        items.some((project) => project.id === created.id)
+          ? items
+          : [created, ...items],
+      );
+      setProjectId(created.id);
+      setProjectTitle(created.title);
+      setSessionReady(true);
+      setSessionStatus("saved");
+      return created.id;
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "A saved project could not be prepared for this action.";
+      setProjectError(message);
+      setSessionStatus("error");
+      throw new Error(message, { cause: error });
+    } finally {
+      setProjectBusy(false);
+    }
+  };
   const mutation = useMutation({
     onMutate: preserveAcceptedGeneration,
     mutationFn: () => {
-      if (!projectId) throw new Error("Choose a project before rendering.");
       return generateLongFormVideo(
         generationPayloadForStudioVariant(form, isClassic),
-        projectId,
+        projectId || undefined,
       );
     },
     onSuccess: (generation) => {
@@ -781,9 +824,9 @@ export default function LongFormStoryboardStudio({
   });
   const assembly = useMutation({
     onMutate: preserveAcceptedGeneration,
-    mutationFn: () => {
-      if (!projectId) throw new Error("Choose a project before assembling.");
-      return assembleStoryboardFilm(form, projectId);
+    mutationFn: async () => {
+      const scopedProjectId = await ensureSavedProjectForScopedAction();
+      return assembleStoryboardFilm(form, scopedProjectId);
     },
     onSuccess: (generation) => {
       pinSelected(generation);
@@ -794,15 +837,12 @@ export default function LongFormStoryboardStudio({
     message: string,
     selectedSceneId?: string,
   ): Promise<DirectorProposalResult> => {
-    if (!projectId || !sessionOwner) {
-      throw new Error("Open a saved project before asking the Director.");
-    }
-    await saveStoryboardSession(sessionOwner, projectId, projectTitle, form);
+    const scopedProjectId = await ensureSavedProjectForScopedAction();
     const submitDirectorProposal = isClassic
       ? createCreatorDirectorProposal
       : createDirectorProposal;
     const proposal = await submitDirectorProposal(
-      { projectId, message, selectedSceneId },
+      { projectId: scopedProjectId, message, selectedSceneId },
       {
         onProgress: (job) =>
           setEnhancementProgress(storyboardAsyncProgressMessage(job)),
@@ -1172,13 +1212,12 @@ export default function LongFormStoryboardStudio({
       [stateKey]: { status: "queued" },
     }));
     try {
-      if (!projectId)
-        throw new Error("Choose a project before generating frames.");
+      const scopedProjectId = await ensureSavedProjectForScopedAction();
       const submitted = await generateStoryboardFrame(
         form,
         renderScene,
         edge,
-        projectId,
+        scopedProjectId,
       );
       setFrameStates((current) => ({
         ...current,
@@ -1244,12 +1283,12 @@ export default function LongFormStoryboardStudio({
   };
   const renderScene = async (index: number) => {
     const scene = form.scenes[index];
-    if (!projectId) return;
     setSceneRenderStates((current) => ({
       ...current,
       [scene.id]: { status: "queued" },
     }));
     try {
+      const scopedProjectId = await ensureSavedProjectForScopedAction();
       const successfulIds = [...(scene.candidateGenerationIds ?? [])].slice(
         -24,
       );
@@ -1269,7 +1308,7 @@ export default function LongFormStoryboardStudio({
         const submitted = await generateStoryboardScene(
           form,
           candidateScene,
-          projectId,
+          scopedProjectId,
         );
         pinSelected(submitted);
         setHistory((items) => [submitted, ...items].slice(0, 12));
@@ -1382,7 +1421,6 @@ export default function LongFormStoryboardStudio({
   );
   const canGenerateNow =
     sessionReady &&
-    Boolean(projectId) &&
     !invalid &&
     !mutation.isPending &&
     !enhancement.isPending &&
@@ -2009,6 +2047,25 @@ export default function LongFormStoryboardStudio({
                     }
                     generateAction={
                       isClassic && index === 0 ? generateVideoAction : undefined
+                    }
+                    creatorReferences={
+                      isClassic && index === 0
+                        ? form.projectReferences
+                        : undefined
+                    }
+                    creatorReferenceConditioningSupported={
+                      runtime.data?.capabilities?.referenceConditioning === true &&
+                      runtime.data?.capabilities?.featureStatus
+                        ?.referenceConditioning === "supported"
+                    }
+                    onCreatorReferencesChange={
+                      isClassic && index === 0
+                        ? (projectReferences) =>
+                            setForm((current) => ({
+                              ...current,
+                              projectReferences,
+                            }))
+                        : undefined
                     }
                     onChange={(patch) => updateScene(index, patch)}
                     onCreatorPromptChange={
@@ -3409,6 +3466,203 @@ function ProjectReferencePreview({
   );
 }
 
+// Whole-generation identity/style guides for the classic Creator. Each slot maps
+// onto one typed project reference (character -> character, scene -> location,
+// style -> style) that the API resolves and forwards as reference_conditioning.
+const CREATOR_REFERENCE_SLOTS = [
+  {
+    key: "character",
+    type: "character",
+    label: "Character reference",
+    hint: "Lock a face, wardrobe or identity across the film.",
+    defaultStrength: 0.65,
+  },
+  {
+    key: "scene",
+    type: "location",
+    label: "Scene reference",
+    hint: "Anchor the environment, set or location.",
+    defaultStrength: 0.6,
+  },
+  {
+    key: "style",
+    type: "style",
+    label: "Style reference",
+    hint: "Match a look, palette, film stock or grade.",
+    defaultStrength: 0.5,
+  },
+] as const satisfies ReadonlyArray<{
+  key: string;
+  type: StoryboardProjectReference["type"];
+  label: string;
+  hint: string;
+  defaultStrength: number;
+}>;
+
+type CreatorReferenceSlot = (typeof CREATOR_REFERENCE_SLOTS)[number];
+
+function creatorReferenceId(key: string) {
+  return `creator-reference-${key}`;
+}
+
+function CreatorReferenceSection({
+  references,
+  supported,
+  onChange,
+}: {
+  references: StoryboardProjectReference[];
+  supported: boolean;
+  onChange: (next: StoryboardProjectReference[]) => void;
+}) {
+  const [busySlot, setBusySlot] = useState("");
+  const [error, setError] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<Record<string, File>>({});
+  const attachedCount = CREATOR_REFERENCE_SLOTS.filter((slot) =>
+    references.some((reference) => reference.id === creatorReferenceId(slot.key)),
+  ).length;
+
+  const setSlotFile = async (slot: CreatorReferenceSlot, file?: File) => {
+    if (!file) return;
+    setBusySlot(slot.key);
+    setError("");
+    try {
+      const assetId = await storeUserAsset(file, "projectReference");
+      if (!assetId) throw new Error("The reference image could not be stored.");
+      setPendingFiles((current) => ({ ...current, [slot.key]: file }));
+      const id = creatorReferenceId(slot.key);
+      const existing = references.find((reference) => reference.id === id);
+      const next: StoryboardProjectReference = {
+        id,
+        type: slot.type,
+        label: slot.label,
+        description: existing?.description ?? "",
+        lockedTraits: existing?.lockedTraits ?? [],
+        sceneIds: [],
+        assetId,
+        assetVersionIds: [...(existing?.assetVersionIds ?? []), assetId].slice(
+          -24,
+        ),
+        version: (existing?.version ?? 0) + 1,
+        strength: existing?.strength ?? slot.defaultStrength,
+      };
+      onChange([
+        ...references.filter((reference) => reference.id !== id),
+        next,
+      ]);
+    } catch (uploadError) {
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "The reference image could not be added.",
+      );
+    } finally {
+      setBusySlot("");
+    }
+  };
+
+  const setSlotStrength = (slot: CreatorReferenceSlot, strength: number) => {
+    onChange(
+      references.map((reference) =>
+        reference.id === creatorReferenceId(slot.key)
+          ? { ...reference, strength }
+          : reference,
+      ),
+    );
+  };
+
+  const removeSlot = (slot: CreatorReferenceSlot) => {
+    setPendingFiles((current) => {
+      const next = { ...current };
+      delete next[slot.key];
+      return next;
+    });
+    onChange(
+      references.filter(
+        (reference) => reference.id !== creatorReferenceId(slot.key),
+      ),
+    );
+  };
+
+  return (
+    <details className="lf-frame-details lf-creator-reference-details">
+      <summary>Character, scene &amp; style references</summary>
+      <div className="lf-creator-reference-panel">
+        <p className="lf-capability-note">
+          {supported
+            ? "Private guides applied across the whole film. The connected runtime conditions generation on them alongside your first and last frames."
+            : "The connected runtime has not verified reference conditioning yet. This section unlocks once it reports support."}
+        </p>
+        {supported && (
+          <div className="lf-creator-reference-grid">
+            {CREATOR_REFERENCE_SLOTS.map((slot) => {
+              const reference = references.find(
+                (entry) => entry.id === creatorReferenceId(slot.key),
+              );
+              const strength = reference?.strength ?? slot.defaultStrength;
+              return (
+                <article
+                  key={slot.key}
+                  className={`lf-creator-reference-card ${reference ? "has-file" : ""}`}
+                >
+                  <div className="lf-creator-reference-head">
+                    <strong>{slot.label}</strong>
+                    <small>{slot.hint}</small>
+                  </div>
+                  {reference && !pendingFiles[slot.key] ? (
+                    <ProjectReferencePreview reference={reference} />
+                  ) : null}
+                  <UploadBox
+                    label={slot.label}
+                    file={pendingFiles[slot.key]}
+                    onFile={(file) => void setSlotFile(slot, file)}
+                  />
+                  <label className="lf-creator-reference-strength">
+                    <span>
+                      Influence <b>{strength.toFixed(2)}</b>
+                    </span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={strength}
+                      disabled={!reference || busySlot === slot.key}
+                      onChange={(event) =>
+                        setSlotStrength(slot, Number(event.target.value))
+                      }
+                    />
+                  </label>
+                  {reference && (
+                    <button
+                      type="button"
+                      className="lf-outline"
+                      disabled={busySlot === slot.key}
+                      onClick={() => removeSlot(slot)}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
+        {error && (
+          <p className="lf-error" role="alert">
+            {error}
+          </p>
+        )}
+        {supported && attachedCount > 0 && (
+          <small className="lf-creator-reference-foot">
+            {attachedCount} of {CREATOR_REFERENCE_SLOTS.length} references
+            attached · influence is saved with your project.
+          </small>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function _LongFormReferencePanel({
   references,
   onChange,
@@ -3570,6 +3824,9 @@ function SceneCard({
   onNegativePromptChange,
   previewGate,
   generateAction,
+  creatorReferences,
+  creatorReferenceConditioningSupported,
+  onCreatorReferencesChange,
 }: {
   scene: StoryboardScenePayload;
   creatorPrompt?: string;
@@ -3597,6 +3854,9 @@ function SceneCard({
   onNegativePromptChange?: (value: string) => void;
   previewGate?: React.ReactNode;
   generateAction?: React.ReactNode;
+  creatorReferences?: StoryboardProjectReference[];
+  creatorReferenceConditioningSupported?: boolean;
+  onCreatorReferencesChange?: (next: StoryboardProjectReference[]) => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState(index === 0);
@@ -3952,6 +4212,13 @@ function SceneCard({
             </div>
             {previewGate}
           </details>
+          {classic && onCreatorReferencesChange && (
+            <CreatorReferenceSection
+              references={creatorReferences ?? []}
+              supported={creatorReferenceConditioningSupported ?? false}
+              onChange={onCreatorReferencesChange}
+            />
+          )}
           {classic && (
             <details className="lf-frame-details lf-negative-details">
               <summary>Negative prompt</summary>

@@ -34,4 +34,13 @@ describe("creator entitlement policy", () => {
       } as NodeJS.ProcessEnv),
     ).toBe("staging_allowlist");
   });
+
+  it("can allow any authenticated production user during open access", () => {
+    expect(
+      creatorEntitlementMode({
+        NODE_ENV: "production",
+        VIDEO_LAB_ENTITLEMENT_MODE: "authenticated",
+      } as NodeJS.ProcessEnv),
+    ).toBe("authenticated");
+  });
 });

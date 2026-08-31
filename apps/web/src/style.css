@@ -2675,6 +2675,45 @@ body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
   border-color: #35ddcecc !important;
   background: #087f76 !important;
 }
+.gallery-card-media {
+  position: relative;
+  display: block;
+}
+.gallery-download {
+  position: absolute;
+  left: 0.85rem;
+  bottom: 0.85rem;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  border: 1px solid #ffffff66 !important;
+  border-radius: 999px;
+  background: #111c !important;
+  color: #fff !important;
+  padding: 0 !important;
+  box-shadow: 0 12px 30px #0004;
+  backdrop-filter: blur(8px);
+}
+.gallery-download svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+.gallery-download:hover,
+.gallery-download:focus-visible {
+  border-color: #35ddcecc !important;
+  background: #087f76 !important;
+}
+.gallery-download:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
 .gallery-delete {
   position: absolute;
   top: 0.75rem;
@@ -3093,6 +3132,24 @@ body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
   gap: clamp(1rem, 2vw, 1.5rem);
   align-items: start;
 }
+/* Teal continuity dial behind the detail video panel — reuses the Creator's
+   .lf-preview-orb / .lf-preview-shell (see the orb rules further down). The
+   shell is padded at the top so the disc's upper arc reads above the opaque
+   media panel (the video appears to sit on the dial); the sidebar gets a
+   matching top inset so its first card stays level with the video. */
+.generation-detail-media-shell {
+  padding-top: clamp(2rem, 5vw, 4rem);
+}
+/* double class beats the `@media (min-width: 981px) .lf-preview-shell
+   .lf-preview-orb { width: 78% }` rule so the dial stays disc-sized here */
+.generation-detail-media-shell.lf-preview-shell .lf-preview-orb {
+  width: min(84%, 540px);
+  /* pull the disc up so a fuller arc clears the media's top edge */
+  transform: translate(-50%, -58%);
+}
+.generation-detail-media-shell > .generation-detail-media {
+  z-index: 1;
+}
 .generation-detail-media {
   position: relative;
   overflow: hidden;
@@ -3144,6 +3201,9 @@ body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
 .generation-detail-sidebar {
   display: grid;
   gap: 1rem;
+  /* keep the first sidebar card level with the media panel, which the orb
+     shell pushes down by its top padding */
+  padding-top: clamp(2rem, 5vw, 4rem);
 }
 .generation-detail-metrics {
   display: grid;
@@ -3151,7 +3211,6 @@ body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
   gap: 0.65rem;
 }
 .generation-detail-metrics div,
-.generation-scene-card,
 .generation-prompt-card,
 .generation-detail-record {
   border: 1px solid #1112;
@@ -3164,7 +3223,6 @@ body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
   padding: 0.85rem;
 }
 .generation-detail-metrics span,
-.generation-scene-card span,
 .generation-prompt-card span,
 .generation-detail-record dt {
   display: block;
@@ -3182,11 +3240,9 @@ body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.generation-scene-card,
 .generation-prompt-card {
   padding: 1rem;
 }
-.generation-scene-card p,
 .generation-prompt-card p {
   margin: 0;
   color: #242927;
@@ -3385,6 +3441,10 @@ body:not(:has(.home)) .error-panel {
     min-width: 0;
     text-align: left;
   }
+  /* single column: no need to reserve a top inset for row alignment */
+  .generation-detail-sidebar {
+    padding-top: 0;
+  }
 }
 @media (max-width: 560px) {
   .generation-detail-page {
@@ -3407,7 +3467,8 @@ body:not(:has(.home)) .error-panel {
   display: flex;
   gap: 0.6rem;
   overflow-x: auto;
-  padding: 0.85rem clamp(1rem, 4vw, 3rem);
+  padding-block: 0.85rem;
+  padding-inline: 0.9rem clamp(1rem, 4vw, 3rem);
   scrollbar-width: thin;
 }
 .detail-carousel-item {
@@ -6841,6 +6902,69 @@ body:not(:has(.home)) textarea:focus::placeholder {
 .lf-negative-panel .lf-negative {
   width: 100%;
 }
+.lf-creator-reference-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0 0.7rem 0.7rem;
+}
+.lf-creator-reference-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+.lf-creator-reference-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.6rem;
+  border: 1px solid #159d9126;
+  border-radius: 0.7rem;
+  background: #fbfdfc;
+}
+.lf-creator-reference-card.has-file {
+  border-color: #159d9166;
+}
+.lf-creator-reference-head strong {
+  display: block;
+  font-size: 0.82rem;
+}
+.lf-creator-reference-head small {
+  display: block;
+  margin-top: 0.15rem;
+  color: #5a6663;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+.lf-creator-reference-card > img,
+.lf-creator-reference-card .lf-reference-preview {
+  width: 100%;
+  height: 6.5rem;
+  object-fit: cover;
+  border-radius: 0.5rem;
+}
+.lf-creator-reference-strength {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.7rem;
+  color: #3a4340;
+}
+.lf-creator-reference-strength input[type="range"] {
+  width: 100%;
+}
+.lf-creator-reference-strength input[type="range"]:disabled {
+  opacity: 0.45;
+}
+.lf-creator-reference-foot {
+  color: #5a6663;
+  font-size: 0.68rem;
+}
+@media (max-width: 720px) {
+  .lf-creator-reference-grid {
+    grid-template-columns: 1fr;
+  }
+}
 .lf-disabled,
 .lf-transition-button {
   border-color: #1112;
@@ -8649,4 +8773,32 @@ body:not(:has(.home)) h1.editorial-page-title {
     width: 100% !important;
     max-width: none;
   }
+}
+
+/* Creator/Director video preview: kill the 1px dark hairline ("black line")
+   along the top edge. It was .lf-screen's dark backdrop bleeding past the
+   media's rounded corners where the parent's and child's coincident
+   border-radius clips disagreed at sub-pixel level. Let the parent's rounded
+   `overflow: hidden` do all the clipping (promoted to its own compositing
+   layer so WebKit clips the <video> too) and drop the media's own radius. */
+.lf-screen {
+  transform: translateZ(0);
+  overflow: hidden;
+}
+/* Direct-child selector only: the preview media (<video>/<img>) sits directly
+   in .lf-screen, while the render-spinner favicon is a nested, deliberately
+   circular <img> that must keep its own border-radius. */
+.lf-screen > img,
+.lf-screen > video {
+  display: block;
+  border-radius: 0;
+}
+.lf-screen.lf-screen-minimal {
+  background: transparent;
+}
+.lf-screen.lf-screen-minimal video {
+  min-width: 100%;
+  min-height: 100%;
+  height: calc(100% + 8px);
+  transform: translateY(-4px);
 }

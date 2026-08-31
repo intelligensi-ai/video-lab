@@ -1212,8 +1212,31 @@ function GalleryCard({
   onOpenEditor: (generation: Generation) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const promptNeedsToggle = generation.prompt.length > 190;
   const liked = generation.liked === true;
+  const downloadUrl = generation.output?.downloadUrl;
+  const canDownload = isVideoOutput(generation) && Boolean(downloadUrl);
+  const downloadVideo = async () => {
+    if (!downloadUrl || downloading) return;
+    setDownloading(true);
+    try {
+      const blob = await scheduleDownload(downloadUrl);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${generation.id}.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch {
+      // Best-effort: the download endpoint is rate limited and the detail page
+      // offers a retry. Don't shout at the user from a grid tile.
+    } finally {
+      setDownloading(false);
+    }
+  };
   // Defer thumbnail generation (a full authenticated video download) until the
   // card is near the viewport, so a large gallery doesn't fetch every clip up
   // front. Cards with a cached poster still render it immediately.
@@ -1246,11 +1269,29 @@ function GalleryCard({
   };
   return (
     <article className="card gallery-card" ref={cardRef}>
-      <GalleryArtifact
-        generation={generation}
-        onOpen={() => onOpenEditor(generation)}
-        generate={inView}
-      />
+      <div className="gallery-card-media">
+        <GalleryArtifact
+          generation={generation}
+          onOpen={() => onOpenEditor(generation)}
+          generate={inView}
+        />
+        {canDownload && (
+          <button
+            className="gallery-download"
+            type="button"
+            aria-label="Download video"
+            title="Download video"
+            disabled={downloading}
+            onClick={() => void downloadVideo()}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3v12" />
+              <path d="M7 10l5 5 5-5" />
+              <path d="M5 21h14" />
+            </svg>
+          </button>
+        )}
+      </div>
       <button
         className={liked ? "gallery-like liked" : "gallery-like"}
         type="button"
@@ -2113,46 +2154,56 @@ function Detail() {
             </div>
           </header>
           <section className="generation-detail-layout">
-            <div className="generation-detail-media">
-              {isVideo && media.objectUrl ? (
-                <video
-                  className="video-preview"
-                  src={media.objectUrl}
-                  controls
-                  playsInline
-                  preload="metadata"
-                />
-              ) : isFrame && media.objectUrl ? (
-                <img
-                  className="video-preview generation-frame-preview"
-                  src={media.objectUrl}
-                  alt="Generated frame"
-                />
-              ) : isVideo && thumbnail ? (
-                <div className="generation-detail-media-loading">
-                  <img
-                    className="generation-detail-media-thumb"
-                    src={thumbnail}
-                    alt="Video thumbnail"
+            <div className="generation-detail-media-shell lf-preview-shell">
+              <div className="lf-preview-orb" aria-hidden="true">
+                <span className="lf-orb-disc" />
+                <span className="lf-orbit lf-orbit-one" />
+                <span className="lf-orbit lf-orbit-two" />
+                <span className="lf-orbit lf-orbit-three" />
+                <span className="lf-orbit-spark" />
+                <span className="lf-orbit-node" />
+              </div>
+              <div className="generation-detail-media">
+                {isVideo && media.objectUrl ? (
+                  <video
+                    className="video-preview"
+                    src={media.objectUrl}
+                    controls
+                    playsInline
+                    preload="metadata"
                   />
-                  {g.output?.downloadUrl && <VideoRetrievalMark />}
-                </div>
-              ) : (
-                <div className="thumb big">
-                  {g.output?.downloadUrl ? <VideoRetrievalMark /> : g.status}
-                </div>
-              )}
-              {media.error && (
-                <p className="error">Output retrieval failed: {media.error}</p>
-              )}
-              {upscaledGeneration && (
-                <Link
-                  className="generation-detail-view-upscale"
-                  to={`/generations/${upscaledGeneration.id}`}
-                >
-                  View upscale
-                </Link>
-              )}
+                ) : isFrame && media.objectUrl ? (
+                  <img
+                    className="video-preview generation-frame-preview"
+                    src={media.objectUrl}
+                    alt="Generated frame"
+                  />
+                ) : isVideo && thumbnail ? (
+                  <div className="generation-detail-media-loading">
+                    <img
+                      className="generation-detail-media-thumb"
+                      src={thumbnail}
+                      alt="Video thumbnail"
+                    />
+                    {g.output?.downloadUrl && <VideoRetrievalMark />}
+                  </div>
+                ) : (
+                  <div className="thumb big">
+                    {g.output?.downloadUrl ? <VideoRetrievalMark /> : g.status}
+                  </div>
+                )}
+                {media.error && (
+                  <p className="error">Output retrieval failed: {media.error}</p>
+                )}
+                {upscaledGeneration && (
+                  <Link
+                    className="generation-detail-view-upscale"
+                    to={`/generations/${upscaledGeneration.id}`}
+                  >
+                    View upscale
+                  </Link>
+                )}
+              </div>
             </div>
             <aside className="generation-detail-sidebar">
               <div className="generation-detail-metrics">
@@ -2165,10 +2216,6 @@ function Detail() {
                   <strong>{String(g.settings.videoModel ?? "ltx-2.3")}</strong>
                 </div>
               </div>
-              <section className="generation-scene-card">
-                <span>Scene</span>
-                <p>{g.sceneSummary || truncateAtWordBoundary(g.prompt, 160)}</p>
-              </section>
               <section className="generation-prompt-card">
                 <span>Prompt</span>
                 <p className={promptExpanded ? "expanded" : ""}>{g.prompt}</p>

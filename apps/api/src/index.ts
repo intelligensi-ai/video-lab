@@ -100,7 +100,7 @@ type CreatorOperation =
   | "frame_generation"
   | "video_generation";
 type CreatorEntitlementDecision = {
-  source: "local" | "admin" | "staging_allowlist" | "firestore";
+  source: "local" | "admin" | "authenticated" | "staging_allowlist" | "firestore";
   policyVersion: string;
   operation: CreatorOperation;
 };
@@ -1266,7 +1266,12 @@ function distributedRateLimit(options: {
 export function creatorEntitlementMode(env: NodeJS.ProcessEnv = process.env) {
   if (env.NODE_ENV !== "production") return "local" as const;
   const mode = env.VIDEO_LAB_ENTITLEMENT_MODE?.trim() || "firestore";
-  if (mode === "firestore" || mode === "staging_allowlist") return mode;
+  if (
+    mode === "authenticated" ||
+    mode === "firestore" ||
+    mode === "staging_allowlist"
+  )
+    return mode;
   return "invalid" as const;
 }
 
@@ -1304,6 +1309,15 @@ async function requireCreatorEntitlement(
       "entitlement_configuration_invalid",
       "Generation access is temporarily unavailable",
     );
+  }
+  if (mode === "authenticated") {
+    return {
+      source: "authenticated",
+      policyVersion:
+        process.env.VIDEO_LAB_ENTITLEMENT_POLICY_VERSION?.trim() ||
+        "authenticated-2026-08",
+      operation,
+    };
   }
   if (mode === "staging_allowlist" && stagingEntitlementUids().has(uid)) {
     return {
@@ -3909,6 +3923,7 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
               .slice(-24)
           : [];
         if (assetId && !assetVersionIds.includes(assetId)) assetVersionIds.push(assetId);
+        const strength = Number(reference.strength);
         return {
           id: String(reference.id),
           type,
@@ -3919,6 +3934,9 @@ function sanitizeStoryboardDraft(value: unknown): Record<string, unknown> {
           ...(assetId ? { assetId } : {}),
           assetVersionIds,
           version: Math.min(1000, Math.max(1, Math.round(Number(reference.version) || 1))),
+          ...(Number.isFinite(strength)
+            ? { strength: Math.min(1, Math.max(0, strength)) }
+            : {}),
         };
       })
     : [];
