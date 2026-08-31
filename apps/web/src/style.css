@@ -6808,6 +6808,13 @@ body:not(:has(.home)) textarea:focus::placeholder {
 .lf-scenes-panel .site-page-title span {
   color: #f2fffb;
 }
+/* VideoLab.creator wordmark — 20% smaller than the global .site-page-title,
+   nudged down so it sits just past the panel's top edge */
+.lf-scenes-panel .site-page-title {
+  position: relative;
+  top: 10px;
+  font-size: clamp(calc(1.36rem + 4px), calc(2.08vw + 4px), calc(2.12rem + 4px));
+}
 .lf-scenes-panel .lf-section-brand-mark {
   border-color: #ffffff55;
 }
