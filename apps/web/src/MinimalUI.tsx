@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getGallery } from "./api.js";
-import LiveAIBackground from "./LiveAIBackground";
+import VideoBackground from "./VideoBackground";
 import TypewriterTitle from "./TypewriterTitle";
 import type { Generation } from "@video-lab/contracts";
 import "./MinimalUI.css";
@@ -52,8 +52,8 @@ export default function MinimalUI() {
 
   return (
     <div className="dock-layout">
-      {/* Live AI Animated Background */}
-      <LiveAIBackground />
+      {/* Live Video Background */}
+      <VideoBackground />
 
       {/* Global Blueprint Grid */}
       <div className="global-grid-overlay"></div>
@@ -62,6 +62,11 @@ export default function MinimalUI() {
         {/* LEFT PANEL */}
         <aside className="floating-panel left-panel">
           <div className="panel-top-decoration"></div>
+          
+          <div style={{ marginBottom: '1rem' }}>
+            <img src="/intelligensi-logo.png" alt="Intelligensi Logo" style={{ height: '32px' }} />
+          </div>
+          
           <TypewriterTitle 
             text="Video Generation" 
             icon={
@@ -194,7 +199,7 @@ export default function MinimalUI() {
         <main className="floating-panel center-panel">
           <div className="panel-top-decoration"></div>
           
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', marginBottom: '1rem', position: 'relative', zIndex: 2 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', marginTop: 'calc(32px + 1rem)', marginBottom: '1rem', position: 'relative', zIndex: 2 }}>
             <div style={{ justifySelf: 'start' }}>
               <TypewriterTitle 
                 text="Video Preview" 
