@@ -2001,13 +2001,19 @@ export default function LongFormStoryboardStudio({
               <section
                 className={`lf-scenes ${isClassic ? "lf-panel lf-scenes-panel" : ""}`}
               >
+                {isClassic && (
+                  <Link
+                    className="lf-brand"
+                    to="/"
+                    aria-label="intelligensi.ai home"
+                  >
+                    <img src="/intelligensi-logo.png" alt="intelligensi.ai" />
+                  </Link>
+                )}
                 <div className="lf-section-head">
                   <div>
                     {isClassic ? (
                       <div className="lf-section-brand">
-                        <span className="lf-section-brand-mark">
-                          <img src="/fav-icon.png" alt="" />
-                        </span>
                         <span className="site-page-title">VideoLab.creator</span>
                       </div>
                     ) : (

@@ -2142,6 +2142,13 @@ function Detail() {
     <main className="generation-detail-page">
       {g && (
         <>
+          <Link
+            className="generation-detail-brand"
+            to="/gallery"
+            aria-label="intelligensi.ai Video Lab"
+          >
+            <img src="/intelligensi-logo.png" alt="intelligensi.ai" />
+          </Link>
           <DetailCarousel currentId={g.id} />
           <header className="generation-detail-hero">
             <div>
