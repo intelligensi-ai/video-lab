@@ -2557,7 +2557,6 @@ function Registration() {
       </header>
       <form className="registration-form" onSubmit={submit}>
         <section className="panel registration-identity">
-          <span className="registration-step">01 · Your account</span>
           <h2>Your profile</h2>
           <div className="registration-profile">
             {firebaseUser?.photoURL ? (
@@ -2579,8 +2578,7 @@ function Registration() {
         </section>
 
         <section className="panel registration-demographics">
-          <span className="registration-step">02 · Optional demographics</span>
-          <h2>About your work</h2>
+          <h2>About your work (Optional demographics)</h2>
           <div className="registration-fields">
             <label>
               <span>Country or region</span>
@@ -2647,8 +2645,7 @@ function Registration() {
         </section>
 
         <section className="panel registration-marketing">
-          <span className="registration-step">03 · Product research</span>
-          <h2>What brings you here?</h2>
+          <h2>Product research (Optional)</h2>
           <div className="registration-fields">
             <label>
               <span>How did you hear about us?</span>
