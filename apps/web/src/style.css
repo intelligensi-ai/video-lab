@@ -293,13 +293,10 @@ input {
   }
 }
 
-/* LongForm LTX Storyboard Studio — mirrors the Deploy Studio editor. */
+/* LongForm LTX Storyboard Studio — mirrors the Deploy Studio editor.
+   NOTE: the effective creator background is set by the later
+   `body:has(.lf-page)` rule (light cream + the constellation backdrop). */
 body:has(.lf-page) {
-  background:
-    url("/images/creator-brand-backdrop.svg") 50% -11rem /
-      min(1500px, 172vw) auto no-repeat fixed,
-    radial-gradient(circle at 50% 15%, #17655b55, transparent 38rem),
-    linear-gradient(90deg, #071514, #0d2926 45%, #071514);
   color: #eef6f4;
 }
 /* Generation detail — branded light backdrop: teal wash plus the continuity
@@ -3594,6 +3591,8 @@ body:not(:has(.home)) .error-panel {
 
 body:has(.lf-page) {
   background:
+    url("/images/creator-brand-backdrop.svg") 50% 2rem /
+      min(1600px, 190vw) auto no-repeat fixed,
     radial-gradient(circle at 75% 10%, #27c5b624, transparent 30rem), #f0eee9;
   color: #141414;
 }
