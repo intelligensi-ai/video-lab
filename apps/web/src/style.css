@@ -293,34 +293,6 @@ input {
   }
 }
 
-/* LongForm LTX Storyboard Studio — mirrors the Deploy Studio editor.
-   NOTE: the effective creator background is set by the later
-   `body:has(.lf-page)` rule (light cream + the constellation backdrop). */
-body:has(.lf-page) {
-  color: #eef6f4;
-}
-/* Generation detail — branded light backdrop: teal wash plus the continuity
-   dial watermark, echoing the Creator preview's orbital motif. */
-body:has(.generation-detail-page) {
-  background-color: #f4f5f0;
-  background-image:
-    url("/images/detail-brand-backdrop.svg"),
-    radial-gradient(circle at 50% -8%, #159d9122, transparent 44rem),
-    radial-gradient(circle at 92% 6%, #35ddce16, transparent 26rem),
-    radial-gradient(circle at 4% 40%, #0a6c651a, transparent 34rem);
-  background-repeat: no-repeat;
-  background-position:
-    50% -14rem,
-    50% 0,
-    100% 0,
-    0 0;
-  background-size:
-    min(1500px, 168vw) auto,
-    100% 100%,
-    100% 100%,
-    100% 100%;
-  background-attachment: fixed;
-}
 .site-nav {
   align-items: center;
   border-bottom: 1px solid #35ddce18;
@@ -3589,9 +3561,15 @@ body:not(:has(.home)) .error-panel {
   }
 }
 
-body:has(.lf-page) {
+/* Branded light backdrop shared by the workbench pages: cream base, a teal
+   wash and the constellation dial. Placed after `body:not(:has(.home))`
+   (line ~2380) so it wins that equal-specificity background. */
+body:has(.lf-page),
+body:has(.generation-detail-page),
+body:has(.gallery-page),
+body:has(.account-page) {
   background:
-    url("/images/creator-brand-backdrop.svg") 50% 2rem /
+    url("/images/brand-backdrop.svg") 50% 2rem /
       min(1600px, 190vw) auto no-repeat fixed,
     radial-gradient(circle at 75% 10%, #27c5b624, transparent 30rem), #f0eee9;
   color: #141414;
