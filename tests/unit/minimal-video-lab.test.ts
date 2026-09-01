@@ -110,21 +110,16 @@ describe("minimal VideoLab project safety", () => {
     }
   });
 
-  it("submits the Creator master prompt as the minimal storyboard direction", () => {
+  it("submits the Creator master prompt as a single-scene storyboard", () => {
     const original = projectForm();
     original.videoModel = "ltx-2.5";
     const restored = formForStudioVariant(original, true);
     restored.scenes[0].prompt = "Legacy scene prompt that should not drive Creator mode.";
     const submitted = generationPayloadForStudioVariant(restored, true);
 
-    expect(restored.scenes.map((item) => item.id)).toEqual([
-      "scene-1",
-      "scene-2",
-    ]);
-    expect(submitted.scenes.map((item) => item.id)).toEqual([
-      "scene-1",
-      "scene-2",
-    ]);
+    // Creator keeps only the first scene, even from a legacy multi-scene project.
+    expect(restored.scenes.map((item) => item.id)).toEqual(["scene-1"]);
+    expect(submitted.scenes.map((item) => item.id)).toEqual(["scene-1"]);
     expect(original.scenes).toHaveLength(2);
     expect(submitted).toEqual({
       ...restored,
@@ -205,44 +200,34 @@ describe("minimal VideoLab project safety", () => {
     });
   });
 
-  it("turns an exact Creator length into the smallest balanced valid storyboard", () => {
+  it("keeps Creator a single scene and clamps the length to 8 seconds", () => {
     const original = [scene("scene-1", 5)];
     const planned = creatorScenesForTotalDuration(original, 17, 4000);
 
-    expect(planned).toHaveLength(3);
-    expect(planned.map((item) => item.duration)).toEqual([6, 6, 5]);
-    expect(planned.reduce((total, item) => total + item.duration, 0)).toBe(17);
-    expect(planned.every((item) => item.duration >= 1 && item.duration <= 8)).toBe(true);
-    expect(planned.map((item) => item.seed)).toEqual([1337, 4001, 4002]);
+    expect(planned).toHaveLength(1);
+    expect(planned[0].duration).toBe(8);
+    expect(planned[0].trimEnd).toBe(8);
+    // the existing scene is preserved, not regenerated
+    expect(planned[0].seed).toBe(1337);
   });
 
-  it.each([
-    [1, 1],
-    [8, 1],
-    [9, 2],
-    [16, 2],
-    [17, 3],
-    [24, 3],
-  ])(
-    "plans %i seconds as exactly %i deterministic Creator scenes",
-    (requestedSeconds, expectedScenes) => {
+  it.each([1, 4, 8, 9, 16, 24])(
+    "plans %i requested seconds as one Creator scene capped at 8s",
+    (requestedSeconds) => {
       const planned = creatorScenesForTotalDuration(
         [scene("scene-1", 5)],
         requestedSeconds,
         7000,
       );
 
-      expect(planned).toHaveLength(expectedScenes);
-      expect(planned.reduce((total, item) => total + item.duration, 0)).toBe(
-        requestedSeconds,
-      );
-      expect(planned.every((item) => item.duration >= 1 && item.duration <= 8)).toBe(
-        true,
-      );
+      expect(planned).toHaveLength(1);
+      expect(planned[0].duration).toBe(Math.min(requestedSeconds, 8));
+      expect(planned[0].duration).toBeGreaterThanOrEqual(1);
+      expect(planned[0].duration).toBeLessThanOrEqual(8);
     },
   );
 
-  it("respects the runtime scene limit and exact bounded duration", () => {
+  it("caps Creator at one 8s scene even when more scenes are requested", () => {
     const planned = creatorScenesForTotalDuration(
       [scene("scene-1", 5)],
       24,
@@ -250,8 +235,7 @@ describe("minimal VideoLab project safety", () => {
       2,
     );
 
-    expect(planned.map((item) => item.duration)).toEqual([8, 8]);
-    expect(planned.reduce((total, item) => total + item.duration, 0)).toBe(16);
+    expect(planned.map((item) => item.duration)).toEqual([8]);
   });
 
   it("resizes scenes even when they already have accepted media, since the change only affects the next render", () => {

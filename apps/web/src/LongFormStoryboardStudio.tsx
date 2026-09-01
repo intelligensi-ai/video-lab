@@ -232,8 +232,10 @@ function seedScenes(isClassic: boolean): StoryboardScenePayload[] {
   return isClassic ? scenes.map((scene) => ({ ...scene, title: "" })) : scenes;
 }
 
-const MAX_CREATOR_DURATION_SECONDS = 24;
-const MAX_CREATOR_SCENES = 3;
+// Creator mode is a single scene, capped at 8 seconds. Filmmaker/Director keeps
+// full multi-scene storyboards.
+const MAX_CREATOR_DURATION_SECONDS = 8;
+const MAX_CREATOR_SCENES = 1;
 
 /**
  * Converts the Creator's single total-length choice into the smallest valid
@@ -561,23 +563,37 @@ export function formForStudioVariant(
   isClassic: boolean,
 ): LongFormGenerationPayload {
   const normalized = normalizePersistedForm(saved);
-  const scenes = normalized.scenes.length
-    ? normalized.scenes.slice(0, MAX_STORYBOARD_SCENES).map((scene) => ({
-        ...scene,
-        trimStart: Number.isFinite(scene.trimStart) ? scene.trimStart : 0,
-        trimEnd: Number.isFinite(scene.trimEnd)
-          ? scene.trimEnd
-          : scene.duration,
-        summary: scene.summary ?? "",
-        continuityOverrides: scene.continuityOverrides ?? {},
-        seedOverrideEnabled: scene.seedOverrideEnabled === true,
-        generatedTextIntent: scene.generatedTextIntent ?? {
-          mode: "none",
-          visibleText: [],
-          reason: "Visible generated text is disabled for the Creator launch workflow.",
-        },
-      }))
+  // Creator loads a single scene capped at MAX_CREATOR_DURATION_SECONDS, even if
+  // the saved project was authored with more scenes or a longer first scene.
+  const sourceScenes = normalized.scenes.length
+    ? normalized.scenes.slice(
+        0,
+        isClassic ? MAX_CREATOR_SCENES : MAX_STORYBOARD_SCENES,
+      )
     : seedScenes(isClassic);
+  const scenes = sourceScenes.map((scene) => {
+    const duration = isClassic
+      ? Math.min(MAX_CREATOR_DURATION_SECONDS, Math.max(1, scene.duration || 1))
+      : scene.duration;
+    return {
+      ...scene,
+      duration,
+      trimStart: Number.isFinite(scene.trimStart)
+        ? Math.min(scene.trimStart, duration)
+        : 0,
+      trimEnd: Number.isFinite(scene.trimEnd)
+        ? Math.min(scene.trimEnd, duration)
+        : duration,
+      summary: scene.summary ?? "",
+      continuityOverrides: scene.continuityOverrides ?? {},
+      seedOverrideEnabled: scene.seedOverrideEnabled === true,
+      generatedTextIntent: scene.generatedTextIntent ?? {
+        mode: "none",
+        visibleText: [],
+        reason: "Visible generated text is disabled for the Creator launch workflow.",
+      },
+    };
+  });
   return {
     ...normalized,
     videoModel: isClassic ? "ltx-2.3" : normalized.videoModel,
@@ -1412,7 +1428,10 @@ export default function LongFormStoryboardStudio({
     MAX_STORYBOARD_SCENES,
     runtime.data?.capabilities?.maxScenes ?? MAX_STORYBOARD_SCENES,
   );
-  const creatorMaxScenes = Math.min(MAX_CREATOR_SCENES, runtimeMaxScenes);
+  const creatorMaxScenes = Math.max(
+    1,
+    Math.min(MAX_CREATOR_SCENES, runtimeMaxScenes),
+  );
   const creatorPreviewReady = form.scenes.every(
     (scene) =>
       Boolean(scene.acceptedVideoGenerationId || scene.candidateGenerationIds?.length) ||

@@ -2161,56 +2161,46 @@ function Detail() {
             </div>
           </header>
           <section className="generation-detail-layout">
-            <div className="generation-detail-media-shell lf-preview-shell">
-              <div className="lf-preview-orb" aria-hidden="true">
-                <span className="lf-orb-disc" />
-                <span className="lf-orbit lf-orbit-one" />
-                <span className="lf-orbit lf-orbit-two" />
-                <span className="lf-orbit lf-orbit-three" />
-                <span className="lf-orbit-spark" />
-                <span className="lf-orbit-node" />
-              </div>
-              <div className="generation-detail-media">
-                {isVideo && media.objectUrl ? (
-                  <video
-                    className="video-preview"
-                    src={media.objectUrl}
-                    controls
-                    playsInline
-                    preload="metadata"
-                  />
-                ) : isFrame && media.objectUrl ? (
+            <div className="generation-detail-media">
+              {isVideo && media.objectUrl ? (
+                <video
+                  className="video-preview"
+                  src={media.objectUrl}
+                  controls
+                  playsInline
+                  preload="metadata"
+                />
+              ) : isFrame && media.objectUrl ? (
+                <img
+                  className="video-preview generation-frame-preview"
+                  src={media.objectUrl}
+                  alt="Generated frame"
+                />
+              ) : isVideo && thumbnail ? (
+                <div className="generation-detail-media-loading">
                   <img
-                    className="video-preview generation-frame-preview"
-                    src={media.objectUrl}
-                    alt="Generated frame"
+                    className="generation-detail-media-thumb"
+                    src={thumbnail}
+                    alt="Video thumbnail"
                   />
-                ) : isVideo && thumbnail ? (
-                  <div className="generation-detail-media-loading">
-                    <img
-                      className="generation-detail-media-thumb"
-                      src={thumbnail}
-                      alt="Video thumbnail"
-                    />
-                    {g.output?.downloadUrl && <VideoRetrievalMark />}
-                  </div>
-                ) : (
-                  <div className="thumb big">
-                    {g.output?.downloadUrl ? <VideoRetrievalMark /> : g.status}
-                  </div>
-                )}
-                {media.error && (
-                  <p className="error">Output retrieval failed: {media.error}</p>
-                )}
-                {upscaledGeneration && (
-                  <Link
-                    className="generation-detail-view-upscale"
-                    to={`/generations/${upscaledGeneration.id}`}
-                  >
-                    View upscale
-                  </Link>
-                )}
-              </div>
+                  {g.output?.downloadUrl && <VideoRetrievalMark />}
+                </div>
+              ) : (
+                <div className="thumb big">
+                  {g.output?.downloadUrl ? <VideoRetrievalMark /> : g.status}
+                </div>
+              )}
+              {media.error && (
+                <p className="error">Output retrieval failed: {media.error}</p>
+              )}
+              {upscaledGeneration && (
+                <Link
+                  className="generation-detail-view-upscale"
+                  to={`/generations/${upscaledGeneration.id}`}
+                >
+                  View upscale
+                </Link>
+              )}
             </div>
             <aside className="generation-detail-sidebar">
               <div className="generation-detail-metrics">

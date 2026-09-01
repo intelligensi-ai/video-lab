@@ -3139,24 +3139,6 @@ body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
   gap: clamp(1rem, 2vw, 1.5rem);
   align-items: start;
 }
-/* Teal continuity dial behind the detail video panel — reuses the Creator's
-   .lf-preview-orb / .lf-preview-shell (see the orb rules further down). The
-   shell is padded at the top so the disc's upper arc reads above the opaque
-   media panel (the video appears to sit on the dial); the sidebar gets a
-   matching top inset so its first card stays level with the video. */
-.generation-detail-media-shell {
-  padding-top: clamp(2rem, 5vw, 4rem);
-}
-/* double class beats the `@media (min-width: 981px) .lf-preview-shell
-   .lf-preview-orb { width: 78% }` rule so the dial stays disc-sized here */
-.generation-detail-media-shell.lf-preview-shell .lf-preview-orb {
-  width: min(84%, 540px);
-  /* pull the disc up so a fuller arc clears the media's top edge */
-  transform: translate(-50%, -58%);
-}
-.generation-detail-media-shell > .generation-detail-media {
-  z-index: 1;
-}
 .generation-detail-media {
   position: relative;
   overflow: hidden;
@@ -3208,9 +3190,6 @@ body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
 .generation-detail-sidebar {
   display: grid;
   gap: 1rem;
-  /* keep the first sidebar card level with the media panel, which the orb
-     shell pushes down by its top padding */
-  padding-top: clamp(2rem, 5vw, 4rem);
 }
 .generation-detail-metrics {
   display: grid;
@@ -3447,10 +3426,6 @@ body:not(:has(.home)) .error-panel {
   .generation-detail-status {
     min-width: 0;
     text-align: left;
-  }
-  /* single column: no need to reserve a top inset for row alignment */
-  .generation-detail-sidebar {
-    padding-top: 0;
   }
 }
 @media (max-width: 560px) {
