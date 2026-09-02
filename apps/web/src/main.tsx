@@ -2123,7 +2123,10 @@ function Detail() {
   const media = useScheduledBlobUrl(g?.output?.downloadUrl);
   const isVideo = isVideoOutput(g);
   const isFrame = isFrameOutput(g);
-  const thumbnail = g ? readPoster(g.id) : "";
+  // Show a poster immediately while the full clip downloads: cached poster if we
+  // have one, otherwise the lightweight server thumbnail. `generate: false` so
+  // this never pulls the MP4 a second time — `media` already handles playback.
+  const { thumbnail } = useVideoThumbnail(g, { generate: false });
   const statusLabel = g?.status.replace("_", " ") ?? "";
   const createdLabel = g
     ? new Date(g.createdAt).toLocaleString(undefined, {
@@ -2166,6 +2169,7 @@ function Detail() {
                 <video
                   className="video-preview"
                   src={media.objectUrl}
+                  poster={thumbnail || undefined}
                   controls
                   playsInline
                   preload="metadata"
