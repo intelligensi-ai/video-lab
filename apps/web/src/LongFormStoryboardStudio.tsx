@@ -4765,26 +4765,59 @@ function UploadBox({
         acceptFile(event.dataTransfer.files?.[0]);
       }}
     >
-      <button
-        type="button"
-        className="lf-upload-drop"
-        data-help={`${file ? "Replace" : "Add"} this ${label.toLowerCase()} image. Supported formats are PNG, JPEG and WebP.`}
-        aria-label={`${file ? "Replace" : "Add"} ${label.toLowerCase()}`}
-        onClick={() => inputRef.current?.click()}
-      >
-        {preview && !compact ? (
-          <img
-            src={preview}
-            alt={`${label} preview`}
-            title="Double-click to preview"
-            onClick={(event) => event.stopPropagation()}
-            onDoubleClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              setPreviewOpen(true);
-            }}
-          />
-        ) : (
+      {preview && !compact ? (
+        <>
+          <div className="lf-upload-head">
+            <strong>{label}</strong>
+            <span className="lf-upload-head-actions">
+              <button
+                type="button"
+                className="lf-upload-replace"
+                data-help={`Replace this ${label.toLowerCase()} image. Supported formats are PNG, JPEG and WebP.`}
+                aria-label={`Replace ${label.toLowerCase()}`}
+                onClick={() => inputRef.current?.click()}
+              >
+                Replace
+              </button>
+              <button
+                type="button"
+                className="lf-upload-remove"
+                data-help={`Remove this ${label.toLowerCase()} so the scene can render without that image anchor.`}
+                aria-label={`Remove ${label.toLowerCase()}`}
+                onClick={() => onFile(undefined)}
+              >
+                Remove
+              </button>
+            </span>
+          </div>
+          <button
+            type="button"
+            className="lf-upload-drop lf-upload-image"
+            data-help={`Replace this ${label.toLowerCase()} image. Supported formats are PNG, JPEG and WebP.`}
+            aria-label={`Replace ${label.toLowerCase()}`}
+            onClick={() => inputRef.current?.click()}
+          >
+            <img
+              src={preview}
+              alt={`${label} preview`}
+              title="Double-click to preview"
+              onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setPreviewOpen(true);
+              }}
+            />
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          className="lf-upload-drop"
+          data-help={`${file ? "Replace" : "Add"} this ${label.toLowerCase()} image. Supported formats are PNG, JPEG and WebP.`}
+          aria-label={`${file ? "Replace" : "Add"} ${label.toLowerCase()}`}
+          onClick={() => inputRef.current?.click()}
+        >
           <span aria-hidden="true" className="lf-upload-icon">
             <svg
               viewBox="0 0 24 24"
@@ -4810,13 +4843,13 @@ function UploadBox({
               />
             </svg>
           </span>
-        )}
-        <span className="lf-upload-copy">
-          <strong>{label}</strong>
-          {!file && <small>Click to browse or drop an image</small>}
-        </span>
-        <i>{file ? "Replace" : "+"}</i>
-      </button>
+          <span className="lf-upload-copy">
+            <strong>{label}</strong>
+            {!file && <small>Click to browse or drop an image</small>}
+          </span>
+          <i>{file ? "Replace" : "+"}</i>
+        </button>
+      )}
       <input
         ref={inputRef}
         className="lf-upload-input"
@@ -4827,7 +4860,7 @@ function UploadBox({
           event.currentTarget.value = "";
         }}
       />
-      {file && (
+      {file && compact && (
         <button
           type="button"
           className="lf-upload-remove"

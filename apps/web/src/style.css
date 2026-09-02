@@ -3146,8 +3146,12 @@ body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
   border-radius: 0.9rem;
   background: #050707;
   box-shadow: 0 24px 60px #173e3718;
+  /* own compositing layer so the rounded overflow clips the <video> cleanly —
+     otherwise the dark backdrop bleeds a 1px hairline along the top edge
+     (same fix as the creator .lf-screen). */
+  transform: translateZ(0);
 }
-.generation-detail-media .video-preview {
+.generation-detail-media > .video-preview {
   display: block;
   width: 100%;
   max-height: min(72vh, 780px);
@@ -3548,6 +3552,12 @@ body:has(.account-page) {
       min(1600px, 190vw) auto no-repeat fixed,
     radial-gradient(circle at 75% 10%, #27c5b624, transparent 30rem), #f0eee9;
   color: #141414;
+}
+/* Detail page sits the dial ~40px lower so it clears the hero title. */
+body:has(.generation-detail-page) {
+  background-position:
+    50% calc(2rem + 40px),
+    0 0;
 }
 .lf-page {
   color: #171717;
@@ -8462,6 +8472,66 @@ body:not(:has(.home)) h1.editorial-page-title {
   padding: 0.6rem !important;
   text-align: left;
 }
+/* Filled frame: header row (label + Replace/Remove, in line) above a
+   full-width preview image. */
+.lf-upload-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.6rem 0.6rem 0.4rem;
+}
+.lf-upload-head > strong {
+  color: #303936;
+  font-size: 0.78rem;
+}
+.lf-upload-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.lf-upload-head-actions > button {
+  min-height: 28px !important;
+  border-radius: 999px !important;
+  padding: 0.32rem 0.7rem !important;
+  font-size: 0.6rem !important;
+  font-weight: 850 !important;
+  line-height: 1;
+}
+.lf-upload-replace {
+  border: 0 !important;
+  background: linear-gradient(110deg, #0a8d82, #20c6b5 60%, #64e0d4) !important;
+  color: #031714 !important;
+  box-shadow: 0 8px 20px #078b7e30;
+}
+.lf-upload-replace:hover {
+  box-shadow: 0 10px 24px #078b7e45;
+}
+.lf-upload-head-actions > .lf-upload-remove {
+  position: static;
+  border: 1px solid #9d4b3830 !important;
+  background: #fff !important;
+  color: #9d4b38 !important;
+}
+.lf-upload > .lf-upload-image {
+  display: block !important;
+  grid-template-columns: none !important;
+  width: 100%;
+  min-height: 0;
+  padding: 0 4px 6px !important;
+}
+.lf-upload > .lf-upload-image > img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border: 1px solid #1112;
+  border-radius: 0.6rem;
+  background: #d9d9d4;
+  object-fit: cover;
+  cursor: zoom-in;
+  box-shadow: 0 5px 14px #17433d18;
+}
 .lf-upload > .lf-upload-drop:hover {
   background: #e1eeea !important;
 }
@@ -8563,7 +8633,7 @@ body:not(:has(.home)) h1.editorial-page-title {
   font-size: 0.54rem !important;
   font-weight: 850 !important;
 }
-.lf-upload.has-file > .lf-upload-drop {
+.lf-upload.has-file > .lf-upload-drop:not(.lf-upload-image) {
   grid-template-columns: 1fr auto;
   grid-template-areas:
     "copy remove"
@@ -8572,7 +8642,7 @@ body:not(:has(.home)) h1.editorial-page-title {
   min-height: 0;
   padding: 0.7rem 4.8rem 0.7rem 0.7rem !important;
 }
-.lf-upload.has-file > .lf-upload-drop > img {
+.lf-upload.has-file > .lf-upload-drop:not(.lf-upload-image) > img {
   grid-area: image;
   width: 100%;
   height: auto;
@@ -8608,7 +8678,7 @@ body:not(:has(.home)) h1.editorial-page-title {
   .lf-upload > .lf-upload-drop {
     gap: 0.55rem;
   }
-  .lf-upload.has-file > .lf-upload-drop {
+  .lf-upload.has-file > .lf-upload-drop:not(.lf-upload-image) {
     padding-right: 0.6rem !important;
   }
   .lf-upload > .lf-upload-remove {
@@ -8765,11 +8835,17 @@ body:not(:has(.home)) h1.editorial-page-title {
 .lf-frame-control > .lf-upload.has-file {
   grid-row: auto;
 }
-.lf-frame-control > .lf-upload.has-file > .lf-upload-drop {
+.lf-frame-control > .lf-upload.has-file > .lf-upload-drop:not(.lf-upload-image) {
   min-height: 100%;
 }
-.lf-frame-control > .lf-upload.has-file > .lf-upload-drop > img {
+.lf-frame-control
+  > .lf-upload.has-file
+  > .lf-upload-drop:not(.lf-upload-image)
+  > img {
   min-height: 220px;
+  max-height: none;
+}
+.lf-frame-control > .lf-upload.has-file > .lf-upload-image > img {
   max-height: none;
 }
 @media (max-width: 760px) {
@@ -8783,7 +8859,10 @@ body:not(:has(.home)) h1.editorial-page-title {
   .lf-enhancer-actions button {
     width: 100%;
   }
-  .lf-frame-control > .lf-upload.has-file > .lf-upload-drop > img {
+  .lf-frame-control
+    > .lf-upload.has-file
+    > .lf-upload-drop:not(.lf-upload-image)
+    > img {
     min-height: 170px;
   }
   .lf-preview-actions {
