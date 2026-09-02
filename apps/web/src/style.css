@@ -2483,9 +2483,11 @@ body:not(:has(.home)) .thumb {
   max-width: 1380px;
   padding-top: clamp(1.25rem, 3vw, 2.75rem) !important;
 }
-/* The gallery carries its own VideoLab.gallery wordmark, so when the global
+/* The gallery and detail pages carry their own wordmark, so when the global
    top bar has nothing in it (non-admins) drop it and let the page rise. */
-body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
+body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty),
+body:has(.generation-detail-page)
+  .site-nav.logged-in:has(.site-nav-inner:empty) {
   display: none;
 }
 .gallery-toolbar {
@@ -3077,7 +3079,7 @@ body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
 .generation-detail-page {
   width: min(1380px, calc(100% - 2rem));
   margin: 0 auto;
-  padding: clamp(0.25rem, 1vw, 0.5rem) 0 clamp(2rem, 5vw, 4rem);
+  padding: 0 0 clamp(2rem, 5vw, 4rem);
 }
 .generation-detail-brand {
   display: flex;
@@ -3092,7 +3094,7 @@ body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
 .generation-detail-brand img {
   display: block;
   width: auto;
-  height: 44px;
+  height: 75px;
 }
 .generation-detail-hero {
   display: grid;
@@ -3455,7 +3457,8 @@ body:not(:has(.home)) .error-panel {
   margin-bottom: clamp(1.1rem, 2.4vw, 1.9rem);
   border: 1px solid #159d9126;
   border-radius: 0.9rem;
-  background-color: #fbfbf8;
+  background-color: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(8px);
   background-image:
     linear-gradient(
       118deg,
