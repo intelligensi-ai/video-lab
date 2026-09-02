@@ -6591,21 +6591,33 @@ app.post(
         (model) => model.id === requestedVideoModel,
       );
       const defaultVideoModel = runtimeState.capabilities?.defaultVideoModel;
+      const advertisedDefaultVideoModel = advertisedVideoModels?.find(
+        (model) => model.id === defaultVideoModel,
+      );
+      const fallbackVideoModel =
+        defaultVideoModel &&
+        (longFormVideoModels as readonly string[]).includes(defaultVideoModel) &&
+        (!advertisedVideoModels?.length || advertisedDefaultVideoModel?.available)
+          ? defaultVideoModel
+          : advertisedVideoModels?.find((model) => model.available)?.id;
       const requiresExplicitCapability = requestedVideoModel !== "ltx-2.3";
-      if (
+      const requestedVideoModelUnavailable =
         (requiresExplicitCapability &&
           !advertisedVideoModels?.length &&
           defaultVideoModel !== requestedVideoModel)
-        || (advertisedVideoModels?.length && !advertisedVideoModel?.available)
-      ) {
+        || (advertisedVideoModels?.length && !advertisedVideoModel?.available);
+      const resolvedVideoModel = requestedVideoModelUnavailable
+        ? fallbackVideoModel
+        : requestedVideoModel;
+      if (!resolvedVideoModel) {
         throw problem(
           409,
           "video_model_unavailable",
           "The selected video model is not available on the active managed runtime",
         );
       }
-      settings.videoModel = requestedVideoModel;
-      (settings as { video_model?: string }).video_model = requestedVideoModel;
+      settings.videoModel = resolvedVideoModel;
+      (settings as { video_model?: string }).video_model = resolvedVideoModel;
       if (!Array.isArray(inputAssets) || inputAssets.length > 3) {
         throw problem(
           400,

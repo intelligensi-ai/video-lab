@@ -237,6 +237,10 @@ export default function DirectorWorkspace() {
     workspace.runtime?.capabilities?.referenceConditioning === true &&
     workspace.runtime?.capabilities?.featureStatus?.referenceConditioning === "supported";
   const videoModels = longFormVideoModelsForRuntime(workspace.runtime);
+  const selectedVideoModel =
+    workspace.form.videoModel ??
+    workspace.runtime?.capabilities?.defaultVideoModel ??
+    "ltx-2.3";
 
   return (
     <main className="vlx-shell" data-mobile-pane={mobilePane}>
@@ -377,7 +381,7 @@ export default function DirectorWorkspace() {
                 <small>No cinematic prompting knowledge needed. Suggestions stay editable.</small>
               </label>
               <div className="vlx-setting-grid">
-                <label className="vlx-field"><span>Video model</span><select aria-label="Video model" value={workspace.form.videoModel ?? "ltx-2.3"} onChange={(event) => void workspace.changeVideoModel(event.target.value as LongFormVideoModel)}>{videoModels.map((model) => <option key={model.id} value={model.id} disabled={!model.available}>{longFormVideoModelLabel(model)}</option>)}</select><small>{videoModels.find((model) => model.id === (workspace.form.videoModel ?? "ltx-2.3"))?.reason ?? "Existing projects stay pinned; switching a rendered project creates a separate copy."}</small></label>
+                <label className="vlx-field"><span>Video model</span><select aria-label="Video model" value={selectedVideoModel} onChange={(event) => void workspace.changeVideoModel(event.target.value as LongFormVideoModel)}>{videoModels.map((model) => <option key={model.id} value={model.id} disabled={!model.available}>{longFormVideoModelLabel(model)}</option>)}</select><small>{videoModels.find((model) => model.id === selectedVideoModel)?.reason ?? "Existing projects stay pinned; switching a rendered project creates a separate copy."}</small></label>
                 <label className="vlx-field"><span>Format</span><select value={format} onChange={(event) => setFormat(event.target.value)}><option>Short film</option><option>Product story</option><option>Social video</option><option>Film trailer</option></select></label>
                 <label className="vlx-field"><span>Scenes</span><select value={scenes.length} onChange={(event) => workspace.resizeScenes(Number(event.target.value))}>{Array.from({ length: Math.min(24, workspace.runtime?.capabilities?.maxScenes ?? 24) }, (_, index) => <option key={index + 1}>{index + 1}</option>)}</select></label>
                 <label className="vlx-field"><span>Frame</span><select value={workspace.form.resolution} onChange={(event) => workspace.setForm((current) => ({ ...current, resolution: event.target.value }))}><option value="1280x720">Landscape 16:9</option><option value="720x1280">Vertical 9:16</option><option value="1080x1080">Square 1:1</option></select></label>
