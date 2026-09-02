@@ -38,7 +38,7 @@ describe("LongForm video model integrity", () => {
     expect(unchanged.body.form.videoModel).toBe("ltx-2.3");
   });
 
-  it("rejects generation when the requested model differs from the persisted project model", async () => {
+  it("normalizes generation to the persisted project model", async () => {
     const owner = "project-model-owner";
     const scene = {
       id: "scene-1",
@@ -86,8 +86,9 @@ describe("LongForm video model integrity", () => {
           storyboard: [scene],
         },
       })
-      .expect(409);
+      .expect(201);
 
-    expect(response.body.code).toBe("project_video_model_mismatch");
+    expect(response.body.settings.videoModel).toBe("ltx-2.5");
+    expect(response.body.settings.video_model).toBe("ltx-2.5");
   });
 });

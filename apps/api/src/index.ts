@@ -6606,7 +6606,7 @@ app.post(
           !advertisedVideoModels?.length &&
           defaultVideoModel !== requestedVideoModel)
         || (advertisedVideoModels?.length && !advertisedVideoModel?.available);
-      const resolvedVideoModel = requestedVideoModelUnavailable
+      let resolvedVideoModel = requestedVideoModelUnavailable
         ? fallbackVideoModel
         : requestedVideoModel;
       if (!resolvedVideoModel) {
@@ -6755,12 +6755,27 @@ app.post(
         if (!(longFormVideoModels as readonly string[]).includes(projectVideoModel)) {
           throw problem(409, "project_video_model_invalid", "The project video model is not supported");
         }
-        if (projectVideoModel !== requestedVideoModel) {
-          throw problem(
-            409,
-            "project_video_model_mismatch",
-            "The generation model must match the project video model",
+        if (projectVideoModel !== resolvedVideoModel) {
+          const advertisedProjectVideoModel = advertisedVideoModels?.find(
+            (model) => model.id === projectVideoModel,
           );
+          const projectVideoModelAvailable =
+            runtimeState.provider === "mock"
+              ? true
+              : !advertisedVideoModels?.length
+              ? defaultVideoModel === projectVideoModel || projectVideoModel === "ltx-2.3"
+              : advertisedProjectVideoModel?.available === true;
+          if (!projectVideoModelAvailable) {
+            throw problem(
+              409,
+              "project_video_model_unavailable",
+              "The project video model is not available on the active managed runtime",
+            );
+          }
+          resolvedVideoModel = projectVideoModel;
+          settings.videoModel = resolvedVideoModel;
+          (settings as { video_model?: string }).video_model =
+            resolvedVideoModel;
         }
       }
       const referenceSnapshot = await captureGenerationReferenceSnapshot(
