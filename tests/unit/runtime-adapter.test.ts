@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { boundedInteger, RuntimeCapacityPendingError, RuntimeLeaseUnavailableError, SulphurLtxRuntimeAdapter } from "../../packages/runtime-adapter/src/index.js";
+import { boundedInteger, createRuntimeFromEnv, RuntimeCapacityPendingError, RuntimeLeaseUnavailableError, SulphurLtxRuntimeAdapter } from "../../packages/runtime-adapter/src/index.js";
 
 describe("bounded runtime configuration", () => {
   it.each([
@@ -21,6 +21,7 @@ describe("bounded runtime configuration", () => {
 describe("SulphurLtxRuntimeAdapter", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("uses the canonical Deploy Studio jobs route", async () => {
@@ -1571,5 +1572,37 @@ describe("SulphurLtxRuntimeAdapter", () => {
         (call.init?.headers as Record<string, string>).authorization,
       ).toBeUndefined();
     }
+  });
+
+  it("sends VIDEO_LAB_RUNTIME_API_KEY through the Intelligensi API key header from server env", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubEnv("VIDEO_RUNTIME_PROVIDER", "intelligensi-api");
+    vi.stubEnv("VIDEO_RUNTIME_BASE_URL", "https://api.intelligensi.ai");
+    vi.stubEnv("VIDEO_RUNTIME_ID", "longform-ltx-storyboard-studio");
+    vi.stubEnv("VIDEO_RUNTIME_PAYLOAD_MODE", "intelligensi-api");
+    vi.stubEnv("VIDEO_RUNTIME_AUTH_HEADER", "X-Intelligensi-API-Key");
+    vi.stubEnv("VIDEO_RUNTIME_AUTH_SCHEME", "none");
+    vi.stubEnv("VIDEO_LAB_RUNTIME_API_KEY", "server-only-env-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return Response.json({ ok: true, ready: true });
+      }),
+    );
+
+    const runtime = createRuntimeFromEnv();
+    await runtime.healthCheck();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(
+      "https://api.intelligensi.ai/v1/runtimes/longform-ltx-storyboard-studio/health",
+    );
+    expect(calls[0].init?.headers).toMatchObject({
+      "X-Intelligensi-API-Key": "server-only-env-key",
+    });
+    expect(
+      (calls[0].init?.headers as Record<string, string>).authorization,
+    ).toBeUndefined();
   });
 });

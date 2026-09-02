@@ -1147,6 +1147,46 @@ function videoLabRuntimeApiKey() {
     process.env.VIDEO_RUNTIME_API_TOKEN
   );
 }
+export function validateRuntimeAuthenticationEnv(
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  if (env.VIDEO_RUNTIME_PROVIDER !== "intelligensi-api") {
+    return { ok: true, issues: [] as string[] };
+  }
+  const issues: string[] = [];
+  const baseUrl = env.VIDEO_RUNTIME_BASE_URL?.trim();
+  const apiKey = (
+    env.VIDEO_LAB_RUNTIME_API_KEY ?? env.VIDEO_RUNTIME_API_TOKEN
+  )?.trim();
+  if (baseUrl !== "https://api.intelligensi.ai") {
+    issues.push("VIDEO_RUNTIME_BASE_URL must be https://api.intelligensi.ai");
+  }
+  if (
+    (env.VIDEO_RUNTIME_ID?.trim() || "longform-ltx-storyboard-studio") !==
+    "longform-ltx-storyboard-studio"
+  ) {
+    issues.push("VIDEO_RUNTIME_ID must be longform-ltx-storyboard-studio");
+  }
+  if (
+    (env.VIDEO_RUNTIME_PAYLOAD_MODE?.trim() || "intelligensi-api") !==
+    "intelligensi-api"
+  ) {
+    issues.push("VIDEO_RUNTIME_PAYLOAD_MODE must be intelligensi-api");
+  }
+  if (
+    (env.VIDEO_RUNTIME_AUTH_HEADER?.trim() || "X-Intelligensi-API-Key") !==
+    "X-Intelligensi-API-Key"
+  ) {
+    issues.push("VIDEO_RUNTIME_AUTH_HEADER must be X-Intelligensi-API-Key");
+  }
+  if ((env.VIDEO_RUNTIME_AUTH_SCHEME?.trim() || "none") !== "none") {
+    issues.push("VIDEO_RUNTIME_AUTH_SCHEME must be none");
+  }
+  if (!apiKey) {
+    issues.push("VIDEO_LAB_RUNTIME_API_KEY must be configured server-side");
+  }
+  return { ok: issues.length === 0, issues };
+}
 function normalizeRuntimeBaseUrl(value: unknown) {
   const origin = normalizeRuntimeOrigin(value, {
     production: process.env.NODE_ENV === "production",
@@ -6550,9 +6590,12 @@ app.post(
       const advertisedVideoModel = advertisedVideoModels?.find(
         (model) => model.id === requestedVideoModel,
       );
+      const defaultVideoModel = runtimeState.capabilities?.defaultVideoModel;
       const requiresExplicitCapability = requestedVideoModel !== "ltx-2.3";
       if (
-        (requiresExplicitCapability && !advertisedVideoModels?.length)
+        (requiresExplicitCapability &&
+          !advertisedVideoModels?.length &&
+          defaultVideoModel !== requestedVideoModel)
         || (advertisedVideoModels?.length && !advertisedVideoModel?.available)
       ) {
         throw problem(

@@ -1453,7 +1453,7 @@ export default function LongFormStoryboardStudio({
   const runtimeDefaultVideoModel = defaultLongFormVideoModelForRuntime(runtime.data);
   const selectedVideoModel = form.videoModel ?? runtimeDefaultVideoModel;
   useEffect(() => {
-    if (!runtime.data?.capabilities?.videoModels?.length) return;
+    if (!runtime.data?.capabilities) return;
     const currentModel = form.videoModel ?? "ltx-2.3";
     if (longFormVideoModelAvailable(runtime.data, currentModel)) return;
     const nextModel = defaultLongFormVideoModelForRuntime(runtime.data);

@@ -249,7 +249,7 @@ export function useDirectorWorkspace() {
     projectTitleRef.current = projectTitle;
   }, [projectTitle]);
   useEffect(() => {
-    if (!runtime?.capabilities?.videoModels?.length) return;
+    if (!runtime?.capabilities) return;
     const currentModel = form.videoModel ?? "ltx-2.3";
     if (longFormVideoModelAvailable(runtime, currentModel)) return;
     const nextModel = defaultLongFormVideoModelForRuntime(runtime);

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { creditLimitsEnabled, firebaseStorageBucket, localAuthEnabled } from '../../apps/api/src/index.js';
+import {
+  creditLimitsEnabled,
+  firebaseStorageBucket,
+  localAuthEnabled,
+  validateRuntimeAuthenticationEnv,
+} from '../../apps/api/src/index.js';
 
 describe('Firebase Storage configuration', () => {
   it('reads the deployed bucket from FIREBASE_CONFIG', () => {
@@ -40,5 +45,41 @@ describe('local authentication boundary', () => {
     expect(localAuthEnabled({ NODE_ENV: 'development', K_SERVICE: '', VIDEO_LAB_LOCAL_AUTH: 'true' })).toBe(true);
     expect(localAuthEnabled({ NODE_ENV: 'test' })).toBe(true);
     expect(localAuthEnabled({ NODE_ENV: 'production', VIDEO_LAB_LOCAL_AUTH: 'true' })).toBe(false);
+  });
+});
+
+describe('runtime authentication configuration', () => {
+  it('accepts the canonical Intelligensi runtime gateway configuration', () => {
+    expect(validateRuntimeAuthenticationEnv({
+      VIDEO_RUNTIME_PROVIDER: 'intelligensi-api',
+      VIDEO_RUNTIME_BASE_URL: 'https://api.intelligensi.ai',
+      VIDEO_RUNTIME_ID: 'longform-ltx-storyboard-studio',
+      VIDEO_RUNTIME_PAYLOAD_MODE: 'intelligensi-api',
+      VIDEO_RUNTIME_AUTH_HEADER: 'X-Intelligensi-API-Key',
+      VIDEO_RUNTIME_AUTH_SCHEME: 'none',
+      VIDEO_LAB_RUNTIME_API_KEY: 'server-only-test-key',
+    })).toEqual({ ok: true, issues: [] });
+  });
+
+  it('reports missing or unsafe Intelligensi runtime gateway settings without secret values', () => {
+    const result = validateRuntimeAuthenticationEnv({
+      VIDEO_RUNTIME_PROVIDER: 'intelligensi-api',
+      VIDEO_RUNTIME_BASE_URL: 'https://worker.example.test',
+      VIDEO_RUNTIME_ID: 'wrong-runtime',
+      VIDEO_RUNTIME_PAYLOAD_MODE: 'deploy-studio',
+      VIDEO_RUNTIME_AUTH_HEADER: 'authorization',
+      VIDEO_RUNTIME_AUTH_SCHEME: 'Bearer',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual([
+      'VIDEO_RUNTIME_BASE_URL must be https://api.intelligensi.ai',
+      'VIDEO_RUNTIME_ID must be longform-ltx-storyboard-studio',
+      'VIDEO_RUNTIME_PAYLOAD_MODE must be intelligensi-api',
+      'VIDEO_RUNTIME_AUTH_HEADER must be X-Intelligensi-API-Key',
+      'VIDEO_RUNTIME_AUTH_SCHEME must be none',
+      'VIDEO_LAB_RUNTIME_API_KEY must be configured server-side',
+    ]);
+    expect(JSON.stringify(result)).not.toContain('server-only-test-key');
   });
 });

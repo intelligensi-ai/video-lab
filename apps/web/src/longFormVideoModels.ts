@@ -25,10 +25,32 @@ export const fallbackLongFormVideoModels: LongFormVideoModelCapability[] = [
   },
 ];
 
-export function longFormVideoModelsForRuntime(runtime?: RuntimeStatus) {
-  return runtime?.capabilities?.videoModels?.length
-    ? runtime.capabilities.videoModels
-    : fallbackLongFormVideoModels;
+export function longFormVideoModelsForRuntime(runtime?: RuntimeStatus): LongFormVideoModelCapability[] {
+  if (runtime?.capabilities?.videoModels?.length) {
+    return runtime.capabilities.videoModels;
+  }
+  if (runtime?.capabilities?.defaultVideoModel === "ltx-2.5") {
+    return [
+      {
+        id: "ltx-2.3",
+        label: "LTX 2.3",
+        status: "unavailable",
+        available: false,
+        recommended: false,
+        workflowModes: [],
+        reason: "The active managed runtime is running LTX 2.5.",
+      },
+      {
+        id: "ltx-2.5",
+        label: "LTX 2.5",
+        status: "preview",
+        available: true,
+        recommended: true,
+        workflowModes: runtime.capabilities.workflowModes,
+      },
+    ];
+  }
+  return fallbackLongFormVideoModels;
 }
 
 export function defaultLongFormVideoModelForRuntime(runtime?: RuntimeStatus): LongFormVideoModel {

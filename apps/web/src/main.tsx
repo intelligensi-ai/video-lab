@@ -68,6 +68,39 @@ type GenerationRequest = {
   prompt: string;
   settings: Generation["settings"];
 };
+
+function randomSeedDelta() {
+  const magnitude = Math.floor(Math.random() * 5) + 1;
+  return Math.random() < 0.5 ? -magnitude : magnitude;
+}
+
+function nudgeSeedValue(value: unknown, delta: number) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.round(value + delta))
+    : value;
+}
+
+function recreateGenerationRequest(generation: Generation): GenerationRequest {
+  const delta = randomSeedDelta();
+  const settings = JSON.parse(JSON.stringify(generation.settings)) as Generation["settings"] & {
+    baseSeed?: unknown;
+    seed?: unknown;
+    storyboard?: Array<{ seed?: unknown }>;
+  };
+  settings.seed = nudgeSeedValue(settings.seed, delta) as typeof settings.seed;
+  settings.baseSeed = nudgeSeedValue(settings.baseSeed, delta);
+  if (Array.isArray(settings.storyboard)) {
+    settings.storyboard = settings.storyboard.map((scene) => ({
+      ...scene,
+      seed: nudgeSeedValue(scene.seed, delta),
+    }));
+  }
+  return {
+    prompt: generation.prompt,
+    settings,
+  };
+}
+
 type GenerationEdit = {
   id: string;
   generationId: string;
@@ -2102,6 +2135,18 @@ function Detail() {
       navigate("/gallery", { replace: true });
     },
   });
+  const recreate = useMutation({
+    mutationFn: (generation: Generation) =>
+      api<Generation>("/v1/generations", {
+        method: "POST",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify(recreateGenerationRequest(generation)),
+      }),
+    onSuccess: (generation) => {
+      void queryClient.invalidateQueries({ queryKey: ["gallery"] });
+      navigate(`/generations/${generation.id}`);
+    },
+  });
   const upscale = useMutation({
     mutationFn: () =>
       api<Generation>(`/v1/generations/${id}/upscale`, {
@@ -2158,9 +2203,26 @@ function Detail() {
               <span className="gallery-eyebrow">Generation details</span>
               <h1>{g.title || truncateAtWordBoundary(g.prompt, 50)}</h1>
             </div>
-            <div className="generation-detail-status">
-              <span>{statusLabel}</span>
-              <small>{createdLabel}</small>
+            <div className="generation-detail-hero-actions">
+              {isVideo && (
+                <button
+                  type="button"
+                  className="generation-detail-recreate"
+                  disabled={recreate.isPending || g.status !== "completed"}
+                  onClick={() => recreate.mutate(g)}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <polyline points="23 4 23 10 17 10" />
+                    <polyline points="1 20 1 14 7 14" />
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                  </svg>
+                  <span>{recreate.isPending ? "Recreating…" : "Recreate"}</span>
+                </button>
+              )}
+              <div className="generation-detail-status">
+                <span>{statusLabel}</span>
+                <small>{createdLabel}</small>
+              </div>
             </div>
           </header>
           <section className="generation-detail-layout">
@@ -2339,6 +2401,11 @@ function Detail() {
               {upscale.error && (
                 <p className="error" role="alert">
                   Upscale failed: {upscale.error.message}
+                </p>
+              )}
+              {recreate.error && (
+                <p className="error" role="alert">
+                  Recreate failed: {recreate.error.message}
                 </p>
               )}
               <dl className="generation-detail-record">
