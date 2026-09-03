@@ -2418,7 +2418,7 @@ body:not(:has(.home)) .site-avatar.active {
 body:not(:has(.home)) .site-brand {
   color: #111;
 }
-body:not(:has(.home)) main:not(.lf-page) {
+body:not(:has(.home)) main:not(.lf-page):not(.generation-detail-page) {
   max-width: 1240px;
   padding-top: 4rem;
 }
@@ -3920,7 +3920,7 @@ body:has(.generation-detail-page) {
   body:has(.home) .site-brand {
     font-size: 1.55rem;
   }
-  body:not(:has(.home)) main:not(.lf-page) {
+  body:not(:has(.home)) main:not(.lf-page):not(.generation-detail-page) {
     padding-top: 2rem;
   }
 }
