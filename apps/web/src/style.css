@@ -2483,16 +2483,15 @@ body:not(:has(.home)) .thumb {
   max-width: 1380px;
   padding-top: clamp(1.25rem, 3vw, 2.75rem) !important;
 }
-/* The gallery and detail pages carry their own wordmark, so when the global
-   top bar has nothing in it (non-admins) drop it and let the page rise. */
-body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty),
-body:has(.generation-detail-page)
-  .site-nav.logged-in:has(.site-nav-inner:empty) {
+/* The gallery carries its own wordmark, so when the global top bar has
+   nothing in it (non-admins) drop it and let the page rise. */
+body:has(.gallery-page) .site-nav.logged-in:has(.site-nav-inner:empty) {
   display: none;
 }
-/* ...and if it does show (admins), keep it to a thin strip. */
+/* The detail page has its own big centred wordmark — always drop the global
+   top bar so the page starts flush at the logo. */
 body:has(.generation-detail-page) .site-nav {
-  padding-block: 0.2rem;
+  display: none;
 }
 .gallery-toolbar {
   display: flex;
@@ -3235,7 +3234,7 @@ body:has(.generation-detail-page) .site-nav {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 5;
 }
 .generation-prompt-card p.expanded {
   display: block;
@@ -7578,7 +7577,24 @@ body:not(:has(.home)) textarea:focus::placeholder {
 .lf-screen.lf-screen-minimal video {
   height: 100%;
   aspect-ratio: auto;
-  animation: lf-screen-fade-in 320ms ease;
+  /* the preview takes a couple of seconds to arrive — reveal it with a slow
+     cinematic zoom + focus-pull rather than a hard pop */
+  animation: lf-screen-zoom-in 1700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes lf-screen-zoom-in {
+  from {
+    opacity: 0;
+    transform: scale(1.12);
+    filter: blur(7px);
+  }
+  55% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
 }
 @keyframes lf-screen-fade-in {
   from {
@@ -7586,6 +7602,12 @@ body:not(:has(.home)) textarea:focus::placeholder {
   }
   to {
     opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lf-screen.lf-screen-minimal img,
+  .lf-screen.lf-screen-minimal video {
+    animation: lf-screen-fade-in 260ms ease both;
   }
 }
 .lf-screen.lf-screen-minimal img {
